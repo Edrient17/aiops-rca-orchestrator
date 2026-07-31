@@ -111,9 +111,20 @@ Invoke-RestMethod http://127.0.0.1:5678/healthz
 4. 각 Agent의 수동 테스트를 실행합니다.
 5. `AIOps - Error Handler`와 메인 워크플로를 저장하고 Publish합니다.
 
-워크플로 파일은 컨테이너 시작 시 DB에 해당 ID가 없을 때만 import됩니다. 따라서
-n8n UI에서 수정한 내용은 재시작으로 덮어쓰지 않습니다. 파일의 새 버전을
-강제로 반영할 때는 UI에서 import하거나 n8n CLI를 명시적으로 실행합니다.
+워크플로 파일은 최초 1회만 import됩니다. `n8n-import`가 n8n 데이터 볼륨의
+`/home/node/.n8n/.aiops-workflows-imported` 마커를 확인해, 마커가 있으면 아무
+것도 하지 않고 종료합니다. 따라서 재시작이나 `.env` 변경으로 컨테이너가
+재생성되어도 UI에서 수정한 내용(특히 credential 연결)을 덮어쓰지 않습니다.
+
+파일의 새 버전을 강제로 반영하려면 마커를 지우고 다시 올립니다.
+
+```powershell
+docker compose run --rm --entrypoint sh n8n-import -c `
+  'rm -f /home/node/.n8n/.aiops-workflows-imported'
+docker compose up -d
+```
+
+UI에서 직접 import해도 됩니다.
 
 ## 5. 보안 경계
 

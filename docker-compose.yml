@@ -61,14 +61,31 @@ services:
     image: n8nio/n8n:2.32.6
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
+    # Guarded by a marker in the n8n data volume rather than `n8n list:workflow`.
+    # That command does not reliably exit once workflows exist, and a shell waits
+    # for every process in a pipeline, so `list | grep -q` hung here and blocked
+    # the whole stack behind depends_on: service_completed_successfully.
+    #
+    # Bounding it with a timeout would trade the hang for a worse failure: an
+    # empty result reads as "not imported yet" and the re-import would discard
+    # whatever was edited in the UI, including credential assignments. A marker
+    # cannot produce that false negative.
+    #
+    # To deliberately re-import, delete the marker:
+    #   docker compose run --rm --entrypoint sh n8n-import -c \
+    #     'rm -f /home/node/.n8n/.aiops-workflows-imported'
     command:
       - >-
-        if ! n8n list:workflow | grep -q '^aiops-error-v010|';
-        then n8n import:workflow --input=/opt/aiops/workflows/99-aiops-error-handler.json;
-        fi
-        && if ! n8n list:workflow | grep -q '^aiops-main-v010|';
-        then n8n import:workflow --input=/opt/aiops/workflows/01-aiops-main.json;
-        fi
+        set -e;
+        marker=/home/node/.n8n/.aiops-workflows-imported;
+        if [ -f "$$marker" ]; then
+          echo "workflows already bootstrapped; skipping import";
+          exit 0;
+        fi;
+        n8n import:workflow --input=/opt/aiops/workflows/99-aiops-error-handler.json;
+        n8n import:workflow --input=/opt/aiops/workflows/01-aiops-main.json;
+        touch "$$marker";
+        echo "workflows imported and marker written"
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
