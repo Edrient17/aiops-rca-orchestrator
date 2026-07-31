@@ -621,12 +621,23 @@ const asTime = (value) => {
 const section = (heading, body) => '*' + heading + '*\n' + body;
 
 // --- 장애 개요 ------------------------------------------------------------
+// Incident timing is only meaningful when a problem event was actually found.
+// The writer has been observed copying the investigation window into these
+// fields on a healthy host, which renders as an hour-long outage that never
+// happened. A real Zabbix event id is numeric; the agent also emits synthetic
+// ids such as zbx:event:no-problem-events-... to record that it looked and
+// found nothing, and those must not license a timeline.
 const incident = rca.incident || {};
+const backedByEvent = (evidence.evidence || []).some(
+  (item) => /^zbx:event:\d+$/.test(item.evidence_id || ''),
+);
 const overview = ['• 관측된 형태: ' + (incident.observed_failure_mode || '확인 불가')];
-if (incident.started_at) overview.push('• 발생: ' + asTime(incident.started_at));
-if (incident.recovered_at) overview.push('• 복구: ' + asTime(incident.recovered_at));
-if (typeof incident.duration_seconds === 'number') {
-  overview.push('• 지속: ' + Math.round(incident.duration_seconds / 60) + '분');
+if (backedByEvent) {
+  if (incident.started_at) overview.push('• 발생: ' + asTime(incident.started_at));
+  if (incident.recovered_at) overview.push('• 복구: ' + asTime(incident.recovered_at));
+  if (typeof incident.duration_seconds === 'number') {
+    overview.push('• 지속: ' + Math.round(incident.duration_seconds / 60) + '분');
+  }
 }
 
 // --- 영향 ----------------------------------------------------------------
