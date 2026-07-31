@@ -719,10 +719,16 @@ const candidates = (rca.root_cause_candidates || []).map((item) => {
   return lines.join('\n');
 });
 
+// The report lands in the answer channel, which the asker is not necessarily
+// watching. Naming them notifies them and records who the investigation was for.
+const meta = ['• 요청 ID: \`' + request.request_id + '\`'];
+if (request.user_id) meta.push('• 요청자: <@' + request.user_id + '>');
+meta.push('• 호스트: ' + (incident.host || '확인 불가'));
+meta.push('• 심각도: ' + (incident.severity || '확인 불가'));
+
 const sections = [
   '📋 *' + rca.title + '*',
-  '• 요청 ID: \`' + request.request_id + '\`\n• 호스트: ' + (incident.host || '확인 불가') +
-    '\n• 심각도: ' + (incident.severity || '확인 불가'),
+  meta.join('\n'),
   section('요약', rca.executive_summary),
   section('장애 개요', overview.join('\n')),
   section('영향', impactLines.join('\n')),
