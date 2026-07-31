@@ -45,6 +45,7 @@ const job: DispatchJob = {
     received_at: "2026-01-01T00:00:00.000Z",
     parent_request_id: null,
     prior_question: null,
+    parent_ack_ts: null,
   },
 };
 

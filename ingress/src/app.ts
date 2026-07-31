@@ -18,6 +18,8 @@ export interface AppDependencies {
 const statusSchema = z.object({
   status: z.string().min(1).max(100),
   error: z.string().max(4_000).optional(),
+  /** Anchor message in the answer channel, recorded once when first posted. */
+  slack_ack_ts: z.string().max(100).optional(),
 });
 
 const agentRunSchema = z.object({
@@ -203,6 +205,7 @@ export function createApp(dependencies: AppDependencies): express.Express {
         request.params.requestId,
         body.status,
         body.error,
+        body.slack_ack_ts,
       );
       response.status(updated ? 200 : 404).json({ updated });
     } catch (error) {

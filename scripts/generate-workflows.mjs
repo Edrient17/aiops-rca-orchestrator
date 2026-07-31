@@ -72,7 +72,10 @@ function buildMainWorkflow(input) {
       "Post Business ACK",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text }) }}",
+      // A continuation posts into the thread its parent already owns, so one
+      // investigation occupies one thread however many clarifications it took.
+      // Slack echoes thread_ts back, which is what the report then anchors to.
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text, ...($('Normalize Request').first().json.parent_ack_ts ? { thread_ts: $('Normalize Request').first().json.parent_ack_ts } : {}) }) }}",
       [480, 0],
       "slack",
     ),
@@ -81,7 +84,9 @@ function buildMainWorkflow(input) {
       "Mark Analyzing",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/status' }}",
-      "={{ JSON.stringify({ status: 'analyzing_question' }) }}",
+      // Record the anchor while it is at hand. A continuation reuses its
+      // parent's, so store that rather than this reply's own ts.
+      "={{ JSON.stringify({ status: 'analyzing_question', slack_ack_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts }) }}",
       [960, 0],
       "internal",
     ),
@@ -151,7 +156,8 @@ function buildMainWorkflow(input) {
       "Post RCA Report",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
+      // thread_ts when the ACK was itself a reply, ts when it started the thread.
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
       [3120, -140],
       "slack",
     ),
@@ -562,21 +568,26 @@ return [{ json: { ...$input.first().json, stage_started_ms: Date.now() } }];
 // as nonsense in the answer channel, where the original question is not visible.
 const formatAckCode = String.raw`
 const request = $('Normalize Request').first().json;
-const continues = Boolean(request.parent_request_id) && Boolean(request.prior_question);
+const continues = Boolean(request.parent_request_id);
 
-const lines = [
-  continues ? '🔎 *AIOps 조사 재개*' : '🔎 *AIOps 조사 접수*',
-  '• 요청 ID: \`' + request.request_id + '\`',
-];
+// A continuation lands inside the parent's thread, where the original question
+// is already on screen, so it only needs to report what was added. Without a
+// parent anchor it starts its own thread and must carry the question itself.
+if (continues && request.parent_ack_ts) {
+  return [{ json: { text: [
+    '🔎 *조사 재개* — 보충된 정보로 이어서 조사합니다.',
+    '• 요청 ID: \`' + request.request_id + '\`',
+    '• 보충된 정보: ' + request.question,
+  ].join('\n') } }];
+}
 
-if (continues) {
+const lines = ['🔎 *AIOps 조사 접수*', '• 요청 ID: \`' + request.request_id + '\`'];
+if (continues && request.prior_question) {
   lines.push('• 원래 질문: ' + request.prior_question);
   lines.push('• 보충된 정보: ' + request.question);
-  lines.push('• 이어받은 요청: \`' + request.parent_request_id + '\`');
 } else {
   lines.push('• 질문: ' + request.question);
 }
-
 return [{ json: { text: lines.join('\n') } }];
 `.trim();
 

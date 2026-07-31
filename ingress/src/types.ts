@@ -59,6 +59,11 @@ export interface DispatchJob {
     /** Present only when this request answers an earlier clarification. */
     parent_request_id: string | null;
     prior_question: string | null;
+    /**
+     * The answer-channel message the parent request is anchored to. A
+     * continuation posts into this thread instead of starting a new one.
+     */
+    parent_ack_ts: string | null;
   };
 }
 
@@ -99,7 +104,12 @@ export interface RequestRepository {
   claimDispatch(): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;
-  updateRequestStatus(requestId: string, status: string, error?: string): Promise<boolean>;
+  updateRequestStatus(
+    requestId: string,
+    status: string,
+    error?: string,
+    slackAckTs?: string,
+  ): Promise<boolean>;
   recordAgentRun(requestId: string, input: AgentRunInput): Promise<boolean>;
   saveReport(requestId: string, input: ReportInput): Promise<boolean>;
   recordSystemError(input: SystemErrorInput): Promise<void>;

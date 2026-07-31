@@ -29,6 +29,12 @@ ALTER TABLE aiops_requests
 CREATE INDEX IF NOT EXISTS aiops_requests_thread_idx
   ON aiops_requests (channel_id, message_ts, status);
 
+-- The acknowledgement posted in the answer channel anchors everything that
+-- follows for this request. A continuation reuses its parent's anchor so one
+-- investigation stays in one thread no matter how many clarifications it took.
+ALTER TABLE aiops_requests
+  ADD COLUMN IF NOT EXISTS slack_ack_ts text;
+
 CREATE TABLE IF NOT EXISTS aiops_dispatch_queue (
   id bigserial PRIMARY KEY,
   request_id text NOT NULL UNIQUE REFERENCES aiops_requests(request_id) ON DELETE CASCADE,

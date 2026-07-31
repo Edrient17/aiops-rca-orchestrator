@@ -138,6 +138,7 @@ export class PostgresRequestRepository implements RequestRepository {
       received_at: Date;
       parent_request_id: string | null;
       prior_question: string | null;
+      parent_ack_ts: string | null;
     }>(
       `
         WITH candidate AS (
@@ -174,7 +175,12 @@ export class PostgresRequestRepository implements RequestRepository {
             SELECT parent.question
             FROM aiops_requests AS parent
             WHERE parent.request_id = request.parent_request_id
-          ) AS prior_question
+          ) AS prior_question,
+          (
+            SELECT parent.slack_ack_ts
+            FROM aiops_requests AS parent
+            WHERE parent.request_id = request.parent_request_id
+          ) AS parent_ack_ts
       `,
     );
 
@@ -199,6 +205,7 @@ export class PostgresRequestRepository implements RequestRepository {
         received_at: row.received_at.toISOString(),
         parent_request_id: row.parent_request_id,
         prior_question: row.prior_question,
+        parent_ack_ts: row.parent_ack_ts,
       },
     };
   }
@@ -235,16 +242,20 @@ export class PostgresRequestRepository implements RequestRepository {
     requestId: string,
     status: string,
     error?: string,
+    slackAckTs?: string,
   ): Promise<boolean> {
+    // COALESCE so a later status change cannot erase the anchor recorded when
+    // the acknowledgement was first posted.
     const result = await this.pool.query(
       `
         UPDATE aiops_requests
         SET status = $2,
             last_error = $3,
+            slack_ack_ts = COALESCE($4, slack_ack_ts),
             updated_at = now()
         WHERE request_id = $1
       `,
-      [requestId, status, error ?? null],
+      [requestId, status, error ?? null, slackAckTs ?? null],
     );
     return result.rowCount === 1;
   }

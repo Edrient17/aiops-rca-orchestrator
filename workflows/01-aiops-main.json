@@ -40,7 +40,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const request = $('Normalize Request').first().json;\nconst continues = Boolean(request.parent_request_id) && Boolean(request.prior_question);\n\nconst lines = [\n  continues ? '🔎 *AIOps 조사 재개*' : '🔎 *AIOps 조사 접수*',\n  '• 요청 ID: \\`' + request.request_id + '\\`',\n];\n\nif (continues) {\n  lines.push('• 원래 질문: ' + request.prior_question);\n  lines.push('• 보충된 정보: ' + request.question);\n  lines.push('• 이어받은 요청: \\`' + request.parent_request_id + '\\`');\n} else {\n  lines.push('• 질문: ' + request.question);\n}\n\nreturn [{ json: { text: lines.join('\\n') } }];"
+        "jsCode": "const request = $('Normalize Request').first().json;\nconst continues = Boolean(request.parent_request_id);\n\n// A continuation lands inside the parent's thread, where the original question\n// is already on screen, so it only needs to report what was added. Without a\n// parent anchor it starts its own thread and must carry the question itself.\nif (continues && request.parent_ack_ts) {\n  return [{ json: { text: [\n    '🔎 *조사 재개* — 보충된 정보로 이어서 조사합니다.',\n    '• 요청 ID: \\`' + request.request_id + '\\`',\n    '• 보충된 정보: ' + request.question,\n  ].join('\\n') } }];\n}\n\nconst lines = ['🔎 *AIOps 조사 접수*', '• 요청 ID: \\`' + request.request_id + '\\`'];\nif (continues && request.prior_question) {\n  lines.push('• 원래 질문: ' + request.prior_question);\n  lines.push('• 보충된 정보: ' + request.question);\n} else {\n  lines.push('• 질문: ' + request.question);\n}\nreturn [{ json: { text: lines.join('\\n') } }];"
       },
       "id": "47cd1bc7-5909-5cfb-874a-372868e7b8dc",
       "name": "Format ACK",
@@ -71,7 +71,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text }) }}",
+        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text, ...($('Normalize Request').first().json.parent_ack_ts ? { thread_ts: $('Normalize Request').first().json.parent_ack_ts } : {}) }) }}",
         "options": {
           "timeout": 30000
         }
@@ -119,7 +119,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ status: 'analyzing_question' }) }}",
+        "body": "={{ JSON.stringify({ status: 'analyzing_question', slack_ack_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts }) }}",
         "options": {
           "timeout": 10000
         }
@@ -537,7 +537,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
+        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
         "options": {
           "timeout": 30000
         }
