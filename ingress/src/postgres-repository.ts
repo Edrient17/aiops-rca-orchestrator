@@ -3,6 +3,7 @@ import type {
   AcceptedSlackRequest,
   AgentRunInput,
   DispatchJob,
+  PendingClarification,
   ReportInput,
   RequestRepository,
   SaveRequestResult,
@@ -32,9 +33,10 @@ export class PostgresRequestRepository implements RequestRepository {
             thread_ts,
             question,
             received_at,
-            raw_payload
+            raw_payload,
+            parent_request_id
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
           ON CONFLICT (slack_event_id) DO NOTHING
           RETURNING request_id
         `,
@@ -49,6 +51,7 @@ export class PostgresRequestRepository implements RequestRepository {
           request.question,
           request.receivedAt,
           JSON.stringify(request.rawPayload),
+          request.parentRequestId ?? null,
         ],
       );
 
@@ -61,6 +64,18 @@ export class PostgresRequestRepository implements RequestRepository {
           `,
           [request.requestId],
         );
+        if (request.parentRequestId) {
+          // The parent has its answer now, so it should stop showing up as
+          // still waiting on the user.
+          await client.query(
+            `
+              UPDATE aiops_requests
+              SET status = 'clarified', updated_at = now()
+              WHERE request_id = $1 AND status = 'needs_clarification'
+            `,
+            [request.parentRequestId],
+          );
+        }
         await client.query("COMMIT");
         return { created: true, requestId: request.requestId };
       }
@@ -82,6 +97,32 @@ export class PostgresRequestRepository implements RequestRepository {
     }
   }
 
+  async findPendingClarification(
+    channelId: string,
+    threadTs: string,
+  ): Promise<PendingClarification | null> {
+    // A reply in a thread carries the parent message's ts as thread_ts, so the
+    // request awaiting an answer is the one whose own message_ts matches.
+    const result = await this.pool.query<{
+      request_id: string;
+      question: string;
+    }>(
+      `
+        SELECT request_id, question
+        FROM aiops_requests
+        WHERE channel_id = $1
+          AND message_ts = $2
+          AND status = 'needs_clarification'
+        ORDER BY received_at DESC
+        LIMIT 1
+      `,
+      [channelId, threadTs],
+    );
+
+    const row = result.rows[0];
+    return row ? { requestId: row.request_id, question: row.question } : null;
+  }
+
   async claimDispatch(): Promise<DispatchJob | null> {
     const result = await this.pool.query<{
       id: string;
@@ -95,6 +136,8 @@ export class PostgresRequestRepository implements RequestRepository {
       thread_ts: string | null;
       question: string;
       received_at: Date;
+      parent_request_id: string | null;
+      prior_question: string | null;
     }>(
       `
         WITH candidate AS (
@@ -125,7 +168,13 @@ export class PostgresRequestRepository implements RequestRepository {
           request.message_ts,
           request.thread_ts,
           request.question,
-          request.received_at
+          request.received_at,
+          request.parent_request_id,
+          (
+            SELECT parent.question
+            FROM aiops_requests AS parent
+            WHERE parent.request_id = request.parent_request_id
+          ) AS prior_question
       `,
     );
 
@@ -148,6 +197,8 @@ export class PostgresRequestRepository implements RequestRepository {
         thread_ts: row.thread_ts,
         question: row.question,
         received_at: row.received_at.toISOString(),
+        parent_request_id: row.parent_request_id,
+        prior_question: row.prior_question,
       },
     };
   }

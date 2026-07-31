@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { createSlackSignature } from "../src/slack.js";
 import type {
+  AcceptedSlackRequest,
   AgentRunInput,
   DispatchJob,
+  PendingClarification,
   ReportInput,
   RequestRepository,
   SaveRequestResult,
@@ -13,7 +15,15 @@ import type {
 
 class FakeRepository implements RequestRepository {
   saveResult: SaveRequestResult = { created: true, requestId: "REQ-TEST" };
-  saveSlackRequest = vi.fn(async () => this.saveResult);
+  pendingClarification: PendingClarification | null = null;
+  savedRequests: AcceptedSlackRequest[] = [];
+  saveSlackRequest = vi.fn(async (input: AcceptedSlackRequest) => {
+    this.savedRequests.push(input);
+    return this.saveResult;
+  });
+  findPendingClarification = vi.fn(
+    async (): Promise<PendingClarification | null> => this.pendingClarification,
+  );
   ping = vi.fn(async () => undefined);
   claimDispatch = vi.fn(async (): Promise<DispatchJob | null> => null);
   completeDispatch = vi.fn(async () => undefined);
@@ -107,6 +117,91 @@ describe("Slack ingress", () => {
       }),
     );
     expect(wake).toHaveBeenCalledOnce();
+  });
+
+  it("links a threaded reply to the request that asked for clarification", async () => {
+    repository.pendingClarification = {
+      requestId: "REQ-PARENT",
+      question: "CPU 상태 괜찮아?",
+    };
+    const rawBody = JSON.stringify({
+      type: "event_callback",
+      event_id: "Ev456",
+      event_time: 1_700_000_100,
+      event: {
+        type: "app_mention",
+        channel: "C-QUESTIONS",
+        user: "U1",
+        text: "<@U-BOT> web-01 이야",
+        ts: "1700000100.999",
+        thread_ts: "1700000000.123",
+      },
+    });
+    const response = await request(
+      createApp({ config, repository, onRequestAccepted: wake }),
+    )
+      .post("/slack/events")
+      .set(signedHeaders(rawBody))
+      .send(rawBody);
+
+    expect(response.status).toBe(200);
+    expect(response.body.clarifies).toBe("REQ-PARENT");
+    expect(repository.findPendingClarification).toHaveBeenCalledWith(
+      "C-QUESTIONS",
+      "1700000000.123",
+    );
+    expect(repository.savedRequests[0]).toMatchObject({
+      parentRequestId: "REQ-PARENT",
+      question: "web-01 이야",
+    });
+  });
+
+  it("treats a threaded reply with no pending clarification as a new request", async () => {
+    repository.pendingClarification = null;
+    const rawBody = JSON.stringify({
+      type: "event_callback",
+      event_id: "Ev789",
+      event_time: 1_700_000_200,
+      event: {
+        type: "app_mention",
+        channel: "C-QUESTIONS",
+        user: "U1",
+        text: "<@U-BOT> db-02 메모리 확인",
+        ts: "1700000200.111",
+        thread_ts: "1700000000.123",
+      },
+    });
+    const response = await request(
+      createApp({ config, repository, onRequestAccepted: wake }),
+    )
+      .post("/slack/events")
+      .set(signedHeaders(rawBody))
+      .send(rawBody);
+
+    expect(response.status).toBe(200);
+    expect(response.body.clarifies).toBeUndefined();
+    expect(repository.savedRequests[0]?.parentRequestId).toBeNull();
+  });
+
+  it("does not look for a parent when the message is not in a thread", async () => {
+    const rawBody = JSON.stringify({
+      type: "event_callback",
+      event_id: "Ev321",
+      event_time: 1_700_000_300,
+      event: {
+        type: "app_mention",
+        channel: "C-QUESTIONS",
+        user: "U1",
+        text: "<@U-BOT> web-01 CPU",
+        ts: "1700000300.222",
+      },
+    });
+    await request(createApp({ config, repository, onRequestAccepted: wake }))
+      .post("/slack/events")
+      .set(signedHeaders(rawBody))
+      .send(rawBody);
+
+    expect(repository.findPendingClarification).not.toHaveBeenCalled();
   });
 
   it("acknowledges duplicates without dispatching twice", async () => {

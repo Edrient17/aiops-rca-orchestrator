@@ -27,6 +27,14 @@ export interface AcceptedSlackRequest {
   question: string;
   receivedAt: string;
   rawPayload: unknown;
+  /** Set when this message answers a clarification the bot asked for. */
+  parentRequestId?: string | null;
+}
+
+/** A request that stopped at needs_clarification and is awaiting an answer. */
+export interface PendingClarification {
+  requestId: string;
+  question: string;
 }
 
 export interface SaveRequestResult {
@@ -48,6 +56,9 @@ export interface DispatchJob {
     thread_ts: string | null;
     question: string;
     received_at: string;
+    /** Present only when this request answers an earlier clarification. */
+    parent_request_id: string | null;
+    prior_question: string | null;
   };
 }
 
@@ -81,6 +92,10 @@ export interface SystemErrorInput {
 export interface RequestRepository {
   ping(): Promise<void>;
   saveSlackRequest(request: AcceptedSlackRequest): Promise<SaveRequestResult>;
+  findPendingClarification(
+    channelId: string,
+    threadTs: string,
+  ): Promise<PendingClarification | null>;
   claimDispatch(): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;

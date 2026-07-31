@@ -138,6 +138,16 @@ export function createApp(dependencies: AppDependencies): express.Express {
           return;
         }
 
+        // A reply inside a thread may be answering a clarification this bot
+        // asked for. Linking the two lets the analyzer read the original
+        // question and the answer together instead of starting over.
+        const parent = event.thread_ts
+          ? await dependencies.repository.findPendingClarification(
+              event.channel,
+              event.thread_ts,
+            )
+          : null;
+
         const receivedAt = new Date().toISOString();
         const requestId = makeRequestId(payload.event_id, payload.event_time);
         const result = await dependencies.repository.saveSlackRequest({
@@ -151,12 +161,14 @@ export function createApp(dependencies: AppDependencies): express.Express {
           question,
           receivedAt,
           rawPayload: payload,
+          parentRequestId: parent?.requestId ?? null,
         });
 
         response.status(200).json({
           accepted: true,
           duplicate: !result.created,
           request_id: result.requestId,
+          ...(parent ? { clarifies: parent.requestId } : {}),
         });
 
         if (result.created) {

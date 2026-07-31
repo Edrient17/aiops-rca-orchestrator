@@ -13,6 +13,7 @@ function repositoryWithJob(job: DispatchJob): RequestRepository {
   return {
     ping: vi.fn(async () => undefined),
     saveSlackRequest: vi.fn(async () => ({ created: true, requestId: job.requestId })),
+    findPendingClarification: vi.fn(async () => null),
     claimDispatch: vi.fn(async () => {
       if (claimed) return null;
       claimed = true;
@@ -42,6 +43,8 @@ const job: DispatchJob = {
     thread_ts: null,
     question: "장애 조사",
     received_at: "2026-01-01T00:00:00.000Z",
+    parent_request_id: null,
+    prior_question: null,
   },
 };
 

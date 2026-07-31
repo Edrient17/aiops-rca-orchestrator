@@ -89,7 +89,7 @@ function buildMainWorkflow(input) {
       "Question Analyzer",
       [1200, 0],
       input.questionPrompt,
-      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul' }, null, 2) }}",
+      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id) }, null, 2) }}",
       3,
     ),
     modelNode("Question Model", [1120, 260], "gpt-5.4-mini", "low"),
@@ -168,7 +168,10 @@ function buildMainWorkflow(input) {
       "Post Clarification",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.ts, text: $('Format Clarification').first().json.text }) }}",
+      // Asked in the thread of the user's own message in the question channel:
+      // the answer has to land somewhere ingress listens, and a reply there
+      // carries thread_ts, which is what links it back to this request.
+      "={{ JSON.stringify({ channel: $('Normalize Request').first().json.channel_id, thread_ts: $('Normalize Request').first().json.thread_ts || $('Normalize Request').first().json.message_ts, text: $('Format Clarification').first().json.text }) }}",
       [2160, 360],
       "slack",
     ),
@@ -556,17 +559,29 @@ const formatClarificationCode = String.raw`
 const request = $('Normalize Request').first().json;
 const parsed = $('Question Analyzer').first().json.output;
 const ambiguities = Array.isArray(parsed.ambiguities) ? parsed.ambiguities : [];
-const title = parsed.parse_status === 'unsupported'
-  ? '지원 범위를 벗어난 요청입니다.'
-  : '조사에 필요한 정보가 더 있습니다.';
+const unsupported = parsed.parse_status === 'unsupported';
+
 const lines = ambiguities.length > 0
-  ? ambiguities.map((item, index) => (index + 1) + '. ' + item)
-  : ['호스트와 장애 발생 기준 시각을 알려주세요.'];
-return [{
-  json: {
-    text: '❓ *AIOps 요청 확인 필요*\n요청 ID: ' + request.request_id + '\n' + title + '\n' + lines.join('\n'),
-  },
-}];
+  ? ambiguities.map((item) => '• ' + item)
+  : ['• 조사할 호스트와 기준 시각을 알려주세요.'];
+
+const header = unsupported
+  ? '⛔ *지원 범위를 벗어난 요청*'
+  : '❓ *조사에 필요한 정보가 더 있습니다*';
+
+const sections = [
+  header,
+  '• 요청 ID: \`' + request.request_id + '\`',
+  lines.join('\n'),
+];
+
+// Only invite a reply when one would actually help. An unsupported request
+// will not become supported by answering.
+if (!unsupported) {
+  sections.push('_이 스레드에 저를 멘션해서 답해주시면 원래 질문과 함께 이어서 조사합니다._');
+}
+
+return [{ json: { text: sections.join('\n\n') } }];
 `.trim();
 
 const formatRcaCode = String.raw`

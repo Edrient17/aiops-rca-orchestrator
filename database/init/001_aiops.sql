@@ -19,6 +19,16 @@ CREATE TABLE IF NOT EXISTS aiops_requests (
 CREATE INDEX IF NOT EXISTS aiops_requests_status_idx
   ON aiops_requests (status, received_at DESC);
 
+-- When a request comes back needing clarification, the user answers in the
+-- thread of their original message. The reply carries thread_ts equal to the
+-- original message_ts, which is how the two are tied together.
+ALTER TABLE aiops_requests
+  ADD COLUMN IF NOT EXISTS parent_request_id text
+  REFERENCES aiops_requests(request_id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS aiops_requests_thread_idx
+  ON aiops_requests (channel_id, message_ts, status);
+
 CREATE TABLE IF NOT EXISTS aiops_dispatch_queue (
   id bigserial PRIMARY KEY,
   request_id text NOT NULL UNIQUE REFERENCES aiops_requests(request_id) ON DELETE CASCADE,

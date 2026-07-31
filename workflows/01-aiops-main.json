@@ -136,11 +136,11 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul' }, null, 2) }}",
+        "text": "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id) }, null, 2) }}",
         "hasOutputParser": true,
         "needsFallback": false,
         "options": {
-          "systemMessage": "# 질문 분석 Agent 시스템 프롬프트 v0.1.0\n\n당신은 운영 장애 분석 요청을 구조화하는 질문 분석 Agent다.\n\n사용자의 자연어 질문과 Slack 메시지 수신 시각을 이용하여 조사 기준을 정리한다.\n장애 원인이나 확인되지 않은 호스트를 추측하지 않는다.\n\n## 책임\n\n- 요청 유형 분류\n- 사용자가 언급한 호스트 또는 서비스명 추출\n- 장애 형태를 사용자의 표현에 가깝게 요약\n- 기준 날짜와 시각 해석\n- 초기 조사 시간 범위에 대한 힌트 생성\n- 모호성 식별\n\n## 규칙\n\n1. 기본 타임존은 입력으로 주어진 기본 타임존을 사용한다.\n2. 날짜가 생략되면 Slack 메시지가 작성된 날짜를 기준으로 해석한다.\n3. 호스트 또는 기준 시각을 특정할 수 없으면 임의 값을 만들지 않는다.\n4. 조사 가능한 상태면 `parse_status`를 `ready`로 지정한다.\n5. 추가 질문이 필요하면 `needs_clarification`으로 지정하고 누락된 정보를 `ambiguities`에 기록한다.\n6. 지원 범위 밖의 요청이면 `unsupported`로 지정한다.\n7. 최종 조사 범위나 조회할 메트릭을 확정하지 않는다. 이는 증거 수집 Agent의 책임이다.\n8. 모든 출력은 `parsed-request.schema.json`을 준수한다.\n9. 설명이나 Markdown을 붙이지 말고 JSON만 출력한다.\n",
+          "systemMessage": "# 질문 분석 Agent 시스템 프롬프트 v0.1.0\n\n당신은 운영 장애 분석 요청을 구조화하는 질문 분석 Agent다.\n\n사용자의 자연어 질문과 Slack 메시지 수신 시각을 이용하여 조사 기준을 정리한다.\n장애 원인이나 확인되지 않은 호스트를 추측하지 않는다.\n\n## 책임\n\n- 요청 유형 분류\n- 사용자가 언급한 호스트 또는 서비스명 추출\n- 장애 형태를 사용자의 표현에 가깝게 요약\n- 기준 날짜와 시각 해석\n- 초기 조사 시간 범위에 대한 힌트 생성\n- 모호성 식별\n\n## 명확화 답변 처리\n\n입력에 `answers_clarification`이 `true`이면, `question`은 새 요청이 아니라\n앞서 정보가 부족해 되물었던 질문에 대한 **사용자의 답변**이다. 이때\n`prior_question`에 원래 질문이 들어 있다.\n\n- 두 문장을 하나의 요청으로 합쳐서 해석한다. 답변만으로 판단하지 않는다.\n- 호스트, 시각, 장애 형태는 둘 중 어느 쪽에 있어도 채택한다. 보통 장애 형태는\n  원래 질문에, 빠져 있던 값은 답변에 있다.\n- `original_question`에는 합쳐진 맥락이 드러나도록 원래 질문을 기준으로 적고,\n  답변에서 확정된 값을 반영한다.\n- 합친 뒤에도 여전히 특정할 수 없는 정보가 있으면 다시\n  `needs_clarification`으로 지정한다. 답변을 받았다는 이유로 값을 지어내지\n  않는다.\n\n예: 원래 질문이 `\"CPU 상태 괜찮아?\"`이고 답변이 `\"test-java-docker-vm이야\"`면,\n호스트는 답변에서, 장애 형태는 원래 질문에서 가져와 `ready`로 만든다.\n\n## 규칙\n\n1. 기본 타임존은 입력으로 주어진 기본 타임존을 사용한다.\n2. 날짜가 생략되면 Slack 메시지가 작성된 날짜를 기준으로 해석한다.\n3. 호스트 또는 기준 시각을 특정할 수 없으면 임의 값을 만들지 않는다.\n4. 조사 가능한 상태면 `parse_status`를 `ready`로 지정한다.\n5. 추가 질문이 필요하면 `needs_clarification`으로 지정하고 누락된 정보를 `ambiguities`에 기록한다.\n6. 지원 범위 밖의 요청이면 `unsupported`로 지정한다.\n7. 최종 조사 범위나 조회할 메트릭을 확정하지 않는다. 이는 증거 수집 Agent의 책임이다.\n8. 모든 출력은 `parsed-request.schema.json`을 준수한다.\n9. 설명이나 Markdown을 붙이지 말고 JSON만 출력한다.\n",
           "maxIterations": 3,
           "returnIntermediateSteps": false
         }
@@ -588,7 +588,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const request = $('Normalize Request').first().json;\nconst parsed = $('Question Analyzer').first().json.output;\nconst ambiguities = Array.isArray(parsed.ambiguities) ? parsed.ambiguities : [];\nconst title = parsed.parse_status === 'unsupported'\n  ? '지원 범위를 벗어난 요청입니다.'\n  : '조사에 필요한 정보가 더 있습니다.';\nconst lines = ambiguities.length > 0\n  ? ambiguities.map((item, index) => (index + 1) + '. ' + item)\n  : ['호스트와 장애 발생 기준 시각을 알려주세요.'];\nreturn [{\n  json: {\n    text: '❓ *AIOps 요청 확인 필요*\\n요청 ID: ' + request.request_id + '\\n' + title + '\\n' + lines.join('\\n'),\n  },\n}];"
+        "jsCode": "const request = $('Normalize Request').first().json;\nconst parsed = $('Question Analyzer').first().json.output;\nconst ambiguities = Array.isArray(parsed.ambiguities) ? parsed.ambiguities : [];\nconst unsupported = parsed.parse_status === 'unsupported';\n\nconst lines = ambiguities.length > 0\n  ? ambiguities.map((item) => '• ' + item)\n  : ['• 조사할 호스트와 기준 시각을 알려주세요.'];\n\nconst header = unsupported\n  ? '⛔ *지원 범위를 벗어난 요청*'\n  : '❓ *조사에 필요한 정보가 더 있습니다*';\n\nconst sections = [\n  header,\n  '• 요청 ID: \\`' + request.request_id + '\\`',\n  lines.join('\\n'),\n];\n\n// Only invite a reply when one would actually help. An unsupported request\n// will not become supported by answering.\nif (!unsupported) {\n  sections.push('_이 스레드에 저를 멘션해서 답해주시면 원래 질문과 함께 이어서 조사합니다._');\n}\n\nreturn [{ json: { text: sections.join('\\n\\n') } }];"
       },
       "id": "e931fb72-ddcd-59f8-876e-df02a11fb964",
       "name": "Format Clarification",
@@ -619,7 +619,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.ts, text: $('Format Clarification').first().json.text }) }}",
+        "body": "={{ JSON.stringify({ channel: $('Normalize Request').first().json.channel_id, thread_ts: $('Normalize Request').first().json.thread_ts || $('Normalize Request').first().json.message_ts, text: $('Format Clarification').first().json.text }) }}",
         "options": {
           "timeout": 30000
         }
