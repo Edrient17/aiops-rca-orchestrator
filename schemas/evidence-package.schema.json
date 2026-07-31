@@ -1,0 +1,424 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiops.local/schemas/evidence-package.schema.json",
+  "title": "AIOps Evidence Package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request",
+    "query_context",
+    "investigation",
+    "observed_failure_mode",
+    "evidence",
+    "confirmed_facts",
+    "hypotheses",
+    "unknowns"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "original_question", "requested_by"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "original_question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "requested_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "query_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "host_id", "timezone", "anchor_time"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "host_id": {
+          "type": "string",
+          "pattern": "^\\d+$"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "anchor_time": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "investigation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initial_window",
+        "final_window",
+        "iterations",
+        "tool_calls",
+        "expansion_reasons",
+        "stop_reason",
+        "limit_reached"
+      ],
+      "properties": {
+        "initial_window": {
+          "$ref": "#/$defs/window"
+        },
+        "final_window": {
+          "$ref": "#/$defs/window"
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "tool_calls": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool_call_id", "tool_name", "purpose", "status"],
+            "properties": {
+              "tool_call_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "tool_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "purpose": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "status": {
+                "type": "string",
+                "enum": ["success", "partial", "failed"]
+              }
+            }
+          }
+        },
+        "expansion_reasons": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "stop_reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "limit_reached": {
+          "type": "boolean"
+        }
+      }
+    },
+    "observed_failure_mode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "confirmed_facts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fact", "evidence_refs"],
+        "properties": {
+          "fact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidence_refs": {
+            "$ref": "#/$defs/evidenceRefs"
+          }
+        }
+      }
+    },
+    "hypotheses": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "supporting_evidence_refs",
+          "contradicting_evidence_refs",
+          "confidence"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "supporting_evidence_refs": {
+            "$ref": "#/$defs/evidenceRefs"
+          },
+          "contradicting_evidence_refs": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          }
+        }
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    }
+  },
+  "$defs": {
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "evidence_type",
+        "source",
+        "summary",
+        "observed_at",
+        "window",
+        "resource_ids",
+        "metric",
+        "data_quality",
+        "tool_call_id"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^zbx:(event|trigger|metric):.+$"
+        },
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "event",
+            "trigger",
+            "metric_summary",
+            "metric_history",
+            "observation"
+          ]
+        },
+        "source": {
+          "const": "zabbix"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "observed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "window": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/window"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resource_ids": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["host_id", "event_id", "trigger_id", "item_id"],
+          "properties": {
+            "host_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "event_id": {
+              "type": ["string", "null"],
+              "pattern": "^\\d+$"
+            },
+            "trigger_id": {
+              "type": ["string", "null"],
+              "pattern": "^\\d+$"
+            },
+            "item_id": {
+              "type": ["string", "null"],
+              "pattern": "^\\d+$"
+            }
+          }
+        },
+        "metric": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "unit",
+                "min",
+                "max",
+                "avg",
+                "first",
+                "last",
+                "change_percent",
+                "trend"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "unit": {
+                  "type": ["string", "null"],
+                  "maxLength": 100
+                },
+                "min": {
+                  "type": ["number", "null"]
+                },
+                "max": {
+                  "type": ["number", "null"]
+                },
+                "avg": {
+                  "type": ["number", "null"]
+                },
+                "first": {
+                  "type": ["number", "null"]
+                },
+                "last": {
+                  "type": ["number", "null"]
+                },
+                "change_percent": {
+                  "type": ["number", "null"]
+                },
+                "trend": {
+                  "type": "string",
+                  "enum": [
+                    "increasing",
+                    "decreasing",
+                    "stable",
+                    "insufficient_data"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data_quality": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "data_source",
+                "sample_count",
+                "coverage_ratio",
+                "partial"
+              ],
+              "properties": {
+                "data_source": {
+                  "type": "string",
+                  "enum": ["history", "trends"]
+                },
+                "sample_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "coverage_ratio": {
+                  "type": ["number", "null"],
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "partial": {
+                  "type": "boolean"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_call_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    }
+  }
+}

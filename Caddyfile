@@ -1,0 +1,9 @@
+{$AIOPS_DOMAIN} {
+	handle /slack/events {
+		reverse_proxy ingress:8080
+	}
+
+	handle {
+		reverse_proxy n8n:5678
+	}
+}

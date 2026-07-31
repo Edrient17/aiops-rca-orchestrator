@@ -1,0 +1,179 @@
+name: aiops-rca-orchestrator
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aiops}
+      POSTGRES_USER: ${POSTGRES_USER:-aiops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - backend
+
+  ingress:
+    build:
+      context: ./ingress
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgresql://${POSTGRES_USER:-aiops}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aiops}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?SLACK_SIGNING_SECRET is required}
+      SLACK_QUESTION_CHANNEL_ID: ${SLACK_QUESTION_CHANNEL_ID:?SLACK_QUESTION_CHANNEL_ID is required}
+      SLACK_BOT_USER_ID: ${SLACK_BOT_USER_ID:-}
+      SLACK_APP_ID: ${SLACK_APP_ID:-}
+      SLACK_ALLOWED_USER_IDS: ${SLACK_ALLOWED_USER_IDS:-}
+      AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN:?AIOPS_INTERNAL_TOKEN is required}
+      N8N_INTERNAL_WEBHOOK_URL: http://n8n:5678/webhook/aiops-process
+      DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
+      DISPATCH_TIMEOUT_MS: ${DISPATCH_TIMEOUT_MS:-10000}
+    ports:
+      - "127.0.0.1:${AIOPS_INGRESS_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      n8n:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+      - edge
+
+  n8n-import:
+    image: n8nio/n8n:2.32.6
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        if ! n8n list:workflow | grep -q '^aiops-error-v010|';
+        then n8n import:workflow --input=/opt/aiops/workflows/99-aiops-error-handler.json;
+        fi
+        && if ! n8n list:workflow | grep -q '^aiops-main-v010|';
+        then n8n import:workflow --input=/opt/aiops/workflows/01-aiops-main.json;
+        fi
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-aiops}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-aiops}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
+      GENERIC_TIMEZONE: Asia/Seoul
+      TZ: Asia/Seoul
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/opt/aiops/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  n8n:
+    image: n8nio/n8n:2.32.6
+    restart: unless-stopped
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-aiops}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-aiops}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
+      N8N_HOST: ${AIOPS_DOMAIN:-localhost}
+      N8N_PROTOCOL: ${AIOPS_PROTOCOL:-http}
+      N8N_EDITOR_BASE_URL: ${AIOPS_PUBLIC_URL:-http://localhost:5678}
+      WEBHOOK_URL: ${AIOPS_PUBLIC_URL:-http://localhost:5678}
+      N8N_PROXY_HOPS: ${N8N_PROXY_HOPS:-1}
+      GENERIC_TIMEZONE: Asia/Seoul
+      TZ: Asia/Seoul
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
+      AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN}
+      AIOPS_CONTROL_URL: http://ingress:8080
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}
+      SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:?SLACK_ANSWER_CHANNEL_ID is required}
+      SLACK_ERROR_CHANNEL_ID: ${SLACK_ERROR_CHANNEL_ID:?SLACK_ERROR_CHANNEL_ID is required}
+      ZABBIX_MCP_URL: ${ZABBIX_MCP_URL:?ZABBIX_MCP_URL is required}
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/opt/aiops/workflows:ro
+      - ./prompts:/opt/aiops/prompts:ro
+      - ./schemas:/opt/aiops/schemas:ro
+    depends_on:
+      n8n-import:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5678/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - backend
+      - edge
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    environment:
+      AIOPS_DOMAIN: ${AIOPS_DOMAIN:?AIOPS_DOMAIN is required for proxy profile}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      ingress:
+        condition: service_healthy
+      n8n:
+        condition: service_healthy
+    networks:
+      - edge
+
+volumes:
+  postgres_data:
+  n8n_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  backend:
+    internal: true
+  edge:

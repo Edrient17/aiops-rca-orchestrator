@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiops.local/schemas/parsed-request.schema.json",
+  "title": "Parsed AIOps Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "parse_status",
+    "request_type",
+    "host_query",
+    "anchor_time",
+    "timezone",
+    "incident_description",
+    "incident_type_hint",
+    "user_intent",
+    "initial_window_hint",
+    "allow_dynamic_expansion",
+    "ambiguities",
+    "original_question"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "parse_status": {
+      "type": "string",
+      "enum": ["ready", "needs_clarification", "unsupported"]
+    },
+    "request_type": {
+      "type": "string",
+      "enum": ["incident_rca", "incident_summary", "metric_analysis", "unknown"]
+    },
+    "host_query": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "anchor_time": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "incident_description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "incident_type_hint": {
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "user_intent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "initial_window_hint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_minutes", "after_minutes"],
+      "properties": {
+        "before_minutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440
+        },
+        "after_minutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 240
+        }
+      }
+    },
+    "allow_dynamic_expansion": {
+      "type": "boolean"
+    },
+    "ambiguities": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "original_question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5000
+    }
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "id": "aiops-error-v010",
+  "name": "AIOps - Error Handler",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "14b2d989-b67f-514d-8d34-5cd248eb6ef0",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const payload = $input.first().json;\nconst execution = payload.execution ?? {};\nconst workflow = payload.workflow ?? {};\nconst error = execution.error ?? {};\nconst message = error.message ?? 'Unknown workflow error';\nconst executionId = execution.id ? String(execution.id) : undefined;\nconst workflowName = workflow.name ?? 'Unknown workflow';\nconst lastNode = execution.lastNodeExecuted ?? undefined;\nconst requestId = error.context?.request_id ?? undefined;\nconst details = {\n  stack: error.stack,\n  execution_url: execution.url,\n  mode: execution.mode,\n};\nreturn [{\n  json: {\n    error_record: {\n      ...(requestId ? { request_id: requestId } : {}),\n      workflow_name: workflowName,\n      ...(executionId ? { execution_id: executionId } : {}),\n      ...(lastNode ? { last_node: lastNode } : {}),\n      message,\n      details,\n    },\n    slack_text:\n      '🚨 *AIOps 워크플로 오류*\\n' +\n      'Workflow: ' + workflowName + '\\n' +\n      (executionId ? 'Execution: ' + executionId + '\\n' : '') +\n      (lastNode ? 'Last node: ' + lastNode + '\\n' : '') +\n      'Error: ' + message +\n      (execution.url ? '\\n' + execution.url : ''),\n  },\n}];"
+      },
+      "id": "8e651212-f478-5177-8430-dd5c453046e1",
+      "name": "Format Workflow Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AIOPS_CONTROL_URL + '/internal/errors' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AIOPS-Internal-Token",
+              "value": "={{ $env.AIOPS_INTERNAL_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($('Format Workflow Error').first().json.error_record) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "93b253c9-fcbd-5da4-87df-6916c0406701",
+      "name": "Record Workflow Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ channel: $env.SLACK_ERROR_CHANNEL_ID, text: $('Format Workflow Error').first().json.slack_text }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "51a4e9df-ad9f-5f05-8227-101641c1c68f",
+      "name": "Post Error Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        540,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Workflow Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Workflow Error": {
+      "main": [
+        [
+          {
+            "node": "Record Workflow Error",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Post Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "741b1e6e-856c-5237-8262-d3e1e7012cbd",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
