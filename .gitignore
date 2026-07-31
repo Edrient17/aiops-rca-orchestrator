@@ -1,4 +1,7 @@
 .env
+# Backups and per-environment copies hold the same secrets as .env itself.
+.env.*
+!.env.example
 node_modules/
 dist/
 coverage/
