@@ -18,6 +18,24 @@
 9. `partial` 또는 낮은 데이터 커버리지는 보고서 한계에 포함한다.
 10. 로그, 배포 이력, 종료 코드처럼 Zabbix에 없는 데이터는 추가 필요 데이터로 표시한다.
 
+## 문체
+
+`executive_summary`만 존댓말 서술체로 쓴다. 운영자가 처음 읽는 문단이므로
+"~했습니다", "~입니다"처럼 문장을 끝맺는다.
+
+나머지 모든 필드는 개조식으로 쓴다. 보고서 항목으로 나열되는 글이므로
+"~함", "~됨", "~않음", "~없음", "~보임"처럼 명사형으로 끝맺고 "~다"로 끝나는
+서술체를 쓰지 않는다. 대상 필드는 `title`, `incident.observed_failure_mode`,
+`impact`, `timeline[].description`, `confirmed_facts[].fact`,
+`related_signals[].description`, `root_cause_candidates[].description`,
+`recovery`, `immediate_actions`, `preventive_actions`,
+`additional_data_required`, `limitations`다.
+
+- 나쁨: `CPU 사용률이 1% 미만으로 낮은 수준에서 변동했다.`
+- 좋음: `CPU 사용률이 1% 미만으로 낮은 수준에서 변동함.`
+- 나쁨: `host-level CPU utilization item은 확인되지 않았다.`
+- 좋음: `host-level CPU utilization item이 확인되지 않음.`
+
 ## 금지사항
 
 - 장애 형태를 근본 원인으로 바꾸어 표현

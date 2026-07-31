@@ -625,7 +625,7 @@ const candidates = (rca.root_cause_candidates || []).map((item) => {
   const lines = ['• *[' + String(item.confidence || '?').toUpperCase() + ']* ' + item.description];
   const support = cite(item.supporting_evidence_refs);
   const against = cite(item.contradicting_evidence_refs);
-  if (support) lines.push('    ↳ 지지' + support);
+  if (support) lines.push('    ↳ 근거' + support);
   if (against) lines.push('    ↳ 반박' + against);
   return lines.join('\n');
 });
