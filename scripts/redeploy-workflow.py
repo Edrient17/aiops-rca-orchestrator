@@ -22,9 +22,11 @@ Run it on the orchestrator host, from the repository directory:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 WORKFLOW_ID = "aiops-main-v010"
 SOURCE = "workflows/01-aiops-main.json"
@@ -50,26 +52,50 @@ def fail(message):
     sys.exit(1)
 
 
-# The workflow's own executionTimeout is the ceiling on how long a live run can
-# last. Anything older is debris -- a crashed n8n leaves rows in `new` that never
-# start, and those must not block deploys forever.
+# Backstop for when the container start time cannot be read: an execution cannot
+# outlive the workflow's own executionTimeout.
 LIVE_WINDOW_SECONDS = 900
 
 
+def n8n_started_epoch():
+    """When the current n8n process started, or None if that cannot be read."""
+    container = run(["docker", "compose", "ps", "-q", "n8n"]).stdout.strip()
+    if not container:
+        return None
+    raw = run(["docker", "inspect", "--format", "{{.State.StartedAt}}",
+               container]).stdout.strip()
+    if not raw:
+        return None
+    # Docker reports nanoseconds; datetime parses at most microseconds.
+    cleaned = re.sub(r"\.(\d{6})\d*", r".\1", raw.replace("Z", "+00:00"))
+    try:
+        return datetime.fromisoformat(cleaned).timestamp()
+    except ValueError:
+        return None
+
+
 def in_flight():
-    """Splits stuck executions into ones that could still be running and debris."""
+    """Splits stuck executions into ones that could still be running and debris.
+
+    An execution created before the current n8n process started cannot be
+    running in it: n8n neither resumed nor discarded the row, so it is a
+    leftover from a crash or restart and will sit there forever.
+    """
     rows = psql(
-        "select id || '|' || status || '|' || "
-        "round(extract(epoch from (now() - \"createdAt\"))) "
+        "select id || '|' || status || '|' || extract(epoch from \"createdAt\") "
+        "|| '|' || round(extract(epoch from (now() - \"createdAt\"))) "
         "from execution_entity where status in ('running','new','waiting') "
         "order by id;")
+    boot = n8n_started_epoch()
     live, stale = [], []
     for line in rows.splitlines():
-        if line.count("|") != 2:
+        if line.count("|") != 3:
             continue
-        execution_id, status, age = line.split("|")
+        execution_id, status, created, age = line.split("|")
         entry = (execution_id, status, int(float(age)))
-        (live if entry[2] < LIVE_WINDOW_SECONDS else stale).append(entry)
+        predates_boot = boot is not None and float(created) < boot
+        too_old = int(float(age)) >= LIVE_WINDOW_SECONDS
+        (stale if predates_boot or too_old else live).append(entry)
     return live, stale
 
 
@@ -97,7 +123,7 @@ def main():
         live, stale = in_flight()
 
     for execution_id, status, age in stale:
-        print("  ignoring #{} ({}, stuck {}m) -- older than a run can last".format(
+        print("  ignoring #{} ({}, stuck {}m) -- cannot be running any more".format(
             execution_id, status, age // 60))
 
     if live:
