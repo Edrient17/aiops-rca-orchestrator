@@ -116,15 +116,29 @@ Invoke-RestMethod http://127.0.0.1:5678/healthz
 것도 하지 않고 종료합니다. 따라서 재시작이나 `.env` 변경으로 컨테이너가
 재생성되어도 UI에서 수정한 내용(특히 credential 연결)을 덮어쓰지 않습니다.
 
-파일의 새 버전을 강제로 반영하려면 마커를 지우고 다시 올립니다.
+파일의 새 버전을 반영할 때는 orchestrator 호스트에서 재배포 스크립트를
+사용합니다.
 
-```powershell
-docker compose run --rm --entrypoint sh n8n-import -c `
-  'rm -f /home/node/.n8n/.aiops-workflows-imported'
-docker compose up -d
+```bash
+python3 scripts/redeploy-workflow.py
 ```
 
-UI에서 직접 import해도 됩니다.
+import는 워크플로의 노드 목록을 통째로 교체하므로 UI에서 지정한 credential
+연결이 사라지고, import 직후 워크플로가 비활성화되며, 변경은 n8n 재시작 후에야
+반영됩니다. 스크립트가 이 세 가지를 순서대로 처리합니다 — 현재 credential
+연결을 새 파일에 옮겨 담고, import한 뒤, 재활성화하고 재시작합니다.
+
+n8n을 재시작하면 **실행 중이던 조사가 중단됩니다.** 중단된 실행은 자신의 실패를
+보고하지도 못합니다. n8n이 이미 닫은 DB 커넥션으로 오류 워크플로를 호출하려다
+실패하므로, 해당 요청은 Slack에 아무 설명도 남기지 못한 채 방치됩니다. 그래서
+스크립트는 진행 중인 실행이 있으면 중단합니다.
+
+```bash
+python3 scripts/redeploy-workflow.py --wait 300   # 끝날 때까지 최대 5분 대기
+python3 scripts/redeploy-workflow.py --force      # 손실을 감수하고 강행
+```
+
+UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정해야 합니다.
 
 ## 5. 보안 경계
 
