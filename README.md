@@ -74,8 +74,19 @@ docker compose --profile proxy up -d --build
 - ingress: `127.0.0.1:8080`
 - n8n: `127.0.0.1:5678`
 
-외부 reverse proxy는 `/slack/events`를 ingress 8080으로, 나머지 n8n 경로를
-5678로 전달해야 합니다.
+외부 reverse proxy는 `/slack/events`만 ingress 8080으로 전달하면 됩니다.
+
+n8n editor는 공개하지 않습니다. 포함된 Caddyfile도 `/slack/events` 외의 모든
+경로에 404를 반환합니다. editor에는 SSH 터널로 접근합니다.
+
+```powershell
+ssh -L 5678:127.0.0.1:5678 <orchestrator-host>
+```
+
+editor를 공개하면 Slack Bot Token, MCP Bearer Token, OpenAI credential과 Code
+노드의 임의 코드 실행이 owner 로그인 하나에만 의존하게 됩니다. 특히 owner
+계정을 만들기 전에 공개하면 먼저 접근한 사람이 owner를 선점할 수 있으므로,
+`--profile proxy`로 공개하기 전에 터널로 owner 계정을 먼저 만드십시오.
 
 상태 확인:
 

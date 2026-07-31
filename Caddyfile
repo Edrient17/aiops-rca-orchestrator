@@ -1,9 +1,16 @@
+# Slack is the only party that needs to reach this host, and /slack/events is
+# the only path it calls. The n8n editor is deliberately NOT published here:
+# it holds the Slack bot token, the MCP bearer token, the OpenAI credential and
+# arbitrary code execution through Code nodes, so it is reached over an SSH
+# tunnel to 127.0.0.1:5678 instead.
 {$AIOPS_DOMAIN} {
 	handle /slack/events {
 		reverse_proxy ingress:8080
 	}
 
+	# Everything else, including the editor and webhook paths, is not served.
+	# 404 rather than 403 so this does not confirm what is running behind it.
 	handle {
-		reverse_proxy n8n:5678
+		respond "Not Found" 404
 	}
 }
