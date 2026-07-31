@@ -53,3 +53,26 @@ CPU 온도처럼 해당 장애와 인과 관계가 불명확한 메트릭은 단
 - 가설의 지지 및 반박 근거는 Evidence ID로 연결한다.
 - 데이터 부재와 불충분한 품질은 `unknowns`에 기록한다.
 - 최종 출력은 `evidence-package.schema.json`을 준수하는 JSON만 반환한다.
+
+## 스키마 준수
+
+스키마는 모든 객체에 `additionalProperties: false`를 적용한다. 정의되지 않은
+키를 하나라도 추가하면 출력 전체가 거부되므로, 기록할 곳이 없는 정보는
+`summary` 문장에 서술하거나 버린다. 새 필드를 만들지 않는다.
+
+`metric`과 `data_quality`는 자유 형식 객체가 아니다. 각각 정해진 필드를 모두
+갖춘 객체이거나 `null`이며, 그 중간은 없다.
+
+- `metric`은 단일 수치 시계열을 요약한 Evidence에만 채운다. 채울 때는 `name`,
+  `unit`, `min`, `max`, `avg`, `first`, `last`, `change_percent`, `trend`를 모두
+  포함한다. 그 외의 Evidence에서는 반드시 `null`로 둔다.
+- `data_quality`는 MCP가 `data_quality`를 반환한 Evidence에만 채우고, MCP가 준
+  값을 그대로 옮긴다. 그렇지 않으면 `null`로 둔다.
+- 조회 건수, 검색 키워드, 카탈로그 절단 여부 같은 조사 과정의 부산물은
+  `metric`이나 `data_quality`에 넣지 않는다. 의미가 있으면 `summary`에 적고,
+  판단에 영향을 주면 `unknowns`에 적는다.
+
+`window`는 `from`과 `to`가 필수이며, MCP 집계 결과에서 온 Evidence에 한해
+`aggregation`을 덧붙일 수 있다.
+
+필수 키는 값이 없더라도 생략하지 않는다. 값이 없으면 `null`을 넣는다.

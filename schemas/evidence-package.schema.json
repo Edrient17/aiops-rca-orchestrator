@@ -230,6 +230,11 @@
         "to": {
           "type": "string",
           "format": "date-time"
+        },
+        "aggregation": {
+          "type": ["string", "null"],
+          "enum": ["raw", "1m", "5m", "15m", "1h", "6h", "1d", null],
+          "description": "Bucket size the MCP aggregated this window at. Optional because investigation windows carry no aggregation of their own."
         }
       }
     },
@@ -370,6 +375,11 @@
                     "stable",
                     "insufficient_data"
                   ]
+                },
+                "key": {
+                  "type": ["string", "null"],
+                  "maxLength": 500,
+                  "description": "Zabbix item key such as system.cpu.util, which identifies the metric more precisely than its display name."
                 }
               }
             },
@@ -405,6 +415,16 @@
                 },
                 "partial": {
                   "type": "boolean"
+                },
+                "returned_points": {
+                  "type": ["integer", "null"],
+                  "minimum": 0,
+                  "description": "Aggregated points the MCP actually returned. Part of the data_quality object every metric tool returns."
+                },
+                "expected_buckets": {
+                  "type": ["integer", "null"],
+                  "minimum": 0,
+                  "description": "Buckets the window would hold at this aggregation. With sample_count it explains how coverage_ratio was derived."
                 }
               }
             },
