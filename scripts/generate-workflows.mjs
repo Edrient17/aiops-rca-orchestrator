@@ -84,11 +84,13 @@ function buildMainWorkflow(input) {
       [960, 0],
       "internal",
     ),
+    codeNode("Stamp Question Start", [1080, 0], stampCode),
     agentNode(
       "Question Analyzer",
       [1200, 0],
       input.questionPrompt,
       "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul' }, null, 2) }}",
+      3,
     ),
     modelNode("Question Model", [1120, 260], "gpt-5.4-mini", "low"),
     parserNode("Parsed Request Parser", [1320, 260], input.parsedSchema),
@@ -96,7 +98,7 @@ function buildMainWorkflow(input) {
       "Persist Question Result",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: 'gpt-5.4-mini', output: $('Question Analyzer').first().json.output }) }}",
+      "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: 'gpt-5.4-mini', duration_ms: Date.now() - $('Stamp Question Start').first().json.stage_started_ms, output: $('Question Analyzer').first().json.output }) }}",
       [1440, 0],
       "internal",
     ),
@@ -106,11 +108,13 @@ function buildMainWorkflow(input) {
       "ready",
       [1680, 0],
     ),
+    codeNode("Stamp Evidence Start", [1800, -140], stampCode),
     agentNode(
       "Evidence Collector",
       [1920, -140],
       input.evidencePrompt,
       "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, limits: { max_iterations: 8, max_tool_calls: 30, max_window_hours: 24 } }, null, 2) }}",
+      8,
     ),
     modelNode("Investigation Model", [1840, 140], "gpt-5.4", "medium"),
     parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema),
@@ -119,15 +123,17 @@ function buildMainWorkflow(input) {
       "Persist Evidence Result",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: 'gpt-5.4', output: $('Evidence Collector').first().json.output }) }}",
+      "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: 'gpt-5.4', duration_ms: Date.now() - $('Stamp Evidence Start').first().json.stage_started_ms, output: $('Evidence Collector').first().json.output }) }}",
       [2160, -140],
       "internal",
     ),
+    codeNode("Stamp RCA Start", [2280, -140], stampCode),
     agentNode(
       "RCA Writer",
       [2400, -140],
       input.rcaPrompt,
       "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, evidence_package: $('Evidence Collector').first().json.output }, null, 2) }}",
+      3,
     ),
     modelNode("RCA Model", [2360, 140], "gpt-5.4-mini", "medium"),
     parserNode("RCA Report Parser", [2560, 140], input.rcaSchema),
@@ -135,7 +141,7 @@ function buildMainWorkflow(input) {
       "Persist RCA Result",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: 'gpt-5.4-mini', output: $('RCA Writer').first().json.output }) }}",
+      "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: 'gpt-5.4-mini', duration_ms: Date.now() - $('Stamp RCA Start').first().json.stage_started_ms, output: $('RCA Writer').first().json.output }) }}",
       [2640, -140],
       "internal",
     ),
@@ -144,7 +150,7 @@ function buildMainWorkflow(input) {
       "Post RCA Report",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
       [3120, -140],
       "slack",
     ),
@@ -162,7 +168,7 @@ function buildMainWorkflow(input) {
       "Post Clarification",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format Clarification').first().json.text }) }}",
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.ts, text: $('Format Clarification').first().json.text }) }}",
       [2160, 360],
       "slack",
     ),
@@ -182,13 +188,16 @@ function buildMainWorkflow(input) {
   connectMain(connections, "Normalize Request", "Post Business ACK");
   connectMain(connections, "Post Business ACK", "Assert ACK Posted");
   connectMain(connections, "Assert ACK Posted", "Mark Analyzing");
-  connectMain(connections, "Mark Analyzing", "Question Analyzer");
+  connectMain(connections, "Mark Analyzing", "Stamp Question Start");
+  connectMain(connections, "Stamp Question Start", "Question Analyzer");
   connectMain(connections, "Question Analyzer", "Persist Question Result");
   connectMain(connections, "Persist Question Result", "Request Ready?");
-  connectMain(connections, "Request Ready?", "Evidence Collector", 0);
+  connectMain(connections, "Request Ready?", "Stamp Evidence Start", 0);
   connectMain(connections, "Request Ready?", "Format Clarification", 1);
+  connectMain(connections, "Stamp Evidence Start", "Evidence Collector");
   connectMain(connections, "Evidence Collector", "Persist Evidence Result");
-  connectMain(connections, "Persist Evidence Result", "RCA Writer");
+  connectMain(connections, "Persist Evidence Result", "Stamp RCA Start");
+  connectMain(connections, "Stamp RCA Start", "RCA Writer");
   connectMain(connections, "RCA Writer", "Persist RCA Result");
   connectMain(connections, "Persist RCA Result", "Format RCA for Slack");
   connectMain(connections, "Format RCA for Slack", "Post RCA Report");
@@ -219,6 +228,10 @@ function buildMainWorkflow(input) {
       saveDataSuccessExecution: "all",
       saveManualExecutions: true,
       callerPolicy: "workflowsFromSameOwner",
+      // A hard ceiling on the whole run. maxIterations bounds each agent, but
+      // only this bounds the request as a whole, so a stuck model or a slow
+      // Zabbix cannot burn tokens indefinitely. A healthy run takes ~2 minutes.
+      executionTimeout: 900,
     },
     staticData: null,
     pinData: {},
@@ -298,7 +311,10 @@ function codeNode(name, position, jsCode) {
   });
 }
 
-function agentNode(name, position, systemMessage, text) {
+// maxIterations is the only hard ceiling n8n enforces on an agent, so it is set
+// per agent rather than left at a single default: the investigator needs room to
+// iterate over tools, while the two agents that call no tools should never loop.
+function agentNode(name, position, systemMessage, text, maxIterations) {
   return node(name, "@n8n/n8n-nodes-langchain.agent", 3.1, position, {
     promptType: "define",
     text,
@@ -306,7 +322,7 @@ function agentNode(name, position, systemMessage, text) {
     needsFallback: false,
     options: {
       systemMessage,
-      maxIterations: 10,
+      maxIterations,
       returnIntermediateSteps: false,
     },
   });
@@ -527,6 +543,13 @@ if (response.ok !== true) {
   throw new Error('Slack API error: ' + (response.error ?? 'unknown_error'));
 }
 return $input.all();
+`.trim();
+
+// Records when a stage begins so the persist call after it can report how long
+// the stage took. Without this the agent_runs.duration_ms column stays empty and
+// per-stage latency can only be recovered by parsing n8n's internal run data.
+const stampCode = String.raw`
+return [{ json: { ...$input.first().json, stage_started_ms: Date.now() } }];
 `.trim();
 
 const formatClarificationCode = String.raw`
