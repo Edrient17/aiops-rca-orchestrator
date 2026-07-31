@@ -552,40 +552,117 @@ const parsed = $('Question Analyzer').first().json.output;
 const evidence = $('Evidence Collector').first().json.output;
 const rca = $('RCA Writer').first().json.output;
 
-const bulletList = (items, emptyText) => {
-  if (!Array.isArray(items) || items.length === 0) return '• ' + emptyText;
-  return items.map((item) => '• ' + item).join('\n');
+// Evidence IDs are long enough to swamp the prose they support, so cite them as
+// footnote markers and print the mapping once at the end. Traceability survives;
+// the reader is not asked to parse zbx:metric:118168:1785479458-... mid-sentence.
+const refs = [];
+const refNumber = (id) => {
+  const seen = refs.indexOf(id);
+  if (seen >= 0) return seen + 1;
+  refs.push(id);
+  return refs.length;
 };
-const factList = Array.isArray(rca.confirmed_facts) && rca.confirmed_facts.length > 0
-  ? rca.confirmed_facts.map((item) => '• ' + item.fact + ' (' + item.evidence_refs.join(', ') + ')').join('\n')
-  : '• 확인된 사실 없음';
-const candidates = Array.isArray(rca.root_cause_candidates) && rca.root_cause_candidates.length > 0
-  ? rca.root_cause_candidates.map((item) =>
-      '• [' + item.confidence.toUpperCase() + '] ' + item.description +
-      '\n  근거: ' + item.supporting_evidence_refs.join(', ')
-    ).join('\n')
-  : '• 현재 증거로 평가 가능한 원인 후보 없음';
-const window = evidence.investigation?.final_window;
-const windowText = window ? window.from + ' ~ ' + window.to : '확인 불가';
+const cite = (ids) => (Array.isArray(ids) && ids.length > 0)
+  ? ' ' + ids.map((id) => '[' + refNumber(id) + ']').join('')
+  : '';
+
+const bullets = (items, emptyText) => {
+  if (!Array.isArray(items) || items.length === 0) return '• _' + emptyText + '_';
+  return items
+    .map((item) => '• ' + (typeof item === 'string' ? item : JSON.stringify(item)))
+    .join('\n');
+};
+
+const asTime = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf())) return String(value);
+  return parsed.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+};
+
+const section = (heading, body) => '*' + heading + '*\n' + body;
+
+// --- 장애 개요 ------------------------------------------------------------
+const incident = rca.incident || {};
+const overview = ['• 관측된 형태: ' + (incident.observed_failure_mode || '확인 불가')];
+if (incident.started_at) overview.push('• 발생: ' + asTime(incident.started_at));
+if (incident.recovered_at) overview.push('• 복구: ' + asTime(incident.recovered_at));
+if (typeof incident.duration_seconds === 'number') {
+  overview.push('• 지속: ' + Math.round(incident.duration_seconds / 60) + '분');
+}
+
+// --- 영향 ----------------------------------------------------------------
+const impact = rca.impact || {};
+const impactLines = [];
+for (const item of impact.confirmed || []) impactLines.push('• *확인됨* ' + item);
+for (const item of impact.unconfirmed || []) impactLines.push('• _미확인_ ' + item);
+if (impactLines.length === 0) impactLines.push('• _영향이 확인되지 않음_');
+
+// --- 조사 범위 ------------------------------------------------------------
+const finalWindow = evidence.investigation && evidence.investigation.final_window;
+const windowLine = finalWindow
+  ? '• ' + asTime(finalWindow.from) + ' ~ ' + asTime(finalWindow.to) + ' (KST)'
+  : '• _확인 불가_';
+
+// --- 확인된 사실 ----------------------------------------------------------
+const facts = (rca.confirmed_facts || []).map(
+  (item) => '• ' + item.fact + cite(item.evidence_refs),
+);
+
+// --- 타임라인 -------------------------------------------------------------
+const timeline = (rca.timeline || []).map(
+  (item) => '• \`' + asTime(item.time) + '\`  ' + item.description + cite(item.evidence_refs),
+);
+
+// --- 관련 신호 ------------------------------------------------------------
+const signals = (rca.related_signals || []).map((item) => {
+  const relation = item.relationship ? ' _(' + item.relationship + ')_' : '';
+  return '• ' + item.description + relation + cite(item.evidence_refs);
+});
+
+// --- 원인 후보 ------------------------------------------------------------
+const candidates = (rca.root_cause_candidates || []).map((item) => {
+  const lines = ['• *[' + String(item.confidence || '?').toUpperCase() + ']* ' + item.description];
+  const support = cite(item.supporting_evidence_refs);
+  const against = cite(item.contradicting_evidence_refs);
+  if (support) lines.push('    ↳ 지지' + support);
+  if (against) lines.push('    ↳ 반박' + against);
+  return lines.join('\n');
+});
 
 const sections = [
   '📋 *' + rca.title + '*',
-  '요청 ID: ' + request.request_id,
-  '*요약*\n' + rca.executive_summary,
-  '*관측된 장애 형태*\n' + rca.incident.observed_failure_mode,
-  '*조사 범위*\n' + windowText,
-  '*확인된 사실*\n' + factList,
-  '*원인 후보 — 확정 원인 아님*\n' + candidates,
-  '*즉시 권고*\n' + bulletList(rca.immediate_actions, '권고 없음'),
-  '*추가 필요 데이터*\n' + bulletList(rca.additional_data_required, '없음'),
-  '*한계*\n' + bulletList(rca.limitations, '명시된 한계 없음'),
-  '_원 질문: ' + parsed.original_question + '_',
+  '• 요청 ID: \`' + request.request_id + '\`\n• 호스트: ' + (incident.host || '확인 불가') +
+    '\n• 심각도: ' + (incident.severity || '확인 불가'),
+  section('요약', rca.executive_summary),
+  section('장애 개요', overview.join('\n')),
+  section('영향', impactLines.join('\n')),
+  section('조사 범위', windowLine),
+  section('확인된 사실', facts.length ? facts.join('\n') : '• _확인된 사실 없음_'),
+  section('타임라인', timeline.length ? timeline.join('\n') : '• _기록된 사건 없음_'),
+  section('관련 신호', signals.length ? signals.join('\n') : '• _관련 신호 없음_'),
+  section('원인 후보 — 확정 원인 아님',
+    candidates.length ? candidates.join('\n') : '• _현재 증거로 평가 가능한 원인 후보 없음_'),
+  section('복구', bullets(rca.recovery, '복구 조치가 확인되지 않음')),
+  section('즉시 권고', bullets(rca.immediate_actions, '권고 없음')),
+  section('예방 권고', bullets(rca.preventive_actions, '권고 없음')),
+  section('추가 필요 데이터', bullets(rca.additional_data_required, '없음')),
+  section('분석 한계', bullets(rca.limitations, '명시된 한계 없음')),
 ];
+
+// Built last so every marker above has already been numbered.
+if (refs.length > 0) {
+  sections.push(section('근거',
+    refs.map((id, index) => '\`[' + (index + 1) + ']\` \`' + id + '\`').join('\n')));
+}
+sections.push('_원 질문: ' + parsed.original_question + '_');
+
 const slackMarkdown = sections.join('\n\n').slice(0, 39000);
 return [{
   json: {
     request_id: request.request_id,
     slack_markdown: slackMarkdown,
+    evidence_ref_count: refs.length,
   },
 }];
 `.trim();
