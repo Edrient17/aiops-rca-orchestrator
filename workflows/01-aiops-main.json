@@ -39,6 +39,20 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $('Normalize Request').first().json;\nconst continues = Boolean(request.parent_request_id) && Boolean(request.prior_question);\n\nconst lines = [\n  continues ? '🔎 *AIOps 조사 재개*' : '🔎 *AIOps 조사 접수*',\n  '• 요청 ID: \\`' + request.request_id + '\\`',\n];\n\nif (continues) {\n  lines.push('• 원래 질문: ' + request.prior_question);\n  lines.push('• 보충된 정보: ' + request.question);\n  lines.push('• 이어받은 요청: \\`' + request.parent_request_id + '\\`');\n} else {\n  lines.push('• 질문: ' + request.question);\n}\n\nreturn [{ json: { text: lines.join('\\n') } }];"
+      },
+      "id": "47cd1bc7-5909-5cfb-874a-372868e7b8dc",
+      "name": "Format ACK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        0
+      ]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://slack.com/api/chat.postMessage",
         "sendHeaders": true,
@@ -57,7 +71,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: '🔎 *AIOps 조사 접수*\\n요청 ID: `' + $('Normalize Request').first().json.request_id + '`\\n질문: ' + $('Normalize Request').first().json.question }) }}",
+        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text }) }}",
         "options": {
           "timeout": 30000
         }
@@ -695,6 +709,17 @@
       ]
     },
     "Normalize Request": {
+      "main": [
+        [
+          {
+            "node": "Format ACK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format ACK": {
       "main": [
         [
           {

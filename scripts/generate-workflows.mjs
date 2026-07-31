@@ -67,11 +67,12 @@ function buildMainWorkflow(input) {
       { webhookId: "aiops-process-v010" },
     ),
     codeNode("Normalize Request", [240, 0], normalizeRequestCode),
+    codeNode("Format ACK", [360, 0], formatAckCode),
     httpNode(
       "Post Business ACK",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: '🔎 *AIOps 조사 접수*\\n요청 ID: `' + $('Normalize Request').first().json.request_id + '`\\n질문: ' + $('Normalize Request').first().json.question }) }}",
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text }) }}",
       [480, 0],
       "slack",
     ),
@@ -188,7 +189,8 @@ function buildMainWorkflow(input) {
 
   const connections = {};
   connectMain(connections, "AIOps Internal Webhook", "Normalize Request");
-  connectMain(connections, "Normalize Request", "Post Business ACK");
+  connectMain(connections, "Normalize Request", "Format ACK");
+  connectMain(connections, "Format ACK", "Post Business ACK");
   connectMain(connections, "Post Business ACK", "Assert ACK Posted");
   connectMain(connections, "Assert ACK Posted", "Mark Analyzing");
   connectMain(connections, "Mark Analyzing", "Stamp Question Start");
@@ -553,6 +555,29 @@ return $input.all();
 // per-stage latency can only be recovered by parsing n8n's internal run data.
 const stampCode = String.raw`
 return [{ json: { ...$input.first().json, stage_started_ms: Date.now() } }];
+`.trim();
+
+// A request that answers a clarification is a continuation, not a new question.
+// Announcing it with the reply text alone ("아 midibus-docker-ftp03에서") reads
+// as nonsense in the answer channel, where the original question is not visible.
+const formatAckCode = String.raw`
+const request = $('Normalize Request').first().json;
+const continues = Boolean(request.parent_request_id) && Boolean(request.prior_question);
+
+const lines = [
+  continues ? '🔎 *AIOps 조사 재개*' : '🔎 *AIOps 조사 접수*',
+  '• 요청 ID: \`' + request.request_id + '\`',
+];
+
+if (continues) {
+  lines.push('• 원래 질문: ' + request.prior_question);
+  lines.push('• 보충된 정보: ' + request.question);
+  lines.push('• 이어받은 요청: \`' + request.parent_request_id + '\`');
+} else {
+  lines.push('• 질문: ' + request.question);
+}
+
+return [{ json: { text: lines.join('\n') } }];
 `.trim();
 
 const formatClarificationCode = String.raw`
