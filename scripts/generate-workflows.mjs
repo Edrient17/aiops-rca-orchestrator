@@ -655,7 +655,6 @@ if (refs.length > 0) {
   sections.push(section('근거',
     refs.map((id, index) => '\`[' + (index + 1) + ']\` \`' + id + '\`').join('\n')));
 }
-sections.push('_원 질문: ' + parsed.original_question + '_');
 
 const slackMarkdown = sections.join('\n\n').slice(0, 39000);
 return [{
