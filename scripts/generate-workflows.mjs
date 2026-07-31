@@ -601,9 +601,13 @@ const lines = ambiguities.length > 0
   ? ambiguities.map((item) => '• ' + item)
   : ['• 조사할 호스트와 기준 시각을 알려주세요.'];
 
+// Ping the asker. Slack notifies thread participants only weakly, and this
+// message is a question addressed to them -- it is waiting on their reply.
+const mention = request.user_id ? '<@' + request.user_id + '> ' : '';
+
 const header = unsupported
-  ? '⛔ *지원 범위를 벗어난 요청*'
-  : '❓ *조사에 필요한 정보가 더 있습니다*';
+  ? '⛔ ' + mention + '*지원 범위를 벗어난 요청입니다*'
+  : '❓ ' + mention + '*조사에 필요한 정보가 더 있습니다*';
 
 const sections = [
   header,
