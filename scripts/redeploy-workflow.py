@@ -50,10 +50,27 @@ def fail(message):
     sys.exit(1)
 
 
-def busy_executions():
-    return int(psql(
-        "select count(*) from execution_entity "
-        "where status in ('running','new','waiting');") or 0)
+# The workflow's own executionTimeout is the ceiling on how long a live run can
+# last. Anything older is debris -- a crashed n8n leaves rows in `new` that never
+# start, and those must not block deploys forever.
+LIVE_WINDOW_SECONDS = 900
+
+
+def in_flight():
+    """Splits stuck executions into ones that could still be running and debris."""
+    rows = psql(
+        "select id || '|' || status || '|' || "
+        "round(extract(epoch from (now() - \"createdAt\"))) "
+        "from execution_entity where status in ('running','new','waiting') "
+        "order by id;")
+    live, stale = [], []
+    for line in rows.splitlines():
+        if line.count("|") != 2:
+            continue
+        execution_id, status, age = line.split("|")
+        entry = (execution_id, status, int(float(age)))
+        (live if entry[2] < LIVE_WINDOW_SECONDS else stale).append(entry)
+    return live, stale
 
 
 def main():
@@ -72,14 +89,20 @@ def main():
 
     print()
     print("== in-flight executions ==")
-    busy = busy_executions()
+    live, stale = in_flight()
     deadline = time.time() + args.wait
-    while busy and time.time() < deadline:
-        print("  {} still running, waiting...".format(busy))
+    while live and time.time() < deadline:
+        print("  {} still running, waiting...".format(len(live)))
         time.sleep(10)
-        busy = busy_executions()
-    if busy:
-        print("  {} execution(s) in progress".format(busy))
+        live, stale = in_flight()
+
+    for execution_id, status, age in stale:
+        print("  ignoring #{} ({}, stuck {}m) -- older than a run can last".format(
+            execution_id, status, age // 60))
+
+    if live:
+        for execution_id, status, age in live:
+            print("  #{} {}, {}s old".format(execution_id, status, age))
         if not args.force:
             fail(
                 "restarting now would kill them, and a killed execution cannot\n"
@@ -88,7 +111,7 @@ def main():
                 "       accept losing them.")
         print("  --force given, continuing anyway")
     else:
-        print("  none")
+        print("  none in progress")
 
     print()
     print("== carry credential assignments across ==")
