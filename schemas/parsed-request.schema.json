@@ -78,7 +78,8 @@
         "after_minutes": {
           "type": "integer",
           "minimum": 5,
-          "maximum": 240
+          "maximum": 1440,
+          "description": "Matches before_minutes. Asking about yesterday needs as much room after the anchor as before it, to see whether the incident recovered. This is only a hint: the Evidence Collector chooses the real window and the MCP caps it."
         }
       }
     },
