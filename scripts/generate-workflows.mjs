@@ -651,6 +651,67 @@ const refNumber = (id) => {
   refs.push(id);
   return refs.length;
 };
+
+// After reading the report the operator's next move is to open the graph, so
+// the footnotes carry a way back into Zabbix. Everything needed is already on
+// the evidence entry: resource_ids identifies what to open, window scopes it to
+// the interval that was actually examined.
+const evidenceById = new Map(
+  (evidence.evidence || []).map((item) => [item.evidence_id, item]),
+);
+const zabbixBase = ($env.ZABBIX_FRONTEND_URL || '').replace(/\/+$/, '');
+
+const zabbixTime = (iso) => {
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.valueOf())
+    ? null
+    : parsed.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+};
+
+const zabbixLink = (id) => {
+  if (!zabbixBase) return null;
+  const item = evidenceById.get(id);
+  const ids = (item && item.resource_ids) || {};
+  const window = (item && item.window) || {};
+
+  let range = '';
+  const from = zabbixTime(window.from);
+  const to = zabbixTime(window.to);
+  if (from && to) {
+    range = '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+  }
+
+  // Follow what the evidence actually is, so the link matches the id beside it.
+  // An event footnote that opened a metric graph would send the reader
+  // somewhere the citation never claimed.
+  const eventLink = ids.event_id && ids.trigger_id
+    ? {
+        url: zabbixBase + '/tr_events.php?triggerid=' + ids.trigger_id + '&eventid=' + ids.event_id,
+        label: '이벤트',
+      }
+    : null;
+  const graphLink = ids.item_id
+    ? {
+        url: zabbixBase + '/history.php?action=showgraph&itemids%5B%5D=' + ids.item_id + range,
+        label: '그래프',
+      }
+    : null;
+
+  if (id.startsWith('zbx:event:') || id.startsWith('zbx:trigger:')) {
+    if (eventLink) return eventLink;
+    if (graphLink) return graphLink;
+  } else if (graphLink) {
+    return graphLink;
+  }
+
+  if (ids.host_id) {
+    return {
+      url: zabbixBase + '/zabbix.php?action=latest.view&filter_hostids%5B%5D=' + ids.host_id + '&filter_set=1',
+      label: '최근 데이터',
+    };
+  }
+  return null;
+};
 const cite = (ids) => (Array.isArray(ids) && ids.length > 0)
   ? ' ' + ids.map((id) => '[' + refNumber(id) + ']').join('')
   : '';
@@ -684,6 +745,9 @@ const backedByEvent = (evidence.evidence || []).some(
 );
 const overview = ['• 관측된 형태: ' + (incident.observed_failure_mode || '확인 불가')];
 if (backedByEvent) {
+  // Severity is the writer's own judgement, and without an event it lands on
+  // "information" or "not_classified" -- a label with nothing behind it.
+  if (incident.severity) overview.push('• 심각도: ' + incident.severity);
   if (incident.started_at) overview.push('• 발생: ' + asTime(incident.started_at));
   if (incident.recovered_at) overview.push('• 복구: ' + asTime(incident.recovered_at));
   if (typeof incident.duration_seconds === 'number') {
@@ -692,11 +756,11 @@ if (backedByEvent) {
 }
 
 // --- 영향 ----------------------------------------------------------------
+// Only worth a section when something was actually established. With nothing
+// confirmed it degenerates into restating the summary, and the caveats it would
+// carry are already in 분석 한계.
 const impact = rca.impact || {};
-const impactLines = [];
-for (const item of impact.confirmed || []) impactLines.push('• *확인됨* ' + item);
-for (const item of impact.unconfirmed || []) impactLines.push('• _미확인_ ' + item);
-if (impactLines.length === 0) impactLines.push('• _영향이 확인되지 않음_');
+const impactLines = (impact.confirmed || []).map((item) => '• ' + item);
 
 // --- 조사 범위 ------------------------------------------------------------
 const finalWindow = evidence.investigation && evidence.investigation.final_window;
@@ -710,8 +774,19 @@ const facts = (rca.confirmed_facts || []).map(
 );
 
 // --- 타임라인 -------------------------------------------------------------
-const timeline = (rca.timeline || []).map(
-  (item) => '• \`' + asTime(item.time) + '\`  ' + item.description + cite(item.evidence_refs),
+// When nothing happened there is nothing to sequence, and the writer stamps
+// every line with the moment it ran the investigation. Identical timestamps
+// down the column read as data but carry none, so drop them and let the lines
+// stand as findings.
+const timelineEntries = rca.timeline || [];
+const distinctTimes = new Set(
+  timelineEntries.map((item) => item.time).filter(Boolean),
+);
+const timelineIsSequence = distinctTimes.size > 1;
+const timeline = timelineEntries.map((item) =>
+  timelineIsSequence
+    ? '• \`' + asTime(item.time) + '\`  ' + item.description + cite(item.evidence_refs)
+    : '• ' + item.description + cite(item.evidence_refs),
 );
 
 // --- 관련 신호 ------------------------------------------------------------
@@ -735,31 +810,48 @@ const candidates = (rca.root_cause_candidates || []).map((item) => {
 const meta = ['• 요청 ID: \`' + request.request_id + '\`'];
 if (request.user_id) meta.push('• 요청자: <@' + request.user_id + '>');
 meta.push('• 호스트: ' + (incident.host || '확인 불가'));
-meta.push('• 심각도: ' + (incident.severity || '확인 불가'));
 
 const sections = [
   '📋 *' + rca.title + '*',
   meta.join('\n'),
   section('요약', rca.executive_summary),
   section('장애 개요', overview.join('\n')),
-  section('영향', impactLines.join('\n')),
+];
+
+// Sections that only earn their place when they have something to say.
+if (impactLines.length) sections.push(section('영향', impactLines.join('\n')));
+
+sections.push(
   section('조사 범위', windowLine),
   section('확인된 사실', facts.length ? facts.join('\n') : '• _확인된 사실 없음_'),
-  section('타임라인', timeline.length ? timeline.join('\n') : '• _기록된 사건 없음_'),
-  section('관련 신호', signals.length ? signals.join('\n') : '• _관련 신호 없음_'),
-  section('원인 후보 — 확정 원인 아님',
-    candidates.length ? candidates.join('\n') : '• _현재 증거로 평가 가능한 원인 후보 없음_'),
-  section('복구', bullets(rca.recovery, '복구 조치가 확인되지 않음')),
+);
+if (timeline.length) sections.push(section('타임라인', timeline.join('\n')));
+if (signals.length) sections.push(section('관련 신호', signals.join('\n')));
+
+sections.push(section('원인 후보 — 확정 원인 아님',
+  candidates.length ? candidates.join('\n') : '• _현재 증거로 평가 가능한 원인 후보 없음_'));
+
+// Recovery only means something once there was an incident to recover from.
+if (backedByEvent && Array.isArray(rca.recovery) && rca.recovery.length) {
+  sections.push(section('복구', bullets(rca.recovery, '복구 조치가 확인되지 않음')));
+}
+
+sections.push(
   section('즉시 권고', bullets(rca.immediate_actions, '권고 없음')),
   section('예방 권고', bullets(rca.preventive_actions, '권고 없음')),
   section('추가 필요 데이터', bullets(rca.additional_data_required, '없음')),
   section('분석 한계', bullets(rca.limitations, '명시된 한계 없음')),
-];
+);
 
 // Built last so every marker above has already been numbered.
 if (refs.length > 0) {
-  sections.push(section('근거',
-    refs.map((id, index) => '\`[' + (index + 1) + ']\` \`' + id + '\`').join('\n')));
+  sections.push(section('근거', refs.map((id, index) => {
+    const link = zabbixLink(id);
+    const marker = '\`[' + (index + 1) + ']\`';
+    return link
+      ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'
+      : marker + ' \`' + id + '\`';
+  }).join('\n')));
 }
 
 const slackMarkdown = sections.join('\n\n').slice(0, 39000);
