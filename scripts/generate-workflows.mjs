@@ -54,9 +54,9 @@ async function main() {
 // output to whichever model used to be there, which is exactly the data you
 // consult when deciding whether a cheaper model was good enough.
 const MODELS = {
-  question: { id: "gpt-5-nano", reasoningEffort: "low" },
-  investigation: { id: "gpt-5.6-luna", reasoningEffort: "medium" },
-  rca: { id: "gpt-5-nano", reasoningEffort: "medium" },
+  question: { id: "gpt-5.4-mini", reasoningEffort: "low" },
+  investigation: { id: "gpt-5.4-mini", reasoningEffort: "medium" },
+  rca: { id: "gpt-5.4-mini", reasoningEffort: "medium" },
 };
 
 function buildMainWorkflow(input) {
