@@ -173,7 +173,7 @@
         "model": {
           "__rl": true,
           "mode": "id",
-          "value": "gpt-5.4-mini"
+          "value": "gpt-5-nano"
         },
         "responsesApiEnabled": true,
         "builtInTools": {},
@@ -225,7 +225,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: 'gpt-5.4-mini', duration_ms: Date.now() - $('Stamp Question Start').first().json.stage_started_ms, output: $('Question Analyzer').first().json.output }) }}",
+        "body": "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: 'gpt-5-nano', duration_ms: Date.now() - $('Stamp Question Start').first().json.stage_started_ms, output: $('Question Analyzer').first().json.output }) }}",
         "options": {
           "timeout": 10000
         }
@@ -312,7 +312,7 @@
         "model": {
           "__rl": true,
           "mode": "id",
-          "value": "gpt-5.4"
+          "value": "gpt-5.6-luna"
         },
         "responsesApiEnabled": true,
         "builtInTools": {},
@@ -383,7 +383,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: 'gpt-5.4', duration_ms: Date.now() - $('Stamp Evidence Start').first().json.stage_started_ms, output: $('Evidence Collector').first().json.output }) }}",
+        "body": "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: 'gpt-5.6-luna', duration_ms: Date.now() - $('Stamp Evidence Start').first().json.stage_started_ms, output: $('Evidence Collector').first().json.output }) }}",
         "options": {
           "timeout": 10000
         }
@@ -437,7 +437,7 @@
         "model": {
           "__rl": true,
           "mode": "id",
-          "value": "gpt-5.4-mini"
+          "value": "gpt-5-nano"
         },
         "responsesApiEnabled": true,
         "builtInTools": {},
@@ -489,7 +489,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: 'gpt-5.4-mini', duration_ms: Date.now() - $('Stamp RCA Start').first().json.stage_started_ms, output: $('RCA Writer').first().json.output }) }}",
+        "body": "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: 'gpt-5-nano', duration_ms: Date.now() - $('Stamp RCA Start').first().json.stage_started_ms, output: $('RCA Writer').first().json.output }) }}",
         "options": {
           "timeout": 10000
         }

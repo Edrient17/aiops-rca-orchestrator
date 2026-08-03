@@ -48,6 +48,17 @@ async function main() {
   console.log(`Generated 2 workflows in ${outputDir}`);
 }
 
+// Each model id appears twice: once on the model node, once in the audit record
+// the stage writes to aiops_agent_runs. Defining them here keeps the two in step
+// -- editing only the node would leave the audit table attributing timings and
+// output to whichever model used to be there, which is exactly the data you
+// consult when deciding whether a cheaper model was good enough.
+const MODELS = {
+  question: { id: "gpt-5-nano", reasoningEffort: "low" },
+  investigation: { id: "gpt-5.6-luna", reasoningEffort: "medium" },
+  rca: { id: "gpt-5-nano", reasoningEffort: "medium" },
+};
+
 function buildMainWorkflow(input) {
   const nodes = [
     node(
@@ -98,13 +109,13 @@ function buildMainWorkflow(input) {
       "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id) }, null, 2) }}",
       3,
     ),
-    modelNode("Question Model", [1120, 260], "gpt-5.4-mini", "low"),
+    modelNode("Question Model", [1120, 260], MODELS.question.id, MODELS.question.reasoningEffort),
     parserNode("Parsed Request Parser", [1320, 260], input.parsedSchema),
     httpNode(
       "Persist Question Result",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: 'gpt-5.4-mini', duration_ms: Date.now() - $('Stamp Question Start').first().json.stage_started_ms, output: $('Question Analyzer').first().json.output }) }}",
+      "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: '" + MODELS.question.id + "', duration_ms: Date.now() - $('Stamp Question Start').first().json.stage_started_ms, output: $('Question Analyzer').first().json.output }) }}",
       [1440, 0],
       "internal",
     ),
@@ -122,14 +133,14 @@ function buildMainWorkflow(input) {
       "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, limits: { max_iterations: 8, max_tool_calls: 30, max_window_hours: 24 } }, null, 2) }}",
       8,
     ),
-    modelNode("Investigation Model", [1840, 140], "gpt-5.4", "medium"),
+    modelNode("Investigation Model", [1840, 140], MODELS.investigation.id, MODELS.investigation.reasoningEffort),
     parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema),
     mcpNode("Zabbix MCP Tools", [2240, 140]),
     httpNode(
       "Persist Evidence Result",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: 'gpt-5.4', duration_ms: Date.now() - $('Stamp Evidence Start').first().json.stage_started_ms, output: $('Evidence Collector').first().json.output }) }}",
+      "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: '" + MODELS.investigation.id + "', duration_ms: Date.now() - $('Stamp Evidence Start').first().json.stage_started_ms, output: $('Evidence Collector').first().json.output }) }}",
       [2160, -140],
       "internal",
     ),
@@ -141,13 +152,13 @@ function buildMainWorkflow(input) {
       "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, evidence_package: $('Evidence Collector').first().json.output }, null, 2) }}",
       3,
     ),
-    modelNode("RCA Model", [2360, 140], "gpt-5.4-mini", "medium"),
+    modelNode("RCA Model", [2360, 140], MODELS.rca.id, MODELS.rca.reasoningEffort),
     parserNode("RCA Report Parser", [2560, 140], input.rcaSchema),
     httpNode(
       "Persist RCA Result",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: 'gpt-5.4-mini', duration_ms: Date.now() - $('Stamp RCA Start').first().json.stage_started_ms, output: $('RCA Writer').first().json.output }) }}",
+      "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: '" + MODELS.rca.id + "', duration_ms: Date.now() - $('Stamp RCA Start').first().json.stage_started_ms, output: $('RCA Writer').first().json.output }) }}",
       [2640, -140],
       "internal",
     ),
