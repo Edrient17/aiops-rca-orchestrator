@@ -4,6 +4,15 @@
 -- in aiops_reports, so a reaction event carries enough to identify which
 -- investigation is being judged without any new correlation id.
 
+-- Every threaded message the bot sees outside the question channel is checked
+-- against these, so the lookup must not degrade into a scan as reports pile up.
+CREATE INDEX IF NOT EXISTS aiops_reports_slack_message_idx
+  ON aiops_reports (slack_channel_id, slack_message_ts);
+
+CREATE INDEX IF NOT EXISTS aiops_requests_ack_idx
+  ON aiops_requests (slack_ack_ts)
+  WHERE slack_ack_ts IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS aiops_report_feedback (
   id bigserial PRIMARY KEY,
   request_id text NOT NULL REFERENCES aiops_requests(request_id) ON DELETE CASCADE,
