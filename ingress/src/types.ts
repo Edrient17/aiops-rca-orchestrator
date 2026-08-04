@@ -13,6 +13,14 @@ export interface SlackEventEnvelope {
     thread_ts?: string;
     bot_id?: string;
     subtype?: string;
+    /** Reaction events name the emoji here rather than carrying text. */
+    reaction?: string;
+    /** Reaction events point at their target here, not at event.channel. */
+    item?: {
+      type?: string;
+      channel?: string;
+      ts?: string;
+    };
   };
 }
 
@@ -85,6 +93,43 @@ export interface ReportInput {
   slackMessageTs?: string;
 }
 
+/** The verdict an operator can pass on a published report. */
+export type FeedbackLabel = "correct" | "partial" | "incorrect";
+
+/** A published report located from the Slack message it was posted as. */
+export interface ReportRef {
+  requestId: string;
+  /**
+   * Root of the thread the report lives in. The report is itself a reply under
+   * the acknowledgement, and Slack threads are one level deep, so a reply to
+   * the report carries this ts rather than the report's own.
+   */
+  threadTs: string;
+}
+
+export interface ReportFeedbackInput {
+  requestId: string;
+  userId: string;
+  reaction: string;
+  label: FeedbackLabel;
+}
+
+export interface SaveFeedbackResult {
+  created: boolean;
+  /**
+   * True only for the first negative verdict on a report that has no written
+   * correction yet, so repeated reactions do not each ask the same question.
+   */
+  shouldAskForCorrection: boolean;
+}
+
+export interface ReportNoteInput {
+  requestId: string;
+  userId: string;
+  slackMessageTs: string;
+  note: string;
+}
+
 export interface SystemErrorInput {
   requestId?: string;
   workflowName?: string;
@@ -114,4 +159,15 @@ export interface RequestRepository {
   saveReport(requestId: string, input: ReportInput): Promise<boolean>;
   recordSystemError(input: SystemErrorInput): Promise<void>;
   getRequest(requestId: string): Promise<unknown | null>;
+  /** Finds the report published as this exact message, for reaction events. */
+  findReportByMessage(channelId: string, messageTs: string): Promise<ReportRef | null>;
+  /** Finds the report a thread belongs to, for replies written under it. */
+  findReportByThread(channelId: string, threadTs: string): Promise<ReportRef | null>;
+  saveReportFeedback(input: ReportFeedbackInput): Promise<SaveFeedbackResult>;
+  removeReportFeedback(input: {
+    requestId: string;
+    userId: string;
+    reaction: string;
+  }): Promise<boolean>;
+  saveReportNote(input: ReportNoteInput): Promise<boolean>;
 }

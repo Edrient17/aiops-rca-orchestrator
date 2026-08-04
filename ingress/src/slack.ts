@@ -64,6 +64,46 @@ export function stripBotMention(text: string, botUserId?: string): string {
   return text.replace(new RegExp(`<@${escapeRegExp(botUserId)}>`, "g"), "").trim();
 }
 
+/**
+ * Slack appends a skin tone to some reaction names (`+1::skin-tone-3`). The
+ * base name is what a verdict is keyed on.
+ */
+export function normalizeReaction(reaction: string): string {
+  return reaction.split("::")[0]?.trim() ?? "";
+}
+
+/**
+ * Posts a reply in a thread. Failures are the caller's to swallow: Slack has
+ * already been acknowledged by this point and a missed prompt must not turn
+ * into a retried event.
+ */
+export async function postThreadReply(input: {
+  botToken: string;
+  channel: string;
+  threadTs: string;
+  text: string;
+  timeoutMs?: number;
+}): Promise<void> {
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      authorization: `Bearer ${input.botToken}`,
+    },
+    body: JSON.stringify({
+      channel: input.channel,
+      thread_ts: input.threadTs,
+      text: input.text,
+    }),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 5_000),
+  });
+
+  const body = (await response.json()) as { ok?: boolean; error?: string };
+  if (!body.ok) {
+    throw new Error(`slack chat.postMessage failed: ${body.error ?? "unknown_error"}`);
+  }
+}
+
 export function makeRequestId(eventId: string, epochSeconds?: number): string {
   const date = new Date((epochSeconds ?? Math.floor(Date.now() / 1_000)) * 1_000);
   const datePart = new Intl.DateTimeFormat("en-CA", {

@@ -26,6 +26,14 @@ function repositoryWithJob(job: DispatchJob): RequestRepository {
     saveReport: vi.fn(async (_id: string, _input: ReportInput) => true),
     recordSystemError: vi.fn(async (_input: SystemErrorInput) => undefined),
     getRequest: vi.fn(async () => null),
+    findReportByMessage: vi.fn(async () => null),
+    findReportByThread: vi.fn(async () => null),
+    saveReportFeedback: vi.fn(async () => ({
+      created: true,
+      shouldAskForCorrection: false,
+    })),
+    removeReportFeedback: vi.fn(async () => true),
+    saveReportNote: vi.fn(async () => true),
   };
 }
 

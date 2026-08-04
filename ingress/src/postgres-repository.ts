@@ -4,8 +4,12 @@ import type {
   AgentRunInput,
   DispatchJob,
   PendingClarification,
+  ReportFeedbackInput,
   ReportInput,
+  ReportNoteInput,
+  ReportRef,
   RequestRepository,
+  SaveFeedbackResult,
   SaveRequestResult,
   SystemErrorInput,
 } from "./types.js";
@@ -382,6 +386,123 @@ export class PostgresRequestRepository implements RequestRepository {
     if (input.requestId) {
       await this.updateRequestStatus(input.requestId, "failed", input.message);
     }
+  }
+
+  async findReportByMessage(
+    channelId: string,
+    messageTs: string,
+  ): Promise<ReportRef | null> {
+    return this.findReport(
+      `report.slack_channel_id = $1 AND report.slack_message_ts = $2`,
+      channelId,
+      messageTs,
+    );
+  }
+
+  async findReportByThread(
+    channelId: string,
+    threadTs: string,
+  ): Promise<ReportRef | null> {
+    // The report is a reply under the acknowledgement, so a reply to it carries
+    // the acknowledgement ts. Matching the report ts too covers the case where
+    // the report started its own thread.
+    return this.findReport(
+      `report.slack_channel_id = $1
+         AND (request.slack_ack_ts = $2 OR report.slack_message_ts = $2)`,
+      channelId,
+      threadTs,
+    );
+  }
+
+  private async findReport(
+    predicate: string,
+    channelId: string,
+    ts: string,
+  ): Promise<ReportRef | null> {
+    const result = await this.pool.query<{
+      request_id: string;
+      thread_ts: string;
+    }>(
+      `
+        SELECT
+          report.request_id,
+          COALESCE(request.slack_ack_ts, report.slack_message_ts) AS thread_ts
+        FROM aiops_reports AS report
+        JOIN aiops_requests AS request USING (request_id)
+        WHERE ${predicate}
+        ORDER BY report.created_at DESC
+        LIMIT 1
+      `,
+      [channelId, ts],
+    );
+
+    const row = result.rows[0];
+    return row ? { requestId: row.request_id, threadTs: row.thread_ts } : null;
+  }
+
+  async saveReportFeedback(input: ReportFeedbackInput): Promise<SaveFeedbackResult> {
+    const inserted = await this.pool.query(
+      `
+        INSERT INTO aiops_report_feedback (request_id, user_id, reaction, label)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (request_id, user_id, reaction) DO NOTHING
+      `,
+      [input.requestId, input.userId, input.reaction, input.label],
+    );
+
+    const created = inserted.rowCount === 1;
+    if (!created || input.label === "correct") {
+      return { created, shouldAskForCorrection: false };
+    }
+
+    // Ask once per report: only when this is the first negative verdict and
+    // nobody has written the correction yet.
+    const state = await this.pool.query<{ negatives: string; notes: string }>(
+      `
+        SELECT
+          (
+            SELECT count(*) FROM aiops_report_feedback
+            WHERE request_id = $1 AND label <> 'correct'
+          ) AS negatives,
+          (
+            SELECT count(*) FROM aiops_report_notes WHERE request_id = $1
+          ) AS notes
+      `,
+      [input.requestId],
+    );
+
+    const row = state.rows[0];
+    return {
+      created,
+      shouldAskForCorrection: Number(row?.negatives) === 1 && Number(row?.notes) === 0,
+    };
+  }
+
+  async removeReportFeedback(input: {
+    requestId: string;
+    userId: string;
+    reaction: string;
+  }): Promise<boolean> {
+    const result = await this.pool.query(
+      `
+        DELETE FROM aiops_report_feedback
+        WHERE request_id = $1 AND user_id = $2 AND reaction = $3
+      `,
+      [input.requestId, input.userId, input.reaction],
+    );
+    return result.rowCount === 1;
+  }
+
+  async saveReportNote(input: ReportNoteInput): Promise<boolean> {
+    const result = await this.pool.query(
+      `
+        INSERT INTO aiops_report_notes (request_id, user_id, slack_message_ts, note)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (request_id, slack_message_ts) DO NOTHING
+      `,
+      [input.requestId, input.userId, input.slackMessageTs, input.note],
+    );
+    return result.rowCount === 1;
   }
 
   async getRequest(requestId: string): Promise<unknown | null> {

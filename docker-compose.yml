@@ -31,6 +31,9 @@ services:
       SLACK_BOT_USER_ID: ${SLACK_BOT_USER_ID:-}
       SLACK_APP_ID: ${SLACK_APP_ID:-}
       SLACK_ALLOWED_USER_IDS: ${SLACK_ALLOWED_USER_IDS:-}
+      # Only used to ask for a written correction after a negative verdict.
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_LABEL_REACTIONS: ${SLACK_LABEL_REACTIONS:-white_check_mark=correct,heavy_check_mark=correct,thinking_face=partial,x=incorrect}
       AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN:?AIOPS_INTERNAL_TOKEN is required}
       N8N_INTERNAL_WEBHOOK_URL: http://n8n:5678/webhook/aiops-process
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}

@@ -45,15 +45,43 @@ Bot Token Scopes:
 - `app_mentions:read`
 - `chat:write`
 - 질문 채널의 모든 메시지를 받을 경우 `channels:history`
+- 보고서 라벨링을 사용할 경우 `reactions:read`, 답변 채널 스레드 답글 수집을 위한
+  `channels:history`
 
 Event Subscriptions:
 
 - Request URL: `https://<AIOPS_DOMAIN>/slack/events`
 - Bot event: `app_mention`
 - 멘션 없이 질문 채널의 모든 메시지를 받을 경우 `message.channels`
+- 보고서 라벨링을 사용할 경우 `reaction_added`, `reaction_removed`
 
 Bot을 질문·답변·오류 채널에 초대하고 각 채널 ID를 `.env`에 입력합니다. 특정
 사용자만 허용하려면 `SLACK_ALLOWED_USER_IDS`에 쉼표로 구분한 User ID를 넣습니다.
+이 목록은 질문뿐 아니라 라벨링에도 그대로 적용됩니다.
+
+### 보고서 라벨링
+
+발행된 RCA 보고서에 남긴 이모지 반응이 그 조사에 대한 판정으로 기록됩니다.
+보고서를 게시한 채널과 메시지 ts가 이미 `aiops_reports`에 있으므로 별도의 상관
+관계 식별자 없이 반응 이벤트만으로 어느 요청인지 특정됩니다.
+
+| 반응 | 판정 |
+| --- | --- |
+| ✅ `white_check_mark`, ✔️ `heavy_check_mark` | `correct` |
+| 🤔 `thinking_face` | `partial` |
+| ❌ `x` | `incorrect` |
+
+목록에 없는 이모지는 무시하며, 이때 DB 조회도 하지 않습니다. 매핑은
+`SLACK_LABEL_REACTIONS`에서 `이모지=판정` 형식으로 바꿀 수 있습니다. 반응을
+취소하면 해당 판정도 삭제됩니다.
+
+반응만으로는 결론이 틀렸다는 사실은 남아도 실제 원인은 남지 않습니다. `correct`가
+아닌 판정이 처음 달리면 봇이 보고서 스레드에 실제 원인을 물어보고, 스레드에 달린
+답글이 `aiops_report_notes`에 기록됩니다. 이 되묻기에는 `SLACK_BOT_TOKEN`이
+필요하며, 없으면 라벨링은 그대로 동작하고 되묻기만 생략됩니다.
+
+질문 채널의 스레드 답글은 종전대로 명확화 답변으로 처리되며 이 경로의 영향을
+받지 않습니다.
 
 ## 3. 실행
 
@@ -164,6 +192,19 @@ docker compose exec postgres psql -U aiops -d aiops
 - `aiops_tool_calls`
 - `aiops_reports`
 - `aiops_system_errors`
+- `aiops_report_feedback`: 보고서에 달린 반응 판정
+- `aiops_report_notes`: 보고서 스레드에 적힌 실제 원인
+
+`aiops_labeled_dataset` 뷰가 질문·증거·결론·판정을 한 행으로 묶어 줍니다. 학습
+데이터나 RAG 색인의 입력으로 그대로 쓸 수 있습니다. 한 보고서에 판정이 여러 개면
+가장 나쁜 판정을 채택합니다. 한 명이 틀렸다고 하면 다른 사람이 맞다고 해도 틀린
+쪽으로 기록하는 편이 데이터셋에서는 안전합니다.
+
+```sql
+SELECT request_id, question, label, notes
+FROM aiops_labeled_dataset
+WHERE label IS NOT NULL;
+```
 
 요청 상태 조회용 내부 API도 제공하지만 외부 공개용은 아닙니다.
 

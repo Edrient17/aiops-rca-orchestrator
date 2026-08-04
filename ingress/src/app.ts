@@ -4,10 +4,18 @@ import type { AppConfig } from "./config.js";
 import {
   isSlackEventEnvelope,
   makeRequestId,
+  normalizeReaction,
+  postThreadReply,
   stripBotMention,
   verifySlackSignature,
 } from "./slack.js";
-import type { RequestRepository } from "./types.js";
+import type { RequestRepository, SlackEventEnvelope } from "./types.js";
+
+type SlackEvent = SlackEventEnvelope["event"];
+
+const CORRECTION_PROMPT =
+  "이 보고서의 판단이 실제와 달랐다고 표시되었습니다. " +
+  "실제 원인이 무엇이었는지 이 스레드에 남겨 주시면 함께 기록됩니다.";
 
 export interface AppDependencies {
   config: AppConfig;
@@ -117,6 +125,27 @@ export function createApp(dependencies: AppDependencies): express.Express {
         }
 
         const event = payload.event;
+
+        // A reaction on a published report is a verdict on that investigation.
+        // It carries no text and points at its target through event.item, so it
+        // cannot go through the question path below.
+        if (event.type === "reaction_added" || event.type === "reaction_removed") {
+          response.status(200).json(await handleReaction(dependencies, event));
+          return;
+        }
+
+        // A reply written under a report says what the truth actually was. The
+        // question channel is left alone; a reply there answers a clarification.
+        if (
+          event.type === "message" &&
+          event.thread_ts &&
+          event.channel &&
+          event.channel !== dependencies.config.slackQuestionChannelId
+        ) {
+          response.status(200).json(await handleReportNote(dependencies, event));
+          return;
+        }
+
         const isSupportedType = event.type === "app_mention" || event.type === "message";
         if (
           !isSupportedType ||
@@ -288,6 +317,131 @@ export function createApp(dependencies: AppDependencies): express.Express {
   );
 
   return app;
+}
+
+/**
+ * Turns a reaction on a published report into a stored verdict. Anything that
+ * is not a known emoji on a known report is ignored rather than rejected, so
+ * ordinary channel activity costs at most one lookup.
+ */
+async function handleReaction(
+  dependencies: AppDependencies,
+  event: SlackEvent,
+): Promise<Record<string, unknown>> {
+  const { config, repository } = dependencies;
+  const reaction = normalizeReaction(event.reaction ?? "");
+  const label = config.labelReactions.get(reaction);
+  const channel = event.item?.channel;
+  const messageTs = event.item?.ts;
+
+  if (
+    !label ||
+    !event.user ||
+    !channel ||
+    !messageTs ||
+    event.item?.type !== "message" ||
+    event.user === config.slackBotUserId ||
+    (config.slackAllowedUserIds.size > 0 && !config.slackAllowedUserIds.has(event.user))
+  ) {
+    return { ignored: true };
+  }
+
+  const report = await repository.findReportByMessage(channel, messageTs);
+  if (!report) {
+    return { ignored: true };
+  }
+
+  if (event.type === "reaction_removed") {
+    const removed = await repository.removeReportFeedback({
+      requestId: report.requestId,
+      userId: event.user,
+      reaction,
+    });
+    return { request_id: report.requestId, label, removed };
+  }
+
+  const result = await repository.saveReportFeedback({
+    requestId: report.requestId,
+    userId: event.user,
+    reaction,
+    label,
+  });
+
+  if (result.shouldAskForCorrection) {
+    askForCorrection(dependencies, channel, report.threadTs);
+  }
+
+  return { request_id: report.requestId, label, labeled: result.created };
+}
+
+/**
+ * Stores a reply written under a report as the correction the reaction could
+ * not carry.
+ */
+async function handleReportNote(
+  dependencies: AppDependencies,
+  event: SlackEvent,
+): Promise<Record<string, unknown>> {
+  const { config, repository } = dependencies;
+  const channel = event.channel;
+  const threadTs = event.thread_ts;
+  const note = stripBotMention(event.text ?? "", config.slackBotUserId);
+
+  if (
+    !channel ||
+    !threadTs ||
+    !event.user ||
+    !event.ts ||
+    !note ||
+    Boolean(event.bot_id) ||
+    Boolean(event.subtype) ||
+    event.user === config.slackBotUserId ||
+    (config.slackAllowedUserIds.size > 0 && !config.slackAllowedUserIds.has(event.user))
+  ) {
+    return { ignored: true };
+  }
+
+  const report = await repository.findReportByThread(channel, threadTs);
+  if (!report) {
+    return { ignored: true };
+  }
+
+  const created = await repository.saveReportNote({
+    requestId: report.requestId,
+    userId: event.user,
+    slackMessageTs: event.ts,
+    note: note.slice(0, 10_000),
+  });
+  return { request_id: report.requestId, note_recorded: created };
+}
+
+/**
+ * Slack has already been acknowledged by the time this runs, so a failure is
+ * logged and dropped. Retrying would only re-deliver the event.
+ */
+function askForCorrection(
+  dependencies: AppDependencies,
+  channel: string,
+  threadTs: string,
+): void {
+  const botToken = dependencies.config.slackBotToken;
+  if (!botToken) {
+    return;
+  }
+  void postThreadReply({
+    botToken,
+    channel,
+    threadTs,
+    text: CORRECTION_PROMPT,
+  }).catch((error: unknown) => {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        message: "correction_prompt_failed",
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  });
 }
 
 function internalAuth(token: string) {
