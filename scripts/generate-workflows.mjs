@@ -134,7 +134,9 @@ function buildMainWorkflow(input) {
       8,
     ),
     modelNode("Investigation Model", [1840, 140], MODELS.investigation.id, MODELS.investigation.reasoningEffort),
-    parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema),
+    // The only stage observed to fail schema validation in operation, so it is
+    // the only one given a retry. The other two parsers stay strict.
+    parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema, true),
     mcpNode("Zabbix MCP Tools", [2240, 140]),
     httpNode(
       "Persist Evidence Result",
@@ -233,6 +235,8 @@ function buildMainWorkflow(input) {
   connectAi(connections, "Parsed Request Parser", "Question Analyzer", "ai_outputParser");
   connectAi(connections, "Investigation Model", "Evidence Collector", "ai_languageModel");
   connectAi(connections, "Evidence Package Parser", "Evidence Collector", "ai_outputParser");
+  // autoFix on the evidence parser requires its own model connection.
+  connectAi(connections, "Investigation Model", "Evidence Package Parser", "ai_languageModel");
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
   connectAi(connections, "RCA Report Parser", "RCA Writer", "ai_outputParser");
@@ -365,7 +369,10 @@ function modelNode(name, position, model, reasoningEffort) {
   });
 }
 
-function parserNode(name, position, schema) {
+// autoFix lets the parser hand a rejected output back to a model to be
+// corrected instead of failing the run. Enabling it adds a *required* model
+// input to the parser node, so any caller passing true must also connect one.
+function parserNode(name, position, schema, autoFix = false) {
   return node(
     name,
     "@n8n/n8n-nodes-langchain.outputParserStructured",
@@ -374,7 +381,7 @@ function parserNode(name, position, schema) {
     {
       schemaType: "manual",
       inputSchema: JSON.stringify(schema, null, 2),
-      autoFix: false,
+      autoFix,
     },
   );
 }
@@ -471,19 +478,17 @@ function connectMain(connections, from, to, outputIndex = 0) {
   });
 }
 
+// Appends rather than replaces: one model node feeds both an agent and that
+// agent's auto-fixing parser, so the same source can have several targets on
+// the same connection type.
 function connectAi(connections, from, to, type) {
-  connections[from] = {
-    ...(connections[from] ?? {}),
-    [type]: [
-      [
-        {
-          node: to,
-          type,
-          index: 0,
-        },
-      ],
-    ],
-  };
+  connections[from] ??= {};
+  connections[from][type] ??= [[]];
+  connections[from][type][0].push({
+    node: to,
+    type,
+    index: 0,
+  });
 }
 
 function flattenLocalRefs(schema) {
