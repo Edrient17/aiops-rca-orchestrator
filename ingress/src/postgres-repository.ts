@@ -41,7 +41,11 @@ export class PostgresRequestRepository implements RequestRepository {
             parent_request_id
           )
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
-          ON CONFLICT (slack_event_id) DO NOTHING
+          -- Untargeted so it catches both duplicate keys. A redelivery repeats
+          -- the event id, but an app subscribed to app_mention and
+          -- message.channels receives one mention as two events with different
+          -- ids and the same message, which only the message key can catch.
+          ON CONFLICT DO NOTHING
           RETURNING request_id
         `,
         [
@@ -85,8 +89,15 @@ export class PostgresRequestRepository implements RequestRepository {
       }
 
       const existing = await client.query<{ request_id: string }>(
-        "SELECT request_id FROM aiops_requests WHERE slack_event_id = $1",
-        [request.slackEventId],
+        `
+          SELECT request_id
+          FROM aiops_requests
+          WHERE slack_event_id = $1
+             OR (channel_id = $2 AND message_ts = $3)
+          ORDER BY received_at
+          LIMIT 1
+        `,
+        [request.slackEventId, request.channelId, request.messageTs],
       );
       await client.query("COMMIT");
       return {
