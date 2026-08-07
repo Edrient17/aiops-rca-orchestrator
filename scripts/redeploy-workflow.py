@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Redeploys the main n8n workflow on the orchestrator host.
+"""Redeploys the n8n workflows on the orchestrator host.
 
 Importing a workflow replaces the stored node list, which drops the credential
 assignments made in the UI, and n8n deactivates the workflow on import and only
@@ -32,6 +32,15 @@ WORKFLOW_ID = "aiops-main-v010"
 SOURCE = "workflows/01-aiops-main.json"
 PATCHED = "workflows/.redeploy-with-credentials.json"
 PATCHED_IN_CONTAINER = "/opt/aiops/workflows/.redeploy-with-credentials.json"
+
+# The error handler ships alongside the main workflow and needs none of the
+# credential carry-over below: both of its HTTP nodes authenticate from $env, so
+# there is nothing the UI holds that an import would drop. It still has to be
+# redeployed here. n8n-import only ever runs once, guarded by its marker file, so
+# without this a change to the error path would sit in the repository while the
+# deployment kept running whatever was bootstrapped on day one.
+ERROR_WORKFLOW_ID = "aiops-error-v010"
+ERROR_IN_CONTAINER = "/opt/aiops/workflows/99-aiops-error-handler.json"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -179,12 +188,21 @@ def main():
     os.remove(patched_path)
     if result.returncode != 0:
         fail("import failed:\n" + (result.stderr or result.stdout)[-600:])
-    print("  imported")
+    print("  imported main workflow")
+
+    result = run(["docker", "compose", "run", "--rm", "--entrypoint", "n8n",
+                  "n8n-import", "import:workflow",
+                  "--input=" + ERROR_IN_CONTAINER])
+    if result.returncode != 0:
+        fail("error handler import failed:\n" + (result.stderr or result.stdout)[-600:])
+    print("  imported error handler")
 
     print()
     print("== reactivate and reload ==")
-    run(["docker", "compose", "run", "--rm", "--entrypoint", "n8n", "n8n-import",
-         "update:workflow", "--id=" + WORKFLOW_ID, "--active=true"])
+    for workflow_id in (ERROR_WORKFLOW_ID, WORKFLOW_ID):
+        run(["docker", "compose", "run", "--rm", "--entrypoint", "n8n",
+             "n8n-import", "update:workflow", "--id=" + workflow_id,
+             "--active=true"])
     run(["docker", "compose", "restart", "n8n"])
 
     for attempt in range(30):
@@ -207,6 +225,9 @@ def main():
         "where w.id='{}' and n->'credentials' is not null;".format(WORKFLOW_ID)))
     print("  active                 : " + psql(
         "select active from workflow_entity where id='{}';".format(WORKFLOW_ID)))
+    print("  error handler active   : " + psql(
+        "select active from workflow_entity where id='{}';".format(
+            ERROR_WORKFLOW_ID)))
     print("  webhook                : " + (psql(
         'select "webhookPath" from webhook_entity;') or "(none registered)"))
 

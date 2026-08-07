@@ -31,40 +31,6 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.AIOPS_CONTROL_URL + '/internal/errors' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-AIOPS-Internal-Token",
-              "value": "={{ $env.AIOPS_INTERNAL_TOKEN }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "contentType": "raw",
-        "rawContentType": "application/json",
-        "body": "={{ JSON.stringify($('Format Workflow Error').first().json.error_record) }}",
-        "options": {
-          "timeout": 10000
-        }
-      },
-      "id": "93b253c9-fcbd-5da4-87df-6916c0406701",
-      "name": "Record Workflow Error",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        540,
-        -100
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
         "url": "https://slack.com/api/chat.postMessage",
         "sendHeaders": true,
         "headerParameters": {
@@ -93,7 +59,42 @@
       "typeVersion": 4.2,
       "position": [
         540,
-        120
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AIOPS_CONTROL_URL + '/internal/errors' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AIOPS-Internal-Token",
+              "value": "={{ $env.AIOPS_INTERNAL_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($('Format Workflow Error').first().json.error_record) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "93b253c9-fcbd-5da4-87df-6916c0406701",
+      "name": "Record Workflow Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        0
       ]
     }
   ],
@@ -113,12 +114,18 @@
       "main": [
         [
           {
-            "node": "Record Workflow Error",
+            "node": "Post Error Alert",
             "type": "main",
             "index": 0
-          },
+          }
+        ]
+      ]
+    },
+    "Post Error Alert": {
+      "main": [
+        [
           {
-            "node": "Post Error Alert",
+            "node": "Record Workflow Error",
             "type": "main",
             "index": 0
           }

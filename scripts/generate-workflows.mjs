@@ -283,32 +283,50 @@ function buildMainWorkflow(input) {
   };
 }
 
+// Reporting a failure has two halves -- tell a human, and file it against the
+// request -- and neither may be able to suppress the other.
+//
+// They used to hang off the same output as parallel branches. n8n runs sibling
+// branches in position order and aborts the execution at the first unhandled
+// node error, so a failing `/internal/errors` call took the Slack alert down
+// with it. That is precisely the situation where the alert matters most: ingress
+// being unreachable is a likely reason the run died in the first place, and the
+// failure would then reach nobody at all.
+//
+// Chained instead, so both always run. Slack goes first because it is the half a
+// human sees and the half least likely to be broken by whatever broke the run,
+// and it swallows its own errors so it cannot block the record behind it. The
+// record stays unguarded on purpose: it is last, nothing follows it, and letting
+// it fail keeps the failed execution visible in n8n instead of reporting success
+// after silently dropping the row. Both bodies reference Format Workflow Error
+// by name, so neither depends on being fed by it directly.
 function buildErrorWorkflow(workflowId) {
   const nodes = [
     node("Error Trigger", "n8n-nodes-base.errorTrigger", 1, [0, 0], {}),
     codeNode("Format Workflow Error", [260, 0], formatErrorCode),
     httpNode(
-      "Record Workflow Error",
-      "POST",
-      "={{ $env.AIOPS_CONTROL_URL + '/internal/errors' }}",
-      "={{ JSON.stringify($('Format Workflow Error').first().json.error_record) }}",
-      [540, -100],
-      "internal",
-    ),
-    httpNode(
       "Post Error Alert",
       "POST",
       "https://slack.com/api/chat.postMessage",
       "={{ JSON.stringify({ channel: $env.SLACK_ERROR_CHANNEL_ID, text: $('Format Workflow Error').first().json.slack_text }) }}",
-      [540, 120],
+      [540, 0],
       "slack",
+      { onError: "continueRegularOutput" },
+    ),
+    httpNode(
+      "Record Workflow Error",
+      "POST",
+      "={{ $env.AIOPS_CONTROL_URL + '/internal/errors' }}",
+      "={{ JSON.stringify($('Format Workflow Error').first().json.error_record) }}",
+      [800, 0],
+      "internal",
     ),
   ];
 
   const connections = {};
   connectMain(connections, "Error Trigger", "Format Workflow Error");
-  connectMain(connections, "Format Workflow Error", "Record Workflow Error");
   connectMain(connections, "Format Workflow Error", "Post Error Alert");
+  connectMain(connections, "Post Error Alert", "Record Workflow Error");
 
   return {
     id: workflowId,
@@ -412,7 +430,10 @@ function mcpNode(name, position) {
   });
 }
 
-function httpNode(name, method, url, jsonBody, position, authKind) {
+// `extras` carries node-level settings rather than parameters -- onError above
+// all. Main-workflow calls leave it empty: a step that fails there must abort so
+// the error workflow fires, which is the whole reporting path.
+function httpNode(name, method, url, jsonBody, position, authKind, extras = {}) {
   const headers =
     authKind === "slack"
       ? [
@@ -450,7 +471,7 @@ function httpNode(name, method, url, jsonBody, position, authKind) {
     options: {
       timeout: authKind === "slack" ? 30_000 : 10_000,
     },
-  });
+  }, extras);
 }
 
 function ifNode(name, leftValue, rightValue, position) {
