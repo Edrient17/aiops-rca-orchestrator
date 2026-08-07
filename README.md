@@ -124,6 +124,37 @@ Invoke-RestMethod http://127.0.0.1:8080/readyz
 Invoke-RestMethod http://127.0.0.1:5678/healthz
 ```
 
+### 스키마 마이그레이션
+
+`database/migrations/*.sql`은 `db-migrate` 서비스가 매 기동마다 파일 이름
+순서로 다시 적용합니다. ingress는 이 서비스가 성공해야 시작하므로, 컬럼을
+추가하는 배포가 그 컬럼이 없는 데이터베이스를 상대로 ingress를 띄우는 일은
+없습니다. 별도로 실행할 명령은 없고 `docker compose up -d`가 전부입니다.
+
+```powershell
+docker compose logs db-migrate
+```
+
+새 파일을 추가하든 기존 파일을 고치든 **다시 실행해도 안전해야 합니다**.
+`CREATE ... IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, 뷰는 `DROP VIEW IF
+EXISTS` 후 재생성을 사용합니다. 적용된 파일 이름을 기록하는 원장은 두지
+않았습니다. 원장이 있으면 기존 파일을 제자리에서 고쳤을 때 그 변경이 조용히
+건너뛰어집니다 — 실제로 `002_feedback.sql`은 인덱스가 나중에 덧붙는 식으로
+수정된 적이 있습니다.
+
+이 파일들은 예전에 `/docker-entrypoint-initdb.d`로 마운트됐습니다. postgres
+이미지는 데이터 디렉터리가 비어 있을 때만 그 경로를 실행하므로, 최초 기동
+이후 추가된 파일은 이미 존재하는 배포에 한 번도 적용되지 않았습니다.
+
+> 이미 운영 중인 데이터베이스에서 처음 실행하면 `003_message_dedup.sql`이
+> 중복 요청 행을 실제로 삭제합니다. 보고서가 달린 행을 남기고 나머지를
+> 지우며, 삭제된 행의 보고서는 함께 지워집니다. 먼저 확인하려면:
+>
+> ```sql
+> SELECT channel_id, message_ts, count(*)
+> FROM aiops_requests GROUP BY 1, 2 HAVING count(*) > 1;
+> ```
+
 ## 4. n8n 최초 설정
 
 `AIOPS_PUBLIC_URL`을 열고 owner 계정을 만든 다음 import된 두 워크플로를
@@ -238,7 +269,7 @@ node scripts/generate-workflows.mjs
 ```text
 .
 ├── database/
-│   └── init/
+│   └── migrations/
 ├── ingress/
 │   ├── src/
 │   └── tests/

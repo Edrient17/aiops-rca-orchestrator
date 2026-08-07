@@ -10,12 +10,58 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - backend
+
+  # Applies database/migrations to an existing database, not just a new one.
+  #
+  # These files used to be mounted at /docker-entrypoint-initdb.d, which the
+  # postgres image runs only when the data directory is empty. postgres_data is
+  # a persistent volume, so every file added after the first start -- the
+  # feedback tables, the message-dedup index, the execution link column -- was
+  # never applied to a deployment that already existed, and `docker compose up`
+  # reported success while ingress ran against a schema missing the columns it
+  # writes to.
+  #
+  # Every file is re-applied on every start, in filename order, so a file may be
+  # amended in place and the change still lands. That requires each one to stay
+  # idempotent: CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, and DROP VIEW
+  # IF EXISTS before a view rather than CREATE OR REPLACE, which refuses to
+  # replace a view whose columns changed. There is deliberately no ledger of
+  # applied filenames, because one would silently skip those in-place amendments.
+  db-migrate:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-aiops}
+      PGDATABASE: ${POSTGRES_DB:-aiops}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    entrypoint: ["/bin/sh", "-c"]
+    # --single-transaction is per file, not per run: a file that fails applies
+    # none of itself and exits non-zero, and set -e stops the loop there, but
+    # the files before it stay applied. The run is not atomic. What makes a
+    # stop safe is idempotency -- the next run repeats everything from 001 --
+    # and the non-zero exit, which leaves ingress waiting rather than started
+    # against a schema that only got partway.
+    command:
+      - >-
+        set -e;
+        for file in /migrations/*.sql; do
+          echo "applying $${file##*/}";
+          psql -v ON_ERROR_STOP=1 --single-transaction -q -f "$$file";
+        done;
+        echo "schema up to date"
+    volumes:
+      - ./database/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - backend
 
@@ -43,6 +89,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Held back until the schema matches this checkout, so a deploy that adds
+      # a column cannot start ingress against a database that lacks it.
+      db-migrate:
+        condition: service_completed_successfully
       n8n:
         condition: service_started
     healthcheck:
@@ -150,6 +200,15 @@ services:
       - ./schemas:/opt/aiops/schemas:ro
     depends_on:
       n8n-import:
+        condition: service_completed_successfully
+      # Every write n8n makes goes through ingress, which already waits for the
+      # schema, so today this is redundant. It is stated anyway because that
+      # redundancy is an accident of the dependency graph rather than anything
+      # n8n guarantees about itself: n8n is published on 127.0.0.1:5678 and a
+      # workflow can be run by hand from the host, and the day one grows a node
+      # that reaches the database directly, the protection would vanish without
+      # a single line here changing.
+      db-migrate:
         condition: service_completed_successfully
     healthcheck:
       test:

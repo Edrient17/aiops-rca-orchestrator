@@ -48,7 +48,14 @@ CREATE INDEX IF NOT EXISTS aiops_report_notes_request_idx
 
 -- The training/RAG record: what was asked, what evidence was gathered, what the
 -- agent concluded, and whether an operator agreed. One row per report.
-CREATE OR REPLACE VIEW aiops_labeled_dataset AS
+--
+-- Dropped first rather than replaced. CREATE OR REPLACE VIEW can only reuse an
+-- existing view when the output columns are unchanged in name, type and order,
+-- so adding or renaming a column below would make this file stop re-applying --
+-- and re-applying on every deploy is how the schema stays current.
+DROP VIEW IF EXISTS aiops_labeled_dataset;
+
+CREATE VIEW aiops_labeled_dataset AS
 SELECT
   report.request_id,
   request.question,
