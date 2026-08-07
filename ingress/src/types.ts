@@ -1,3 +1,11 @@
+import type {
+  ReportTemplate,
+  ReportTemplateBody,
+  SaveTemplateResult,
+} from "./templates.js";
+
+export type { ReportTemplate, ReportTemplateBody, SaveTemplateResult };
+
 export interface SlackEventEnvelope {
   type: "event_callback";
   event_id: string;
@@ -145,6 +153,19 @@ export interface SystemErrorInput {
 
 export interface RequestRepository {
   ping(): Promise<void>;
+  /**
+   * The catalog the question analyzer classifies against. Disabled templates
+   * are excluded so retiring one takes it out of circulation without deleting
+   * the rows that explain past reports.
+   */
+  listTemplates(includeDisabled: boolean): Promise<ReportTemplate[]>;
+  getTemplate(templateId: string): Promise<ReportTemplate | null>;
+  /** Upsert. Bumps the version only when the content actually differs. */
+  saveTemplate(
+    templateId: string,
+    body: ReportTemplateBody,
+  ): Promise<SaveTemplateResult>;
+  deleteTemplate(templateId: string): Promise<boolean>;
   saveSlackRequest(request: AcceptedSlackRequest): Promise<SaveRequestResult>;
   findPendingClarification(
     channelId: string,

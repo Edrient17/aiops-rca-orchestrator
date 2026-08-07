@@ -1,5 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 import type {
+  ReportTemplate,
+  ReportTemplateBody,
+  SaveTemplateResult,
+} from "./templates.js";
+import type {
   AcceptedSlackRequest,
   AgentRunInput,
   DispatchJob,
@@ -19,6 +24,136 @@ export class PostgresRequestRepository implements RequestRepository {
 
   async ping(): Promise<void> {
     await this.pool.query("SELECT 1");
+  }
+
+  async listTemplates(includeDisabled: boolean): Promise<ReportTemplate[]> {
+    const result = await this.pool.query<TemplateRow>(
+      `
+        SELECT template_id, version, enabled, title, description, collection, output
+        FROM aiops_report_templates
+        WHERE $1::boolean OR enabled
+        ORDER BY template_id
+      `,
+      [includeDisabled],
+    );
+    return result.rows.map(toTemplate);
+  }
+
+  async getTemplate(templateId: string): Promise<ReportTemplate | null> {
+    const result = await this.pool.query<TemplateRow>(
+      `
+        SELECT template_id, version, enabled, title, description, collection, output
+        FROM aiops_report_templates
+        WHERE template_id = $1
+      `,
+      [templateId],
+    );
+    const row = result.rows[0];
+    return row ? toTemplate(row) : null;
+  }
+
+  async saveTemplate(
+    templateId: string,
+    body: ReportTemplateBody,
+  ): Promise<SaveTemplateResult> {
+    const client = await this.pool.connect();
+    const values = [
+      templateId,
+      body.enabled,
+      body.title,
+      body.description,
+      JSON.stringify(body.collection),
+      JSON.stringify(body.output),
+    ];
+    try {
+      await client.query("BEGIN");
+      // Comparison happens in SQL rather than in JS because jsonb equality is
+      // semantic: Postgres does not care that a round trip reordered the keys,
+      // and comparing serialised objects here would report a change on every
+      // write. FOR UPDATE so two operators saving at once cannot both read the
+      // same version and produce it twice.
+      const current = await client.query<{ version: number; unchanged: boolean }>(
+        `
+          SELECT
+            version,
+            (enabled, title, description, collection, output)
+              IS NOT DISTINCT FROM ($2::boolean, $3, $4, $5::jsonb, $6::jsonb)
+              AS unchanged
+          FROM aiops_report_templates
+          WHERE template_id = $1
+          FOR UPDATE
+        `,
+        values,
+      );
+
+      const existing = current.rows[0];
+      if (existing?.unchanged) {
+        await client.query("COMMIT");
+        return { version: existing.version, changed: false, created: false };
+      }
+
+      // Versions continue from the history, not from the live row. Deleting a
+      // template and adding it back is an ordinary thing to do, and restarting
+      // at 1 would collide with the version already recorded under that number
+      // -- leaving two different templates sharing one (id, version), which is
+      // exactly what a stored report cites when it says what shaped it.
+      const version = existing
+        ? existing.version + 1
+        : ((
+            await client.query<{ next: number }>(
+              `
+                SELECT COALESCE(max(version), 0) + 1 AS next
+                FROM aiops_report_template_versions
+                WHERE template_id = $1
+              `,
+              [templateId],
+            )
+          ).rows[0]?.next ?? 1);
+      await client.query(
+        `
+          INSERT INTO aiops_report_templates (
+            template_id, version, enabled, title, description, collection, output
+          )
+          VALUES ($1, $7, $2, $3, $4, $5::jsonb, $6::jsonb)
+          ON CONFLICT (template_id) DO UPDATE
+          SET version = EXCLUDED.version,
+              enabled = EXCLUDED.enabled,
+              title = EXCLUDED.title,
+              description = EXCLUDED.description,
+              collection = EXCLUDED.collection,
+              output = EXCLUDED.output,
+              updated_at = now()
+        `,
+        [...values, version],
+      );
+      await client.query(
+        `
+          INSERT INTO aiops_report_template_versions (
+            template_id, version, enabled, title, description, collection, output
+          )
+          VALUES ($1, $7, $2, $3, $4, $5::jsonb, $6::jsonb)
+          ON CONFLICT (template_id, version) DO NOTHING
+        `,
+        [...values, version],
+      );
+      await client.query("COMMIT");
+      return { version, changed: true, created: !existing };
+    } catch (error) {
+      await safeRollback(client);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteTemplate(templateId: string): Promise<boolean> {
+    // Only the live row goes. aiops_report_template_versions keeps the history,
+    // which is what a report published under this template still refers to.
+    const result = await this.pool.query(
+      `DELETE FROM aiops_report_templates WHERE template_id = $1`,
+      [templateId],
+    );
+    return result.rowCount === 1;
   }
 
   async saveSlackRequest(request: AcceptedSlackRequest): Promise<SaveRequestResult> {
@@ -589,6 +724,28 @@ export class PostgresRequestRepository implements RequestRepository {
     );
     return result.rows[0] ?? null;
   }
+}
+
+interface TemplateRow {
+  template_id: string;
+  version: number;
+  enabled: boolean;
+  title: string;
+  description: string;
+  collection: unknown;
+  output: unknown;
+}
+
+function toTemplate(row: TemplateRow): ReportTemplate {
+  return {
+    template_id: row.template_id,
+    version: row.version,
+    enabled: row.enabled,
+    title: row.title,
+    description: row.description,
+    collection: row.collection as ReportTemplate["collection"],
+    output: row.output as ReportTemplate["output"],
+  };
 }
 
 async function safeRollback(client: PoolClient): Promise<void> {

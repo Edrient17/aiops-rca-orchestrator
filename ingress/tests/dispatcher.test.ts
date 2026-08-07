@@ -12,6 +12,10 @@ function repositoryWithJob(job: DispatchJob): RequestRepository {
   let claimed = false;
   return {
     ping: vi.fn(async () => undefined),
+    listTemplates: vi.fn(async () => []),
+    getTemplate: vi.fn(async () => null),
+    saveTemplate: vi.fn(async () => ({ version: 1, changed: true, created: true })),
+    deleteTemplate: vi.fn(async () => true),
     saveSlackRequest: vi.fn(async () => ({ created: true, requestId: job.requestId })),
     findPendingClarification: vi.fn(async () => null),
     claimDispatch: vi.fn(async () => {

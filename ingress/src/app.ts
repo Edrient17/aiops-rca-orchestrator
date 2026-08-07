@@ -9,6 +9,7 @@ import {
   stripBotMention,
   verifySlackSignature,
 } from "./slack.js";
+import { reportTemplateSchema, templateIdSchema } from "./templates.js";
 import type { RequestRepository, SlackEventEnvelope } from "./types.js";
 
 type SlackEvent = SlackEventEnvelope["event"];
@@ -217,6 +218,64 @@ export function createApp(dependencies: AppDependencies): express.Express {
 
   app.use(express.json({ limit: "2mb" }));
   app.use("/internal", internalAuth(dependencies.config.internalToken));
+
+  // The catalog the question analyzer classifies against, and the CRUD an
+  // operator uses to grow it. Both sit behind the internal token: these are not
+  // reachable through the reverse proxy, so an operator edits them from the
+  // host, which is the same boundary the rest of /internal already assumes.
+  app.get("/internal/templates", async (request, response, next) => {
+    try {
+      const includeDisabled = request.query.all === "true";
+      response.json({
+        templates: await dependencies.repository.listTemplates(includeDisabled),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/internal/templates/:templateId", async (request, response, next) => {
+    try {
+      const template = await dependencies.repository.getTemplate(
+        request.params.templateId,
+      );
+      if (!template) {
+        response.status(404).json({ error: "template_not_found" });
+        return;
+      }
+      response.json(template);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Validated here rather than where it is used. A template becomes prompt text
+  // for an agent midway through an investigation, so a malformed one would
+  // otherwise fail a question that had already been accepted and acknowledged.
+  app.put("/internal/templates/:templateId", async (request, response, next) => {
+    try {
+      const templateId = templateIdSchema.parse(request.params.templateId);
+      const body = reportTemplateSchema.parse(request.body);
+      const result = await dependencies.repository.saveTemplate(templateId, body);
+      response.status(result.created ? 201 : 200).json({
+        template_id: templateId,
+        ...result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/internal/templates/:templateId", async (request, response, next) => {
+    try {
+      const deleted = await dependencies.repository.deleteTemplate(
+        request.params.templateId,
+      );
+      response.status(deleted ? 200 : 404).json({ deleted });
+    } catch (error) {
+      next(error);
+    }
+  });
 
   app.get("/internal/requests/:requestId", async (request, response, next) => {
     try {

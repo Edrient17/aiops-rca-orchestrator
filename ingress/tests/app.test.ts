@@ -13,13 +13,34 @@ import type {
   ReportInput,
   ReportNoteInput,
   ReportRef,
+  ReportTemplate,
+  ReportTemplateBody,
   RequestRepository,
   SaveFeedbackResult,
   SaveRequestResult,
+  SaveTemplateResult,
   SystemErrorInput,
 } from "../src/types.js";
 
 class FakeRepository implements RequestRepository {
+  templates: ReportTemplate[] = [];
+  saveTemplateResult: SaveTemplateResult = {
+    version: 1,
+    changed: true,
+    created: true,
+  };
+  listTemplates = vi.fn(async (includeDisabled: boolean) =>
+    includeDisabled ? this.templates : this.templates.filter((t) => t.enabled),
+  );
+  getTemplate = vi.fn(
+    async (id: string) => this.templates.find((t) => t.template_id === id) ?? null,
+  );
+  saveTemplate = vi.fn(
+    async (_id: string, _body: ReportTemplateBody) => this.saveTemplateResult,
+  );
+  deleteTemplate = vi.fn(async (id: string) =>
+    this.templates.some((t) => t.template_id === id),
+  );
   saveResult: SaveRequestResult = { created: true, requestId: "REQ-TEST" };
   pendingClarification: PendingClarification | null = null;
   savedRequests: AcceptedSlackRequest[] = [];
@@ -483,6 +504,162 @@ describe("report feedback", () => {
 
     expect(response.body.clarifies).toBe("REQ-PARENT");
     expect(repository.saveReportNote).not.toHaveBeenCalled();
+  });
+});
+
+describe("report templates", () => {
+  const validTemplate = {
+    title: "월말 용량 보고서",
+    description: "월말/정기 용량·가용성 요약을 요청할 때 고른다",
+    collection: {
+      host_selector: { mode: "host_group", group_ids: ["10", "11"] },
+      window: { policy: "long_term_capacity", range: "last_calendar_month" },
+      aggregation: "1d",
+      metric_keywords: ["disk", "cpu", "memory"],
+      guidance: "호스트별 이벤트를 먼저 훑고 사건이 있는 곳만 깊게 본다.",
+    },
+    output: {
+      sections: [
+        { heading: "요약", instruction: "한 달간 전반 상태를 3문장 이내로" },
+        { heading: "용량 추세", instruction: "호스트별 디스크 증가율" },
+      ],
+      guidance: "존댓말은 요약에만 쓴다.",
+    },
+  };
+
+  function put(
+    app: ReturnType<typeof createApp>,
+    id: string,
+    body: object,
+  ) {
+    return request(app)
+      .put(`/internal/templates/${id}`)
+      .set("x-aiops-internal-token", internalToken)
+      .send(body);
+  }
+
+  /**
+   * A copy of the valid template with one thing broken in it. The draft is
+   * loosely typed on purpose: the point of each case is to set a field to
+   * something the schema should refuse, which a faithful type would forbid.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function withChange(change: (draft: any) => void): Record<string, unknown> {
+    const draft = structuredClone(validTemplate);
+    change(draft);
+    return draft as unknown as Record<string, unknown>;
+  }
+
+  it("stores a template an operator writes and reports it as created", async () => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    const created = await put(app, "monthly_capacity_report", validTemplate);
+
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      template_id: "monthly_capacity_report",
+      version: 1,
+      created: true,
+    });
+    // Defaults are filled in on the way through, so the workflow never has to
+    // cope with a half-specified template.
+    const [, body] = repository.saveTemplate.mock.calls[0] ?? [];
+    expect(body).toMatchObject({ enabled: true, collection: { limits: {} } });
+    expect(body?.output.sections.map((section) => section.required)).toEqual([
+      true,
+      true,
+    ]);
+  });
+
+  it("requires the internal token", async () => {
+    const repository = new FakeRepository();
+    const response = await request(createApp({ config, repository }))
+      .put("/internal/templates/monthly_capacity_report")
+      .send(validTemplate);
+
+    expect(response.status).toBe(401);
+    expect(repository.saveTemplate).not.toHaveBeenCalled();
+  });
+
+  // A template becomes prompt text mid-investigation, so a bad one must be
+  // refused while the operator is still there to read the error.
+  it.each([
+    ["no sections", withChange((t) => void (t.output.sections = []))],
+    ["unknown window policy", withChange((t) => void (t.collection.window.policy = "whenever"))],
+    ["host_group naming no groups", withChange((t) => void (t.collection.host_selector.group_ids = []))],
+    ["an absurd tool budget", withChange((t) => void (t.collection.limits = { max_tool_calls: 100_000 }))],
+    ["no description for the classifier to read", withChange((t) => void (t.description = ""))],
+    ["a section with no instruction", withChange((t) => void (t.output.sections[0].instruction = ""))],
+  ])("rejects a template with %s", async (_label, broken) => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    const response = await put(app, "monthly_capacity_report", broken);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("invalid_request");
+    expect(repository.saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an id that is not a plain identifier", async () => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    for (const id of ["Monthly-Report", "../etc", "ab", "월말"]) {
+      const response = await put(app, encodeURIComponent(id), validTemplate);
+      expect(response.status).toBe(400);
+    }
+    expect(repository.saveTemplate).not.toHaveBeenCalled();
+  });
+
+  it("hides disabled templates from the catalog but not from a direct read", async () => {
+    const repository = new FakeRepository();
+    repository.templates = [
+      { template_id: "incident_rca", version: 3, enabled: true, ...validTemplate },
+      { template_id: "retired_report", version: 1, enabled: false, ...validTemplate },
+    ] as unknown as ReportTemplate[];
+    const app = createApp({ config, repository });
+
+    const catalog = await request(app)
+      .get("/internal/templates")
+      .set("x-aiops-internal-token", internalToken);
+    expect(catalog.body.templates.map((t: ReportTemplate) => t.template_id)).toEqual([
+      "incident_rca",
+    ]);
+
+    const all = await request(app)
+      .get("/internal/templates?all=true")
+      .set("x-aiops-internal-token", internalToken);
+    expect(all.body.templates).toHaveLength(2);
+
+    const direct = await request(app)
+      .get("/internal/templates/retired_report")
+      .set("x-aiops-internal-token", internalToken);
+    expect(direct.status).toBe(200);
+  });
+
+  it("reports an unchanged rewrite without bumping the version", async () => {
+    const repository = new FakeRepository();
+    repository.saveTemplateResult = { version: 4, changed: false, created: false };
+    const app = createApp({ config, repository });
+
+    const response = await put(app, "incident_rca", validTemplate);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ version: 4, changed: false });
+  });
+
+  it("404s on deleting a template that is not there", async () => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    const response = await request(app)
+      .delete("/internal/templates/never_existed")
+      .set("x-aiops-internal-token", internalToken);
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ deleted: false });
   });
 });
 

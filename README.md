@@ -209,6 +209,56 @@ UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정�
 - Slack Signing Secret, Bot Token, OpenAI key, MCP token은 저장소에 커밋하지
   않습니다.
 
+## 보고서 템플릿
+
+문서 종류마다 **무엇을 수집하고 어떤 구성으로 쓸지**를 DB 행 하나로 정의합니다.
+장애 RCA와 월말 용량 보고서는 볼 메트릭도, 기간도, 문서 구성도 다른데, 이를
+워크플로 분기로 넣으면 종류를 늘릴 때마다 재배포해야 합니다.
+
+> 아직 워크플로가 이 표를 읽지 않습니다. 지금은 레지스트리와 검증만 있고,
+> 질문 분석·증거 수집·보고서 작성에 연결하는 작업이 남아 있습니다.
+
+추가와 수정은 같은 요청입니다. 오케스트레이터 호스트에서:
+
+```bash
+curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \
+  -H "X-AIOPS-Internal-Token: $AIOPS_INTERNAL_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "월말 용량 보고서",
+    "description": "월말이나 정기 용량·가용성 요약을 요청할 때 고른다",
+    "collection": {
+      "host_selector": { "mode": "host_group", "group_ids": ["10"] },
+      "window": { "policy": "long_term_capacity", "range": "last_calendar_month" },
+      "aggregation": "1d",
+      "metric_keywords": ["disk", "cpu", "memory"],
+      "guidance": "호스트별 이벤트를 먼저 훑고 사건이 있는 곳만 깊게 본다."
+    },
+    "output": {
+      "sections": [
+        { "heading": "요약", "instruction": "한 달간 전반 상태를 3문장 이내로" },
+        { "heading": "용량 추세", "instruction": "호스트별 디스크 증가율" }
+      ],
+      "guidance": "존댓말은 요약에만 쓴다."
+    }
+  }'
+```
+
+- `description`은 질문 분석 Agent가 읽습니다. 문서에 무엇이 담기는지가 아니라
+  **어떤 질문일 때 이걸 고르는지**를 적으십시오.
+- `GET /internal/templates`가 사용 가능한 목록, `?all=true`면 비활성 포함입니다.
+- `DELETE /internal/templates/:id`로 제거합니다. 잠시 내리기만 할 때는
+  `enabled: false`로 저장하는 편이 낫습니다 — 그 템플릿으로 발행된 보고서가
+  가리키는 대상이 사라지지 않습니다.
+
+내용이 실제로 달라졌을 때만 `version`이 오릅니다. 같은 내용을 다시 보내면
+`{"changed": false}`가 돌아옵니다. 모든 판이 `aiops_report_template_versions`에
+남으므로, 템플릿을 지웠다 다시 만들어도 버전 번호는 이어집니다. 과거 보고서가
+어떤 양식으로 만들어졌는지 되짚을 수 있어야 하기 때문입니다.
+
+잘못된 템플릿은 저장 시점에 거절됩니다. 템플릿은 조사 도중 Agent의 프롬프트가
+되므로, 런타임에 발견되면 이미 접수·응답까지 끝난 질문이 실패합니다.
+
 ## 데이터 확인
 
 ```powershell
@@ -228,6 +278,8 @@ docker compose exec postgres psql -U aiops -d aiops
   `failed`로 정리됩니다. 이미 `completed`인 요청은 덮어쓰지 않습니다.
 - `aiops_report_feedback`: 보고서에 달린 반응 판정
 - `aiops_report_notes`: 보고서 스레드에 적힌 실제 원인
+- `aiops_report_templates`: 문서 종류별 수집 범위와 출력 구성
+- `aiops_report_template_versions`: 템플릿의 모든 판. 템플릿을 지워도 남습니다
 
 `aiops_labeled_dataset` 뷰가 질문·증거·결론·판정을 한 행으로 묶어 줍니다. 학습
 데이터나 RAG 색인의 입력으로 그대로 쓸 수 있습니다. 한 보고서에 판정이 여러 개면
