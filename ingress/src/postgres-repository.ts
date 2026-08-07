@@ -253,6 +253,18 @@ export class PostgresRequestRepository implements RequestRepository {
     );
   }
 
+  async setExecutionId(requestId: string, executionId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `
+        UPDATE aiops_requests
+        SET n8n_execution_id = $2, updated_at = now()
+        WHERE request_id = $1
+      `,
+      [requestId, executionId],
+    );
+    return result.rowCount === 1;
+  }
+
   async updateRequestStatus(
     requestId: string,
     status: string,
@@ -372,6 +384,12 @@ export class PostgresRequestRepository implements RequestRepository {
   }
 
   async recordSystemError(input: SystemErrorInput): Promise<void> {
+    // n8n hands the error workflow an execution id, not a request id, so the
+    // request has to be recovered from the mapping the run registered when it
+    // started. Without this the error is stored unattributed and the request is
+    // never moved off the status it was in when it died.
+    const requestId = input.requestId ?? (await this.resolveByExecution(input.executionId));
+
     await this.pool.query(
       `
         INSERT INTO aiops_system_errors (
@@ -385,7 +403,7 @@ export class PostgresRequestRepository implements RequestRepository {
         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
       `,
       [
-        input.requestId ?? null,
+        requestId,
         input.workflowName ?? null,
         input.executionId ?? null,
         input.lastNode ?? null,
@@ -394,9 +412,36 @@ export class PostgresRequestRepository implements RequestRepository {
       ],
     );
 
-    if (input.requestId) {
-      await this.updateRequestStatus(input.requestId, "failed", input.message);
+    if (requestId) {
+      // Guarded rather than unconditional: re-running a finished request in the
+      // n8n UI maps its new execution to the same request, and a failed debug
+      // run must not retract a report that was already delivered.
+      await this.pool.query(
+        `
+          UPDATE aiops_requests
+          SET status = 'failed', last_error = $2, updated_at = now()
+          WHERE request_id = $1 AND status <> 'completed'
+        `,
+        [requestId, input.message],
+      );
     }
+  }
+
+  private async resolveByExecution(executionId?: string): Promise<string | null> {
+    if (!executionId) {
+      return null;
+    }
+    const result = await this.pool.query<{ request_id: string }>(
+      `
+        SELECT request_id
+        FROM aiops_requests
+        WHERE n8n_execution_id = $1
+        ORDER BY received_at DESC
+        LIMIT 1
+      `,
+      [executionId],
+    );
+    return result.rows[0]?.request_id ?? null;
   }
 
   async findReportByMessage(

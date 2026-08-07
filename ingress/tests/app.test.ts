@@ -37,6 +37,7 @@ class FakeRepository implements RequestRepository {
   completeDispatch = vi.fn(async () => undefined);
   retryDispatch = vi.fn(async () => undefined);
   updateRequestStatus = vi.fn(async () => true);
+  setExecutionId = vi.fn(async (_id: string, _executionId: string) => true);
   recordAgentRun = vi.fn(async (_id: string, _input: AgentRunInput) => true);
   saveReport = vi.fn(async (_id: string, _input: ReportInput) => true);
   recordSystemError = vi.fn(async (_input: SystemErrorInput) => undefined);
@@ -505,5 +506,64 @@ describe("internal API", () => {
       });
     expect(created.status).toBe(201);
     expect(repository.recordAgentRun).toHaveBeenCalledOnce();
+  });
+
+  it("links a run to its execution so a later failure can be attributed", async () => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    const unauthorized = await request(app)
+      .post("/internal/requests/REQ-TEST/execution")
+      .send({ execution_id: "4210" });
+    expect(unauthorized.status).toBe(401);
+
+    const linked = await request(app)
+      .post("/internal/requests/REQ-TEST/execution")
+      .set("x-aiops-internal-token", internalToken)
+      .send({ execution_id: "4210" });
+    expect(linked.status).toBe(200);
+    expect(linked.body).toEqual({ linked: true });
+    expect(repository.setExecutionId).toHaveBeenCalledWith("REQ-TEST", "4210");
+  });
+
+  it("rejects an execution link with no id, and reports an unknown request", async () => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    const invalid = await request(app)
+      .post("/internal/requests/REQ-TEST/execution")
+      .set("x-aiops-internal-token", internalToken)
+      .send({ execution_id: "" });
+    expect(invalid.status).toBe(400);
+
+    repository.setExecutionId.mockResolvedValueOnce(false);
+    const missing = await request(app)
+      .post("/internal/requests/REQ-GONE/execution")
+      .set("x-aiops-internal-token", internalToken)
+      .send({ execution_id: "4210" });
+    expect(missing.status).toBe(404);
+    expect(missing.body).toEqual({ linked: false });
+  });
+
+  it("passes the execution id through on an error with no request id", async () => {
+    const repository = new FakeRepository();
+    const app = createApp({ config, repository });
+
+    const recorded = await request(app)
+      .post("/internal/errors")
+      .set("x-aiops-internal-token", internalToken)
+      .send({
+        workflow_name: "AIOps - Slack to Zabbix RCA",
+        execution_id: "4210",
+        last_node: "Evidence Collector",
+        message: "Model output doesn't fit required format",
+      });
+
+    expect(recorded.status).toBe(201);
+    const [input] = repository.recordSystemError.mock.calls[0] ?? [];
+    expect(input?.executionId).toBe("4210");
+    // The repository is what turns this into a request id; nothing upstream of
+    // it knows one, which is the case the fix exists for.
+    expect(input && "requestId" in input).toBe(false);
   });
 });

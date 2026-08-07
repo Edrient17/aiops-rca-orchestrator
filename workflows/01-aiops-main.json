@@ -39,6 +39,40 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/execution' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-AIOPS-Internal-Token",
+              "value": "={{ $env.AIOPS_INTERNAL_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ execution_id: String($execution.id) }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "6fe0ddd3-f404-5080-83c5-1be5b98a63ba",
+      "name": "Register Execution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        360,
+        0
+      ]
+    },
+    {
+      "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "const request = $('Normalize Request').first().json;\nconst continues = Boolean(request.parent_request_id);\n\n// A continuation lands inside the parent's thread, where the original question\n// is already on screen, so it only needs to report what was added. Without a\n// parent anchor it starts its own thread and must carry the question itself.\nif (continues && request.parent_ack_ts) {\n  return [{ json: { text: [\n    '🔎 *조사 재개* — 보충된 정보로 이어서 조사합니다.',\n    '• 요청 ID: \\`' + request.request_id + '\\`',\n    '• 보충된 정보: ' + request.question,\n  ].join('\\n') } }];\n}\n\nconst lines = ['🔎 *AIOps 조사 접수*', '• 요청 ID: \\`' + request.request_id + '\\`'];\nif (continues && request.prior_question) {\n  lines.push('• 원래 질문: ' + request.prior_question);\n  lines.push('• 보충된 정보: ' + request.question);\n} else {\n  lines.push('• 질문: ' + request.question);\n}\nreturn [{ json: { text: lines.join('\\n') } }];"
       },
@@ -47,7 +81,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        360,
+        480,
         0
       ]
     },
@@ -81,7 +115,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
+        600,
         0
       ]
     },
@@ -709,6 +743,17 @@
       ]
     },
     "Normalize Request": {
+      "main": [
+        [
+          {
+            "node": "Register Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Execution": {
       "main": [
         [
           {

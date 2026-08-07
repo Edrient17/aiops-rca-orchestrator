@@ -78,7 +78,20 @@ function buildMainWorkflow(input) {
       { webhookId: "aiops-process-v010" },
     ),
     codeNode("Normalize Request", [240, 0], normalizeRequestCode),
-    codeNode("Format ACK", [360, 0], formatAckCode),
+    // First thing after the payload is validated, and deliberately ahead of the
+    // Slack ACK: everything below can fail, and a failure is reported by the
+    // error workflow, which is given an execution id and no request id. This
+    // call is what lets that id be turned back into a request. Registering it
+    // any later would leave the nodes before it unattributable.
+    httpNode(
+      "Register Execution",
+      "POST",
+      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/execution' }}",
+      "={{ JSON.stringify({ execution_id: String($execution.id) }) }}",
+      [360, 0],
+      "internal",
+    ),
+    codeNode("Format ACK", [480, 0], formatAckCode),
     httpNode(
       "Post Business ACK",
       "POST",
@@ -87,7 +100,7 @@ function buildMainWorkflow(input) {
       // investigation occupies one thread however many clarifications it took.
       // Slack echoes thread_ts back, which is what the report then anchors to.
       "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text, ...($('Normalize Request').first().json.parent_ack_ts ? { thread_ts: $('Normalize Request').first().json.parent_ack_ts } : {}) }) }}",
-      [480, 0],
+      [600, 0],
       "slack",
     ),
     codeNode("Assert ACK Posted", [720, 0], assertSlackCode),
@@ -208,7 +221,8 @@ function buildMainWorkflow(input) {
 
   const connections = {};
   connectMain(connections, "AIOps Internal Webhook", "Normalize Request");
-  connectMain(connections, "Normalize Request", "Format ACK");
+  connectMain(connections, "Normalize Request", "Register Execution");
+  connectMain(connections, "Register Execution", "Format ACK");
   connectMain(connections, "Format ACK", "Post Business ACK");
   connectMain(connections, "Post Business ACK", "Assert ACK Posted");
   connectMain(connections, "Assert ACK Posted", "Mark Analyzing");

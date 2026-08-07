@@ -133,6 +133,10 @@ export interface ReportNoteInput {
 export interface SystemErrorInput {
   requestId?: string;
   workflowName?: string;
+  /**
+   * The failing n8n execution. When the error carries no request id this is
+   * what identifies the request, through aiops_requests.n8n_execution_id.
+   */
   executionId?: string;
   lastNode?: string;
   message: string;
@@ -149,6 +153,11 @@ export interface RequestRepository {
   claimDispatch(): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;
+  /**
+   * Records which n8n execution is running this request, so a failure that only
+   * knows its execution id can still be attributed back.
+   */
+  setExecutionId(requestId: string, executionId: string): Promise<boolean>;
   updateRequestStatus(
     requestId: string,
     status: string,

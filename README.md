@@ -191,7 +191,10 @@ docker compose exec postgres psql -U aiops -d aiops
 - `aiops_agent_runs`
 - `aiops_tool_calls`
 - `aiops_reports`
-- `aiops_system_errors`
+- `aiops_system_errors`: 실행 오류. n8n은 오류 워크플로에 실행 ID만 넘기므로,
+  메인 워크플로가 시작 직후 기록해 둔 `aiops_requests.n8n_execution_id`로
+  어느 요청이었는지 되찾습니다. 그래야 실패한 요청이 진행 중 상태에 남지 않고
+  `failed`로 정리됩니다. 이미 `completed`인 요청은 덮어쓰지 않습니다.
 - `aiops_report_feedback`: 보고서에 달린 반응 판정
 - `aiops_report_notes`: 보고서 스레드에 적힌 실제 원인
 
