@@ -119,7 +119,13 @@ def main():
     print("== pull ==")
     if run(["git", "fetch", "--quiet", "origin"]).returncode != 0:
         fail("could not fetch origin")
-    run(["git", "reset", "--hard", "origin/main", "--quiet"])
+    # Checked, unlike the fetch above used to be on its own. A reset that fails
+    # -- a lock left by another git process, an unwritable file -- leaves the
+    # working tree on the old commit, and everything downstream would then
+    # cheerfully deploy the previous version while printing the reset as done.
+    reset = run(["git", "reset", "--hard", "origin/main", "--quiet"])
+    if reset.returncode != 0:
+        fail("could not reset to origin/main:\n" + (reset.stderr or reset.stdout).strip())
     print("  " + run(["git", "log", "--oneline", "-1"]).stdout.strip())
 
     print()
@@ -182,13 +188,22 @@ def main():
 
     print()
     print("== import ==")
-    result = run(["docker", "compose", "run", "--rm", "--entrypoint", "n8n",
-                  "n8n-import", "import:workflow",
-                  "--input=" + PATCHED_IN_CONTAINER])
-    os.remove(patched_path)
-    if result.returncode != 0:
-        fail("import failed:\n" + (result.stderr or result.stdout)[-600:])
-    print("  imported main workflow")
+    # The patched copy is scratch, and it lands inside workflows/, which the
+    # next run resets with `git reset --hard`. That does not remove untracked
+    # files, so anything left behind here stays for good. Removed in a finally
+    # rather than after the call, so an exception -- docker missing, the daemon
+    # down -- cannot strand it either. fail() raises SystemExit, which still
+    # unwinds through this.
+    try:
+        result = run(["docker", "compose", "run", "--rm", "--entrypoint", "n8n",
+                      "n8n-import", "import:workflow",
+                      "--input=" + PATCHED_IN_CONTAINER])
+        if result.returncode != 0:
+            fail("import failed:\n" + (result.stderr or result.stdout)[-600:])
+        print("  imported main workflow")
+    finally:
+        if os.path.exists(patched_path):
+            os.remove(patched_path)
 
     result = run(["docker", "compose", "run", "--rm", "--entrypoint", "n8n",
                   "n8n-import", "import:workflow",

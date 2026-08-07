@@ -5,6 +5,10 @@
 node_modules/
 dist/
 coverage/
+# Scratch copy redeploy-workflow.py writes next to the real workflows. Ignored
+# so a leftover cannot trip the CI check that workflows/ matches the generator.
+workflows/.redeploy-with-credentials.json
+__pycache__/
 *.log
 .DS_Store
 .idea/
