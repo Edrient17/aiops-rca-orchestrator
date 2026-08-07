@@ -520,8 +520,8 @@ describe("report templates", () => {
     },
     output: {
       sections: [
-        { heading: "요약", instruction: "한 달간 전반 상태를 3문장 이내로" },
-        { heading: "용량 추세", instruction: "호스트별 디스크 증가율" },
+        { id: "summary", heading: "요약", instruction: "한 달간 전반 상태를 3문장 이내로" },
+        { id: "capacity_trend", heading: "용량 추세", instruction: "호스트별 디스크 증가율" },
       ],
       guidance: "존댓말은 요약에만 쓴다.",
     },

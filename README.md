@@ -215,8 +215,10 @@ UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정�
 장애 RCA와 월말 용량 보고서는 볼 메트릭도, 기간도, 문서 구성도 다른데, 이를
 워크플로 분기로 넣으면 종류를 늘릴 때마다 재배포해야 합니다.
 
-> 아직 워크플로가 이 표를 읽지 않습니다. 지금은 레지스트리와 검증만 있고,
-> 질문 분석·증거 수집·보고서 작성에 연결하는 작업이 남아 있습니다.
+장애 RCA는 `incident_rca` 템플릿으로 시드되어 있습니다. 질문이 어떤 템플릿에도
+맞지 않으면 여기로 떨어지므로 이 행이 없으면 조사가 실패합니다. 마이그레이션이
+매 배포마다 `ON CONFLICT DO NOTHING`으로 복원하니, 실수로 지워도 다음 배포에서
+원래 문구로 돌아옵니다. 수정한 내용은 덮어쓰지 않습니다.
 
 추가와 수정은 같은 요청입니다. 오케스트레이터 호스트에서:
 
@@ -236,8 +238,10 @@ curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \
     },
     "output": {
       "sections": [
-        { "heading": "요약", "instruction": "한 달간 전반 상태를 3문장 이내로" },
-        { "heading": "용량 추세", "instruction": "호스트별 디스크 증가율" }
+        { "id": "summary", "heading": "요약",
+          "instruction": "한 달간 전반 상태를 3문장 이내로" },
+        { "id": "capacity_trend", "heading": "용량 추세",
+          "instruction": "호스트별 디스크 증가율" }
       ],
       "guidance": "존댓말은 요약에만 쓴다."
     }
@@ -255,6 +259,13 @@ curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \
 `{"changed": false}`가 돌아옵니다. 모든 판이 `aiops_report_template_versions`에
 남으므로, 템플릿을 지웠다 다시 만들어도 버전 번호는 이어집니다. 과거 보고서가
 어떤 양식으로 만들어졌는지 되짚을 수 있어야 하기 때문입니다.
+
+`sections`가 문서의 구성입니다. `id`로 작성 Agent의 출력과 짝지어지므로 제목을
+바꿔도 무방하지만 `id`는 바꾸지 마십시오. `required: false`인 칸은 쓸 내용이
+없으면 보고서에서 빠지고, `true`면 "해당 없음"으로 남습니다.
+`requires_problem_event: true`인 칸은 **실제 Zabbix 문제 이벤트가 있을 때만**
+나옵니다 — 장애 시각처럼 사건이 없으면 존재할 수 없는 내용을 위한 것으로,
+멀쩡한 호스트에 없던 장애를 지어내는 것을 막습니다.
 
 잘못된 템플릿은 저장 시점에 거절됩니다. 템플릿은 조사 도중 Agent의 프롬프트가
 되므로, 런타임에 발견되면 이미 접수·응답까지 끝난 질문이 실패합니다.

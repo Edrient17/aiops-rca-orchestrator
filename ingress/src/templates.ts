@@ -72,14 +72,38 @@ const outputSchema = z.object({
   sections: z
     .array(
       z.object({
+        /**
+         * How the writer's output is matched back to this section. Matching on
+         * an id rather than on the heading means the writer never reproduces a
+         * heading, so it cannot quietly rename one, and the operator can retitle
+         * a section without invalidating anything.
+         */
+        id: z
+          .string()
+          .regex(TEMPLATE_ID, "section id must be lower-case letters, digits and underscores, 3-64 chars"),
         heading: z.string().min(1).max(120),
         instruction: z.string().min(1).max(2_000),
         /** A section with nothing to say is dropped rather than left empty. */
         required: z.boolean().default(true),
+        /**
+         * Withholds the section unless the investigation found a real Zabbix
+         * problem event.
+         *
+         * Incident timing is the case this exists for. The writer has been seen
+         * copying the investigation window into "started at" and "duration" on a
+         * host that was fine, which reads as an hour-long outage that never
+         * happened. Judgement in a prompt did not stop that; dropping the
+         * section when nothing backs it does.
+         */
+        requires_problem_event: z.boolean().default(false),
       }),
     )
     .min(1)
-    .max(30),
+    .max(30)
+    .refine(
+      (sections) => new Set(sections.map((s) => s.id)).size === sections.length,
+      "section ids must be unique within a template",
+    ),
   /** Appended to the RCA Writer's input. */
   guidance: z.string().max(4_000).default(""),
 });

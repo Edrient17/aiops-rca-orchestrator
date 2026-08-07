@@ -18,11 +18,42 @@ function schemaValidator(): Ajv2020 {
   return ajv;
 }
 
+// The incident RCA template is seeded as SQL, so nothing validates it on the
+// way in the way the API validates an operator's. If its section ids drifted
+// from the rules the API enforces, the mismatch would only surface when someone
+// tried to save that same template back through it.
+describe("seeded incident_rca template", () => {
+  const seed = readFileSync(
+    resolve(process.cwd(), "..", "database", "migrations", "007_seed_incident_rca.sql"),
+    "utf8",
+  );
+  const ids = [...seed.matchAll(/'id',\s*'([^']*)'/g)].map((match) => match[1]!);
+
+  it("declares sections whose ids the template API would accept", () => {
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(id).toMatch(/^[a-z][a-z0-9_]{2,63}$/);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  // The renderer withholds these unless a real problem event was found, and the
+  // writer is never asked to produce them either. Getting the set wrong is how
+  // an outage that never happened gets reported.
+  it("gates exactly the sections that depend on an incident having occurred", () => {
+    const gated = [...seed.matchAll(/'id',\s*'([^']*)'[\s\S]*?'requires_problem_event',\s*(true|false)/g)]
+      .filter((match) => match[2] === "true")
+      .map((match) => match[1]!);
+
+    expect(gated.sort()).toEqual(["incident_timing", "recovery", "timeline"]);
+  });
+});
+
 describe("JSON Schema drafts", () => {
   it.each([
     "parsed-request.schema.json",
     "evidence-package.schema.json",
-    "rca-report.schema.json",
+    "report.schema.json",
   ])("compiles %s as Draft 2020-12", (name) => {
     const ajv = schemaValidator();
     expect(() => ajv.compile(loadSchema(name))).not.toThrow();
@@ -179,35 +210,60 @@ describe("JSON Schema drafts", () => {
     ).toBe(false);
   });
 
-  it("reports on every host it covered", () => {
+  // The report shape stopped being incident-specific: headings come from the
+  // template, so the writer only fills declared sections by id.
+  it("accepts a filled-in section set and rejects an undeclared shape", () => {
     const ajv = schemaValidator();
-    const validate = ajv.compile(loadSchema("rca-report.schema.json"));
-    const report = (hosts: string[]) => ({
-      schema_version: "0.1.0",
-      title: "web 계층 디스크 사용률 상승",
-      executive_summary: "web-01과 web-02에서 디스크 사용률이 상승했습니다.",
-      incident: {
-        hosts,
-        severity: null,
-        started_at: null,
-        recovered_at: null,
-        duration_seconds: null,
-        observed_failure_mode: "디스크 사용률 상승",
-      },
-      impact: { confirmed: [], unconfirmed: [] },
-      timeline: [],
-      confirmed_facts: [],
-      related_signals: [],
-      root_cause_candidates: [],
-      recovery: [],
-      immediate_actions: [],
-      preventive_actions: [],
-      additional_data_required: [],
-      limitations: [],
+    const validate = ajv.compile(loadSchema("report.schema.json"));
+    const section = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      body: null,
+      items: [],
+      ...extra,
     });
 
-    expect(validate(report(["web-01", "web-02"]))).toBe(true);
-    expect(validate(report(["web-01"]))).toBe(true);
-    expect(validate(report([]))).toBe(false);
+    expect(
+      validate({
+        schema_version: "0.1.0",
+        title: "web 계층 디스크 사용률 상승",
+        sections: [
+          section("summary", { body: "디스크가 상승했습니다." }),
+          section("candidates", {
+            items: [
+              {
+                text: "로그 적재 증가",
+                label: "high",
+                evidence_refs: ["zbx:metric:42269:a"],
+                counter_evidence_refs: [],
+              },
+            ],
+          }),
+        ],
+      }),
+    ).toBe(true);
+    expect(validate.errors).toBeNull();
+
+    // A heading in the output would mean the writer chose the layout.
+    expect(
+      validate({
+        schema_version: "0.1.0",
+        title: "t",
+        sections: [{ ...section("summary"), heading: "요약" }],
+      }),
+    ).toBe(false);
+
+    // Section ids follow the template id shape, so a free-text one is refused.
+    expect(
+      validate({
+        schema_version: "0.1.0",
+        title: "t",
+        sections: [section("Summary Section")],
+      }),
+    ).toBe(false);
+
+    // A report with no sections is not a report.
+    expect(
+      validate({ schema_version: "0.1.0", title: "t", sections: [] }),
+    ).toBe(false);
   });
 });

@@ -14,14 +14,14 @@ async function main() {
     rcaPrompt,
     parsedSchema,
     evidenceSchema,
-    rcaSchema,
+    reportSchema,
   ] = await Promise.all([
     readFile(resolve(rootDir, "prompts", "question-analyzer.system.md"), "utf8"),
     readFile(resolve(rootDir, "prompts", "evidence-collector.system.md"), "utf8"),
     readFile(resolve(rootDir, "prompts", "rca-writer.system.md"), "utf8"),
     readJson(resolve(rootDir, "schemas", "parsed-request.schema.json")),
     readJson(resolve(rootDir, "schemas", "evidence-package.schema.json")),
-    readJson(resolve(rootDir, "schemas", "rca-report.schema.json")),
+    readJson(resolve(rootDir, "schemas", "report.schema.json")),
   ]);
 
   const mainWorkflowId = "aiops-main-v010";
@@ -33,7 +33,7 @@ async function main() {
     rcaPrompt,
     parsedSchema: flattenLocalRefs(parsedSchema),
     evidenceSchema: flattenLocalRefs(evidenceSchema),
-    rcaSchema: flattenLocalRefs(rcaSchema),
+    reportSchema: flattenLocalRefs(reportSchema),
     mainWorkflowId,
     errorWorkflowId,
   });
@@ -185,11 +185,15 @@ function buildMainWorkflow(input) {
       "RCA Writer",
       [2400, -140],
       input.rcaPrompt,
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, evidence_package: $('Evidence Collector').first().json.output }, null, 2) }}",
+      // The section list is the writer's assignment: it fills the sections it
+      // is given, by id, and cannot invent or rename one. Sections gated on a
+      // problem event are withheld here as well as at render time, so the
+      // writer is never asked to produce timing that would be dropped anyway.
+      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, evidence_package: $('Evidence Collector').first().json.output, report_guidance: ($('Select Template').first().json.output || {}).guidance || '', sections: (($('Select Template').first().json.output || {}).sections || []).filter(section => !section.requires_problem_event || ($('Evidence Collector').first().json.output.evidence || []).some(item => /^zbx:event:\\d+$/.test(item.evidence_id || ''))).map(section => ({ id: section.id, heading: section.heading, instruction: section.instruction, required: section.required })) }, null, 2) }}",
       3,
     ),
     modelNode("RCA Model", [2360, 140], MODELS.rca.id, MODELS.rca.reasoningEffort),
-    parserNode("RCA Report Parser", [2560, 140], input.rcaSchema),
+    parserNode("Report Parser", [2560, 140], input.reportSchema),
     httpNode(
       "Persist RCA Result",
       "POST",
@@ -277,7 +281,7 @@ function buildMainWorkflow(input) {
   connectAi(connections, "Investigation Model", "Evidence Package Parser", "ai_languageModel");
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
-  connectAi(connections, "RCA Report Parser", "RCA Writer", "ai_outputParser");
+  connectAi(connections, "Report Parser", "RCA Writer", "ai_outputParser");
 
   return {
     id: input.mainWorkflowId,
@@ -690,8 +694,22 @@ const selectTemplateCode = String.raw`
 const catalog = $('Fetch Template Catalog').first().json.templates || [];
 const parsed = $('Question Analyzer').first().json.output;
 const requested = parsed.request_type;
-const template = catalog.find((entry) => entry.template_id === requested) || null;
-const collection = template ? template.collection : null;
+
+// Falls back to the incident RCA, which is seeded by migration for exactly this
+// reason: the report cannot be laid out without a section list, so there has to
+// be one to land on. Failing here rather than rendering something shapeless is
+// the right end if even that is gone -- it means the table was emptied, which
+// is a configuration problem and not something to paper over.
+const template = catalog.find((entry) => entry.template_id === requested)
+  || catalog.find((entry) => entry.template_id === 'incident_rca')
+  || null;
+if (!template) {
+  throw new Error(
+    'No report template matched \'' + requested + '\' and the incident_rca fallback is missing. '
+    + 'Re-run the migrations to restore it.',
+  );
+}
+const collection = template.collection;
 const limits = collection && collection.limits ? collection.limits : {};
 
 // Without a template this is exactly the budget the workflow used before there
@@ -700,11 +718,11 @@ const hostCount = Math.max(1, (parsed.host_queries || []).length);
 
 return [{ json: {
   requested_template_id: requested,
-  template_id: template ? template.template_id : null,
-  template_version: template ? template.version : null,
-  matched: Boolean(template),
+  template_id: template.template_id,
+  template_version: template.version,
+  matched: template.template_id === requested,
   collection,
-  output: template ? template.output : null,
+  output: template.output,
   limits: {
     max_iterations: limits.max_iterations || 10,
     max_tool_calls: limits.max_tool_calls || Math.min(60, 10 + 20 * hostCount),
@@ -776,13 +794,27 @@ return [{ json: { text: sections.join('\n\n') } }];
 
 const formatRcaCode = String.raw`
 const request = $('Normalize Request').first().json;
-const parsed = $('Question Analyzer').first().json.output;
+const selection = $('Select Template').first().json;
 const evidence = $('Evidence Collector').first().json.output;
-const rca = $('RCA Writer').first().json.output;
+const report = $('RCA Writer').first().json.output;
 
-// Evidence IDs are long enough to swamp the prose they support, so cite them as
-// footnote markers and print the mapping once at the end. Traceability survives;
-// the reader is not asked to parse zbx:metric:118168:1785479458-... mid-sentence.
+// The template owns the layout: it names the sections, in order, with their
+// headings. The writer only says what goes in each, keyed by id, so a reworded
+// heading or a section the writer invented cannot change the document.
+const spec = (selection.output && selection.output.sections) || [];
+const filled = new Map(
+  (report.sections || []).map((section) => [section.id, section]),
+);
+
+// A real Zabbix event id is numeric. The agent also emits synthetic ones such
+// as zbx:event:no-problem-events-... to record that it looked and found
+// nothing, and those must not license a timeline: the writer has been observed
+// copying the investigation window into incident timing on a healthy host,
+// which renders as an hour-long outage that never happened.
+const backedByEvent = (evidence.evidence || []).some(
+  (item) => /^zbx:event:\d+$/.test(item.evidence_id || ''),
+);
+
 const refs = [];
 const refNumber = (id) => {
   const seen = refs.indexOf(id);
@@ -790,6 +822,9 @@ const refNumber = (id) => {
   refs.push(id);
   return refs.length;
 };
+const cite = (ids) => (Array.isArray(ids) && ids.length > 0)
+  ? ' ' + ids.map((id) => '[' + refNumber(id) + ']').join('')
+  : '';
 
 // After reading the report the operator's next move is to open the graph, so
 // the footnotes carry a way back into Zabbix. Everything needed is already on
@@ -800,10 +835,11 @@ const evidenceById = new Map(
 );
 const zabbixBase = ($env.ZABBIX_FRONTEND_URL || '').replace(/\/+$/, '');
 
-const zabbixTime = (iso) => {
-  const parsed = new Date(iso);
+const asTime = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf())
-    ? null
+    ? String(value)
     : parsed.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
 };
 
@@ -814,8 +850,8 @@ const zabbixLink = (id) => {
   const window = (item && item.window) || {};
 
   let range = '';
-  const from = zabbixTime(window.from);
-  const to = zabbixTime(window.to);
+  const from = asTime(window.from);
+  const to = asTime(window.to);
   if (from && to) {
     range = '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
   }
@@ -851,156 +887,62 @@ const zabbixLink = (id) => {
   }
   return null;
 };
-const cite = (ids) => (Array.isArray(ids) && ids.length > 0)
-  ? ' ' + ids.map((id) => '[' + refNumber(id) + ']').join('')
-  : '';
 
-const bullets = (items, emptyText) => {
-  if (!Array.isArray(items) || items.length === 0) return '• _' + emptyText + '_';
-  return items
-    .map((item) => '• ' + (typeof item === 'string' ? item : JSON.stringify(item)))
-    .join('\n');
-};
-
-const asTime = (value) => {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.valueOf())) return String(value);
-  return parsed.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
-};
-
-const section = (heading, body) => '*' + heading + '*\n' + body;
-
-// --- 장애 개요 ------------------------------------------------------------
-// Incident timing is only meaningful when a problem event was actually found.
-// The writer has been observed copying the investigation window into these
-// fields on a healthy host, which renders as an hour-long outage that never
-// happened. A real Zabbix event id is numeric; the agent also emits synthetic
-// ids such as zbx:event:no-problem-events-... to record that it looked and
-// found nothing, and those must not license a timeline.
-const incident = rca.incident || {};
-const backedByEvent = (evidence.evidence || []).some(
-  (item) => /^zbx:event:\d+$/.test(item.evidence_id || ''),
-);
-const overview = ['• 관측된 형태: ' + (incident.observed_failure_mode || '확인 불가')];
-if (backedByEvent) {
-  // Severity is the writer's own judgement, and without an event it lands on
-  // "information" or "not_classified" -- a label with nothing behind it.
-  if (incident.severity) overview.push('• 심각도: ' + incident.severity);
-  if (incident.started_at) overview.push('• 발생: ' + asTime(incident.started_at));
-  if (incident.recovered_at) overview.push('• 복구: ' + asTime(incident.recovered_at));
-  if (typeof incident.duration_seconds === 'number') {
-    overview.push('• 지속: ' + Math.round(incident.duration_seconds / 60) + '분');
-  }
-}
-
-// --- 영향 ----------------------------------------------------------------
-// Only worth a section when something was actually established. With nothing
-// confirmed it degenerates into restating the summary, and the caveats it would
-// carry are already in 분석 한계.
-const impact = rca.impact || {};
-const impactLines = (impact.confirmed || []).map((item) => '• ' + item);
-
-// --- 조사 범위 ------------------------------------------------------------
-const finalWindow = evidence.investigation && evidence.investigation.final_window;
-const windowLine = finalWindow
-  ? '• ' + asTime(finalWindow.from) + ' ~ ' + asTime(finalWindow.to) + ' (KST)'
-  : '• _확인 불가_';
-
-// --- 확인된 사실 ----------------------------------------------------------
-const facts = (rca.confirmed_facts || []).map(
-  (item) => '• ' + item.fact + cite(item.evidence_refs),
-);
-
-// --- 타임라인 -------------------------------------------------------------
-// When nothing happened there is nothing to sequence, and the writer stamps
-// every line with the moment it ran the investigation. Identical timestamps
-// down the column read as data but carry none, so drop them and let the lines
-// stand as findings.
-const timelineEntries = rca.timeline || [];
-const distinctTimes = new Set(
-  timelineEntries.map((item) => item.time).filter(Boolean),
-);
-const timelineIsSequence = distinctTimes.size > 1;
-const timeline = timelineEntries.map((item) =>
-  timelineIsSequence
-    ? '• \`' + asTime(item.time) + '\`  ' + item.description + cite(item.evidence_refs)
-    : '• ' + item.description + cite(item.evidence_refs),
-);
-
-// --- 관련 신호 ------------------------------------------------------------
-const signals = (rca.related_signals || []).map((item) => {
-  const relation = item.relationship ? ' _(' + item.relationship + ')_' : '';
-  return '• ' + item.description + relation + cite(item.evidence_refs);
-});
-
-// --- 원인 후보 ------------------------------------------------------------
-const candidates = (rca.root_cause_candidates || []).map((item) => {
-  const lines = ['• *[' + String(item.confidence || '?').toUpperCase() + ']* ' + item.description];
-  const support = cite(item.supporting_evidence_refs);
-  const against = cite(item.contradicting_evidence_refs);
-  if (support) lines.push('    ↳ 근거' + support);
+const renderItem = (item) => {
+  const label = item.label ? '*[' + String(item.label).toUpperCase() + ']* ' : '';
+  const lines = ['• ' + label + item.text + cite(item.evidence_refs)];
+  const against = cite(item.counter_evidence_refs);
   if (against) lines.push('    ↳ 반박' + against);
   return lines.join('\n');
-});
+};
 
-// The report lands in the answer channel, which the asker is not necessarily
-// watching. Naming them notifies them and records who the investigation was for.
-const meta = ['• 요청 ID: \`' + request.request_id + '\`'];
-if (request.user_id) meta.push('• 요청자: <@' + request.user_id + '>');
-
-// A request may span hosts now. Listing every one of up to twenty pushes the
-// findings off the first screen, so the header names a few and counts the rest;
-// which host a finding belongs to is stated in the finding itself.
-const hosts = Array.isArray(incident.hosts) ? incident.hosts.filter(Boolean) : [];
+// The hosts come from what the investigation resolved rather than from the
+// report, so the header cannot claim coverage the evidence does not show.
+const hosts = ((evidence.query_context && evidence.query_context.hosts) || [])
+  .map((entry) => entry.host)
+  .filter(Boolean);
 const hostLabel = hosts.length === 0
   ? '확인 불가'
   : hosts.length <= 8
     ? hosts.join(', ')
     : hosts.slice(0, 8).join(', ') + ' 외 ' + (hosts.length - 8) + '대';
+
+const meta = ['• 요청 ID: \`' + request.request_id + '\`'];
+if (request.user_id) meta.push('• 요청자: <@' + request.user_id + '>');
 meta.push('• 호스트: ' + hostLabel);
 
-const sections = [
-  '📋 *' + rca.title + '*',
-  meta.join('\n'),
-  section('요약', rca.executive_summary),
-  section('장애 개요', overview.join('\n')),
-];
+const sections = ['📋 *' + report.title + '*', meta.join('\n')];
 
-// Sections that only earn their place when they have something to say.
-if (impactLines.length) sections.push(section('영향', impactLines.join('\n')));
+for (const declared of spec) {
+  if (declared.requires_problem_event && !backedByEvent) continue;
 
-sections.push(
-  section('조사 범위', windowLine),
-  section('확인된 사실', facts.length ? facts.join('\n') : '• _확인된 사실 없음_'),
-);
-if (timeline.length) sections.push(section('타임라인', timeline.join('\n')));
-if (signals.length) sections.push(section('관련 신호', signals.join('\n')));
+  const section = filled.get(declared.id);
+  const body = section && section.body ? String(section.body).trim() : '';
+  const items = (section && section.items) || [];
+  if (!body && items.length === 0) {
+    // A section the template insists on is reported as empty rather than
+    // dropped, so its absence reads as a finding instead of an oversight.
+    if (declared.required) {
+      sections.push('*' + declared.heading + '*\n• _해당 없음_');
+    }
+    continue;
+  }
 
-sections.push(section('원인 후보 — 확정 원인 아님',
-  candidates.length ? candidates.join('\n') : '• _현재 증거로 평가 가능한 원인 후보 없음_'));
-
-// Recovery only means something once there was an incident to recover from.
-if (backedByEvent && Array.isArray(rca.recovery) && rca.recovery.length) {
-  sections.push(section('복구', bullets(rca.recovery, '복구 조치가 확인되지 않음')));
+  const parts = [];
+  if (body) parts.push(body);
+  if (items.length > 0) parts.push(items.map(renderItem).join('\n'));
+  sections.push('*' + declared.heading + '*\n' + parts.join('\n\n'));
 }
-
-sections.push(
-  section('즉시 권고', bullets(rca.immediate_actions, '권고 없음')),
-  section('예방 권고', bullets(rca.preventive_actions, '권고 없음')),
-  section('추가 필요 데이터', bullets(rca.additional_data_required, '없음')),
-  section('분석 한계', bullets(rca.limitations, '명시된 한계 없음')),
-);
 
 // Built last so every marker above has already been numbered.
 if (refs.length > 0) {
-  sections.push(section('근거', refs.map((id, index) => {
+  sections.push('*근거*\n' + refs.map((id, index) => {
     const link = zabbixLink(id);
     const marker = '\`[' + (index + 1) + ']\`';
     return link
       ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'
       : marker + ' \`' + id + '\`';
-  }).join('\n')));
+  }).join('\n'));
 }
 
 const slackMarkdown = sections.join('\n\n').slice(0, 39000);
@@ -1009,6 +951,8 @@ return [{
     request_id: request.request_id,
     slack_markdown: slackMarkdown,
     evidence_ref_count: refs.length,
+    template_id: selection.template_id,
+    template_version: selection.template_version,
   },
 }];
 `.trim();
