@@ -44,16 +44,29 @@
     "query_context": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["host", "host_id", "timezone", "anchor_time"],
+      "required": ["hosts", "timezone", "anchor_time"],
       "properties": {
-        "host": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 255
-        },
-        "host_id": {
-          "type": "string",
-          "pattern": "^\\d+$"
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "description": "The hosts this investigation actually resolved and queried. A name the request gave that matched nothing, or matched several candidates, does not appear here -- it belongs in unknowns.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "host_id"],
+            "properties": {
+              "host": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255
+              },
+              "host_id": {
+                "type": "string",
+                "pattern": "^\\d+$"
+              }
+            }
+          }
         },
         "timezone": {
           "type": "string",

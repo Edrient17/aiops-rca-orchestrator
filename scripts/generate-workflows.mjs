@@ -143,8 +143,13 @@ function buildMainWorkflow(input) {
       "Evidence Collector",
       [1920, -140],
       input.evidencePrompt,
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, limits: { max_iterations: 8, max_tool_calls: 30, max_window_hours: 24 } }, null, 2) }}",
-      8,
+      // The tool-call budget scales with how many hosts were asked about, since
+      // every host costs its own find/events/metrics round. One host still gets
+      // 30, the figure this ran on before multi-host requests were allowed.
+      // max_iterations stays below the node's own ceiling so the agent winds
+      // itself up before n8n cuts it off mid-answer.
+      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, limits: { max_iterations: 10, max_tool_calls: Math.min(60, 10 + 20 * Math.max(1, ($('Question Analyzer').first().json.output.host_queries || []).length)), max_window_hours: 24 } }, null, 2) }}",
+      12,
     ),
     modelNode("Investigation Model", [1840, 140], MODELS.investigation.id, MODELS.investigation.reasoningEffort),
     // The only stage observed to fail schema validation in operation, so it is
@@ -881,7 +886,17 @@ const candidates = (rca.root_cause_candidates || []).map((item) => {
 // watching. Naming them notifies them and records who the investigation was for.
 const meta = ['• 요청 ID: \`' + request.request_id + '\`'];
 if (request.user_id) meta.push('• 요청자: <@' + request.user_id + '>');
-meta.push('• 호스트: ' + (incident.host || '확인 불가'));
+
+// A request may span hosts now. Listing every one of up to twenty pushes the
+// findings off the first screen, so the header names a few and counts the rest;
+// which host a finding belongs to is stated in the finding itself.
+const hosts = Array.isArray(incident.hosts) ? incident.hosts.filter(Boolean) : [];
+const hostLabel = hosts.length === 0
+  ? '확인 불가'
+  : hosts.length <= 8
+    ? hosts.join(', ')
+    : hosts.slice(0, 8).join(', ') + ' 외 ' + (hosts.length - 8) + '대';
+meta.push('• 호스트: ' + hostLabel);
 
 const sections = [
   '📋 *' + rca.title + '*',

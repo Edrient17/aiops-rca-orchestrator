@@ -38,7 +38,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "host",
+        "hosts",
         "severity",
         "started_at",
         "recovered_at",
@@ -46,10 +46,16 @@
         "observed_failure_mode"
       ],
       "properties": {
-        "host": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 255
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "description": "Hosts this report covers, as resolved by the investigation. Which host a given finding belongs to is stated in the finding itself, not inferred from this list.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
         },
         "severity": {
           "type": ["string", "null"],

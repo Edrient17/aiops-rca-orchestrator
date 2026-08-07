@@ -9,7 +9,7 @@
     "request_id",
     "parse_status",
     "request_type",
-    "host_query",
+    "host_queries",
     "anchor_time",
     "timezone",
     "incident_description",
@@ -37,10 +37,15 @@
       "type": "string",
       "enum": ["incident_rca", "incident_summary", "metric_analysis", "unknown"]
     },
-    "host_query": {
-      "type": ["string", "null"],
-      "minLength": 1,
-      "maxLength": 255
+    "host_queries": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "description": "Every host or service name the request names, in the user's own words; the Evidence Collector resolves each to a Zabbix host. Empty when the request names none, which is what makes it need clarification."
     },
     "anchor_time": {
       "type": ["string", "null"],
