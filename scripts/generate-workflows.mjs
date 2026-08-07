@@ -104,6 +104,19 @@ function buildMainWorkflow(input) {
       "slack",
     ),
     codeNode("Assert ACK Posted", [720, 0], assertAckAndResolveAnchorCode),
+    // Which kinds of report exist is a database question, and it has to be
+    // asked before the analyzer classifies rather than after: the analyzer is
+    // what picks one, so it needs the list in front of it. Placed after the
+    // acknowledgement so a database that is briefly unreachable delays the
+    // investigation rather than leaving the asker with no reply at all.
+    httpNode(
+      "Fetch Template Catalog",
+      "GET",
+      "={{ $env.AIOPS_CONTROL_URL + '/internal/templates' }}",
+      null,
+      [840, 0],
+      "internal",
+    ),
     httpNode(
       "Mark Analyzing",
       "POST",
@@ -119,7 +132,11 @@ function buildMainWorkflow(input) {
       "Question Analyzer",
       [1200, 0],
       input.questionPrompt,
-      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id) }, null, 2) }}",
+      // The catalog goes in as input rather than into the system prompt: it is
+      // per-request data read from a table, not part of this agent's role.
+      // supplies_hosts is derived here so the analyzer can tell that a kind
+      // which brings its own hosts does not need one named in the question.
+      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id), report_catalog: ($('Fetch Template Catalog').first().json.templates || []).map(entry => ({ id: entry.template_id, title: entry.title, when_to_use: entry.description, supplies_hosts: entry.collection.host_selector.mode !== 'from_question' })) }, null, 2) }}",
       3,
     ),
     modelNode("Question Model", [1120, 260], MODELS.question.id, MODELS.question.reasoningEffort),
@@ -132,6 +149,7 @@ function buildMainWorkflow(input) {
       [1440, 0],
       "internal",
     ),
+    codeNode("Select Template", [1560, 0], selectTemplateCode),
     ifNode(
       "Request Ready?",
       "={{ $('Question Analyzer').first().json.output.parse_status }}",
@@ -143,12 +161,10 @@ function buildMainWorkflow(input) {
       "Evidence Collector",
       [1920, -140],
       input.evidencePrompt,
-      // The tool-call budget scales with how many hosts were asked about, since
-      // every host costs its own find/events/metrics round. One host still gets
-      // 30, the figure this ran on before multi-host requests were allowed.
-      // max_iterations stays below the node's own ceiling so the agent winds
-      // itself up before n8n cuts it off mid-answer.
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, limits: { max_iterations: 10, max_tool_calls: Math.min(60, 10 + 20 * Math.max(1, ($('Question Analyzer').first().json.output.host_queries || []).length)), max_window_hours: 24 } }, null, 2) }}",
+      // collection is null when no template matched, which is how this keeps
+      // behaving as it did before templates existed. Select Template settled
+      // the budget already, including the per-host scaling.
+      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, collection: $('Select Template').first().json.collection, limits: $('Select Template').first().json.limits }, null, 2) }}",
       12,
     ),
     modelNode("Investigation Model", [1840, 140], MODELS.investigation.id, MODELS.investigation.reasoningEffort),
@@ -231,11 +247,13 @@ function buildMainWorkflow(input) {
   connectMain(connections, "Register Execution", "Format ACK");
   connectMain(connections, "Format ACK", "Post Business ACK");
   connectMain(connections, "Post Business ACK", "Assert ACK Posted");
-  connectMain(connections, "Assert ACK Posted", "Mark Analyzing");
+  connectMain(connections, "Assert ACK Posted", "Fetch Template Catalog");
+  connectMain(connections, "Fetch Template Catalog", "Mark Analyzing");
   connectMain(connections, "Mark Analyzing", "Stamp Question Start");
   connectMain(connections, "Stamp Question Start", "Question Analyzer");
   connectMain(connections, "Question Analyzer", "Persist Question Result");
-  connectMain(connections, "Persist Question Result", "Request Ready?");
+  connectMain(connections, "Persist Question Result", "Select Template");
+  connectMain(connections, "Select Template", "Request Ready?");
   connectMain(connections, "Request Ready?", "Stamp Evidence Start", 0);
   connectMain(connections, "Request Ready?", "Format Clarification", 1);
   connectMain(connections, "Stamp Evidence Start", "Evidence Collector");
@@ -439,6 +457,7 @@ function mcpNode(name, position) {
 // `extras` carries node-level settings rather than parameters -- onError above
 // all. Main-workflow calls leave it empty: a step that fails there must abort so
 // the error workflow fires, which is the whole reporting path.
+// jsonBody of null sends no body at all, for the GET that reads the catalog.
 function httpNode(name, method, url, jsonBody, position, authKind, extras = {}) {
   const headers =
     authKind === "slack"
@@ -470,10 +489,14 @@ function httpNode(name, method, url, jsonBody, position, authKind, extras = {}) 
     headerParameters: {
       parameters: headers,
     },
-    sendBody: true,
-    contentType: "raw",
-    rawContentType: "application/json",
-    body: jsonBody,
+    ...(jsonBody === null
+      ? { sendBody: false }
+      : {
+          sendBody: true,
+          contentType: "raw",
+          rawContentType: "application/json",
+          body: jsonBody,
+        }),
     options: {
       timeout: authKind === "slack" ? 30_000 : 10_000,
     },
@@ -649,6 +672,45 @@ return [{ json: { ...response, thread_anchor_ts: anchor } }];
 // per-stage latency can only be recovered by parsing n8n's internal run data.
 const stampCode = String.raw`
 return [{ json: { ...$input.first().json, stage_started_ms: Date.now() } }];
+`.trim();
+
+// Turns the kind the analyzer named into the template that defines it, and
+// settles the investigation budget while it is at it.
+//
+// The matching lives here rather than in the output parser because n8n's parser
+// takes a static schema, so the set of valid kinds cannot be an enum that grows
+// with the table. Checking it here costs nothing and fails softer: a model that
+// names a kind nobody defined falls back to the built-in behaviour instead of
+// failing a question that has already been acknowledged.
+//
+// Merging the limits here rather than in the agent's expression is the same
+// reasoning as the anchor -- a Code node is real JavaScript, while an n8n
+// expression is one expression, and this is a lookup with defaults.
+const selectTemplateCode = String.raw`
+const catalog = $('Fetch Template Catalog').first().json.templates || [];
+const parsed = $('Question Analyzer').first().json.output;
+const requested = parsed.request_type;
+const template = catalog.find((entry) => entry.template_id === requested) || null;
+const collection = template ? template.collection : null;
+const limits = collection && collection.limits ? collection.limits : {};
+
+// Without a template this is exactly the budget the workflow used before there
+// were any: 30 calls for one host, scaled by the number asked about.
+const hostCount = Math.max(1, (parsed.host_queries || []).length);
+
+return [{ json: {
+  requested_template_id: requested,
+  template_id: template ? template.template_id : null,
+  template_version: template ? template.version : null,
+  matched: Boolean(template),
+  collection,
+  output: template ? template.output : null,
+  limits: {
+    max_iterations: limits.max_iterations || 10,
+    max_tool_calls: limits.max_tool_calls || Math.min(60, 10 + 20 * hostCount),
+    max_window_hours: 24,
+  },
+}}];
 `.trim();
 
 // A request that answers a clarification is a continuation, not a new question.

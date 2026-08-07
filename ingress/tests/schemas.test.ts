@@ -68,6 +68,26 @@ describe("JSON Schema drafts", () => {
     expect(validate(parsedRequest([]))).toBe(true);
   });
 
+  // request_type used to be an enum. It cannot stay one: the kinds live in a
+  // table an operator adds rows to, while this schema is compiled into the
+  // workflow, so a fixed list could never grow. It is still shaped like a
+  // template id rather than free text.
+  it("accepts any template id as the request type, but not free text", () => {
+    const ajv = schemaValidator();
+    const validate = ajv.compile(loadSchema("parsed-request.schema.json"));
+    const withType = (request_type: string) => ({
+      ...parsedRequest(["Java-test"]),
+      request_type,
+    });
+
+    for (const ok of ["incident_rca", "monthly_capacity_report", "x9_report"]) {
+      expect(validate(withType(ok))).toBe(true);
+    }
+    for (const bad of ["Monthly Report", "월말보고서", "ab", "9_report", ""]) {
+      expect(validate(withType(bad))).toBe(false);
+    }
+  });
+
   it("rejects the single-host shape it replaced", () => {
     const ajv = schemaValidator();
     const validate = ajv.compile(loadSchema("parsed-request.schema.json"));

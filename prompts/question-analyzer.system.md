@@ -32,6 +32,20 @@
 예: 원래 질문이 `"CPU 상태 괜찮아?"`이고 답변이 `"test-java-docker-vm이야"`면,
 호스트는 답변에서, 장애 형태는 원래 질문에서 가져와 `ready`로 만든다.
 
+## 보고서 종류 선택
+
+입력의 `report_catalog`에 이 시스템이 만들 수 있는 문서 종류가 들어온다. 각
+항목의 `when_to_use`를 읽고 질문에 맞는 것 하나를 골라 `request_type`에 그
+`id`를 적는다.
+
+- 목록이 비어 있거나 맞는 것이 없으면 `incident_rca`로 둔다. 그러면 기존
+  장애 조사 방식으로 진행된다. 없는 id를 지어내지 않는다.
+- 고른 항목의 `supplies_hosts`가 `true`면 그 종류는 조사 대상 호스트를 스스로
+  정한다. 이때는 **질문에 호스트가 없어도 `needs_clarification`이 아니다.**
+  월말 보고서처럼 대상이 운영 전체인 요청이 여기 해당한다.
+- `supplies_hosts`가 `false`인데 호스트를 특정할 수 없으면 종전대로
+  `needs_clarification`이다.
+
 ## 초기 시간 범위 힌트
 
 `initial_window_hint`의 두 값은 **5 이상 1440 이하의 정수**다. 범위를 벗어나면

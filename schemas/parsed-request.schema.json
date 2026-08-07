@@ -35,7 +35,8 @@
     },
     "request_type": {
       "type": "string",
-      "enum": ["incident_rca", "incident_summary", "metric_analysis", "unknown"]
+      "pattern": "^[a-z][a-z0-9_]{2,63}$",
+      "description": "The id of the report kind this question calls for, chosen from the catalog supplied with the request. Not an enum: the catalog is a table an operator adds rows to, and this schema is compiled into the workflow, so a fixed list here could never grow. An id that matches nothing falls back to the built-in behaviour."
     },
     "host_queries": {
       "type": "array",
