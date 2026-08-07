@@ -98,19 +98,19 @@ function buildMainWorkflow(input) {
       "https://slack.com/api/chat.postMessage",
       // A continuation posts into the thread its parent already owns, so one
       // investigation occupies one thread however many clarifications it took.
-      // Slack echoes thread_ts back, which is what the report then anchors to.
+      // Assert ACK Posted works out which thread that was.
       "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, text: $('Format ACK').first().json.text, ...($('Normalize Request').first().json.parent_ack_ts ? { thread_ts: $('Normalize Request').first().json.parent_ack_ts } : {}) }) }}",
       [600, 0],
       "slack",
     ),
-    codeNode("Assert ACK Posted", [720, 0], assertSlackCode),
+    codeNode("Assert ACK Posted", [720, 0], assertAckAndResolveAnchorCode),
     httpNode(
       "Mark Analyzing",
       "POST",
       "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/status' }}",
-      // Record the anchor while it is at hand. A continuation reuses its
-      // parent's, so store that rather than this reply's own ts.
-      "={{ JSON.stringify({ status: 'analyzing_question', slack_ack_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts }) }}",
+      // Record the anchor while it is at hand, so a reply written under this
+      // investigation's report can be traced back to it.
+      "={{ JSON.stringify({ status: 'analyzing_question', slack_ack_ts: $('Assert ACK Posted').first().json.thread_anchor_ts }) }}",
       [960, 0],
       "internal",
     ),
@@ -182,8 +182,9 @@ function buildMainWorkflow(input) {
       "Post RCA Report",
       "POST",
       "https://slack.com/api/chat.postMessage",
-      // thread_ts when the ACK was itself a reply, ts when it started the thread.
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
+      // The same anchor the status record holds, so the report lands in the
+      // thread that aiops_requests.slack_ack_ts says it is in.
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Assert ACK Posted').first().json.thread_anchor_ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
       [3120, -140],
       "slack",
     ),
@@ -605,6 +606,37 @@ if (response.ok !== true) {
   throw new Error('Slack API error: ' + (response.error ?? 'unknown_error'));
 }
 return $input.all();
+`.trim();
+
+// Asserts the ACK went out and, in the same step, settles which thread this
+// investigation lives in. Two nodes need that answer -- the status record and
+// the report -- and they must not derive it separately: they already did, with
+// the same wrong expression, and only one of the two showed symptoms.
+//
+// The anchor is deliberately not read back from the Slack response.
+// chat.postMessage returns thread_ts nested in `message`, not at the top level,
+// so `response.thread_ts` is always undefined; a continuation fell through to
+// its own reply ts and recorded that as the thread root. Slack still put the
+// report in the right place, because a thread_ts pointing at a reply resolves
+// to its parent, so the damage was invisible in Slack and confined to the
+// database -- findReportByThread matches the stored anchor against the root ts
+// a reply carries, missed, and dropped the written correction on the floor.
+//
+// Slack does not have to be asked. A continuation was posted into the parent's
+// thread, so the parent's anchor is the answer; a new request starts its own
+// thread and is its own anchor. That holds however long the clarification chain
+// gets, because each link copies the anchor rather than deriving a new one.
+const assertAckAndResolveAnchorCode = String.raw`
+const response = $input.first().json;
+if (response.ok !== true) {
+  throw new Error('Slack API error: ' + (response.error ?? 'unknown_error'));
+}
+const parentAnchor = $('Normalize Request').first().json.parent_ack_ts;
+const anchor = parentAnchor || response.ts;
+if (!anchor) {
+  throw new Error('Slack ACK returned no ts to anchor this investigation to');
+}
+return [{ json: { ...response, thread_anchor_ts: anchor } }];
 `.trim();
 
 // Records when a stage begins so the persist call after it can report how long

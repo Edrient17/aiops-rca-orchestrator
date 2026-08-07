@@ -122,7 +122,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const response = $input.first().json;\nif (response.ok !== true) {\n  throw new Error('Slack API error: ' + (response.error ?? 'unknown_error'));\n}\nreturn $input.all();"
+        "jsCode": "const response = $input.first().json;\nif (response.ok !== true) {\n  throw new Error('Slack API error: ' + (response.error ?? 'unknown_error'));\n}\nconst parentAnchor = $('Normalize Request').first().json.parent_ack_ts;\nconst anchor = parentAnchor || response.ts;\nif (!anchor) {\n  throw new Error('Slack ACK returned no ts to anchor this investigation to');\n}\nreturn [{ json: { ...response, thread_anchor_ts: anchor } }];"
       },
       "id": "d245aed5-da04-5603-8045-97c3b666c9a7",
       "name": "Assert ACK Posted",
@@ -153,7 +153,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ status: 'analyzing_question', slack_ack_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts }) }}",
+        "body": "={{ JSON.stringify({ status: 'analyzing_question', slack_ack_ts: $('Assert ACK Posted').first().json.thread_anchor_ts }) }}",
         "options": {
           "timeout": 10000
         }
@@ -571,7 +571,7 @@
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Post Business ACK').first().json.thread_ts || $('Post Business ACK').first().json.ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
+        "body": "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Assert ACK Posted').first().json.thread_anchor_ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
         "options": {
           "timeout": 30000
         }
