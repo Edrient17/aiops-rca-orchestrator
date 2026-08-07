@@ -220,7 +220,22 @@ UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정�
 매 배포마다 `ON CONFLICT DO NOTHING`으로 복원하니, 실수로 지워도 다음 배포에서
 원래 문구로 돌아옵니다. 수정한 내용은 덮어쓰지 않습니다.
 
-추가와 수정은 같은 요청입니다. 오케스트레이터 호스트에서:
+`templates/`에 바로 넣어 쓸 수 있는 예시가 있습니다. 월말 보고서를 설치하려면
+`group_ids`를 대상 Zabbix 호스트 그룹 ID로 바꾼 뒤:
+
+```bash
+curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report   -H "X-AIOPS-Internal-Token: $AIOPS_INTERNAL_TOKEN"   -H "Content-Type: application/json"   --data-binary @templates/monthly-capacity-report.json
+```
+
+넣고 나면 "지난달 월말 보고서 만들어줘"처럼 호스트를 지목하지 않는 질문이
+이 템플릿으로 분류되고, 조사 대상은 지정한 호스트 그룹에서 나옵니다. 조사
+구간은 워크플로가 지난 달력월로 계산해 넘기므로 모델이 날짜를 셈하지 않습니다.
+
+> 월말 보고서에는 MCP의 `INVESTIGATION_LONG_TERM_MAX_DAYS`가 32 이상이어야
+> 합니다. 31일인 달이 1년에 일곱 번 있는데 예전 기본값 30으로는 그 달의
+> 보고서가 통째로 거절됩니다.
+
+추가와 수정은 같은 요청입니다. 직접 작성할 때는 오케스트레이터 호스트에서:
 
 ```bash
 curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \

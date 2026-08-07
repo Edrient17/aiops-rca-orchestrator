@@ -1,0 +1,76 @@
+{
+  "title": "월말 용량 보고서",
+  "description": "월말 정기 보고나 지난달 용량·가용성 요약처럼, 특정 사건 하나가 아니라 한 달간의 전반 상태를 묻는 요청. 조사 대상이 운영 전체이므로 질문이 호스트를 지목하지 않아도 된다.",
+  "enabled": true,
+  "collection": {
+    "host_selector": {
+      "mode": "host_group",
+      "group_ids": ["10"]
+    },
+    "window": {
+      "policy": "long_term_capacity",
+      "range": "last_calendar_month"
+    },
+    "aggregation": "1d",
+    "metric_keywords": [
+      "disk",
+      "filesystem",
+      "space",
+      "cpu",
+      "memory",
+      "swap",
+      "network"
+    ],
+    "limits": {
+      "max_tool_calls": 120
+    },
+    "guidance": "호스트마다 이벤트를 먼저 훑어 한 달간 무슨 일이 있었는지 파악한 뒤, 메트릭 심층 조회는 사건이 있었거나 추세가 눈에 띄는 호스트에 집중한다. 모든 호스트를 같은 깊이로 파면 예산이 먼저 떨어진다. 조용했던 호스트도 확인했다는 사실이 결과이므로 짧은 Evidence 한 건을 남기고 넘어간다. 용량은 마지막 값이 아니라 한 달간의 변화가 중요하므로 first와 last, change_percent를 함께 본다."
+  },
+  "output": {
+    "guidance": "사건 하나를 파헤치는 보고서가 아니라 한 달을 정리하는 보고서다. 원인 규명보다 '무엇이 어떻게 변했고 다음 달에 무엇을 봐야 하는가'에 무게를 둔다. 수치는 증거가 준 값을 그대로 쓰고 직접 계산하지 않는다.",
+    "sections": [
+      {
+        "id": "summary",
+        "heading": "요약",
+        "instruction": "지난달 전반 상태를 존댓말 서술체로 3~5문장. 큰 문제가 없었으면 없었다고 분명히 쓴다. body에 쓰고 items는 비운다.",
+        "required": true,
+        "requires_problem_event": false
+      },
+      {
+        "id": "availability",
+        "heading": "가용성",
+        "instruction": "호스트별로 한 달간 발생한 문제 이벤트의 건수와 성격. 이벤트가 없었던 호스트는 무중단이었다고 적는다. 항목마다 호스트 이름을 밝힌다.",
+        "required": true,
+        "requires_problem_event": false
+      },
+      {
+        "id": "capacity_trend",
+        "heading": "용량 추세",
+        "instruction": "호스트별 디스크·파일시스템 사용률의 월초 대비 월말 변화. 증가 폭이 큰 순으로 적고, 현재 수준과 변화율을 함께 쓴다. 남은 여유가 얼마나 되는지 알 수 있게 한다.",
+        "required": true,
+        "requires_problem_event": false
+      },
+      {
+        "id": "resource_pressure",
+        "heading": "자원 부담",
+        "instruction": "CPU·메모리·swap·네트워크에서 지속적으로 높았거나 뚜렷이 상승한 지표. 일시적 스파이크와 추세를 구분해서 적는다. 특이사항이 없으면 비운다.",
+        "required": false,
+        "requires_problem_event": false
+      },
+      {
+        "id": "watchlist",
+        "heading": "다음 달 주시 대상",
+        "instruction": "현 추세가 이어지면 문제가 될 호스트와 지표. 왜 그렇게 보는지 근거를 함께 적는다. 단정하지 말고 관측된 추세에 근거한 전망으로 쓴다.",
+        "required": true,
+        "requires_problem_event": false
+      },
+      {
+        "id": "limitations",
+        "heading": "분석 한계",
+        "instruction": "조사 범위 밖이었던 호스트, partial이거나 coverage_ratio가 낮았던 메트릭, 보존 기간 때문에 확인하지 못한 구간. 예산이 모자라 얕게 본 호스트가 있으면 어느 호스트인지 밝힌다.",
+        "required": true,
+        "requires_problem_event": false
+      }
+    ]
+  }
+}

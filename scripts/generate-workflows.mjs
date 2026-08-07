@@ -164,7 +164,7 @@ function buildMainWorkflow(input) {
       // collection is null when no template matched, which is how this keeps
       // behaving as it did before templates existed. Select Template settled
       // the budget already, including the per-host scaling.
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, collection: $('Select Template').first().json.collection, limits: $('Select Template').first().json.limits }, null, 2) }}",
+      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, collection: $('Select Template').first().json.collection, window: $('Select Template').first().json.window, limits: $('Select Template').first().json.limits }, null, 2) }}",
       12,
     ),
     modelNode("Investigation Model", [1840, 140], MODELS.investigation.id, MODELS.investigation.reasoningEffort),
@@ -716,12 +716,46 @@ const limits = collection && collection.limits ? collection.limits : {};
 // were any: 30 calls for one host, scaled by the number asked about.
 const hostCount = Math.max(1, (parsed.host_queries || []).length);
 
+// Turn the template's range into real timestamps here rather than letting the
+// writer work them out. Asking a model for the bounds of last month is the same
+// kind of arithmetic this system keeps away from it everywhere else, and it is
+// the input to every query that follows -- a month off by a day is a month of
+// wrong data, reported confidently.
+//
+// KST is UTC+9 with no daylight saving, so shifting by nine hours makes the UTC
+// getters read local calendar fields, and shifting back gives the instant.
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const asked = new Date($('Normalize Request').first().json.received_at);
+const local = new Date(asked.getTime() + KST_OFFSET_MS);
+const instant = (wallMs) => new Date(wallMs - KST_OFFSET_MS).toISOString();
+const daysBack = (days) => ({
+  from: new Date(asked.getTime() - days * 24 * 60 * 60 * 1000).toISOString(),
+  to: asked.toISOString(),
+});
+
+const range = (collection.window && collection.window.range) || 'anchor_relative';
+let window = null;
+if (range === 'last_calendar_month') {
+  // Date.UTC normalises month -1 into the previous December on its own.
+  window = {
+    from: instant(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() - 1, 1)),
+    to: instant(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1)),
+  };
+} else if (range === 'last_7_days') {
+  window = daysBack(7);
+} else if (range === 'last_30_days') {
+  window = daysBack(30);
+}
+// anchor_relative leaves this null: the window comes from the anchor time the
+// analyzer read out of the question, which is how an incident has always worked.
+
 return [{ json: {
   requested_template_id: requested,
   template_id: template.template_id,
   template_version: template.version,
   matched: template.template_id === requested,
   collection,
+  window,
   output: template.output,
   limits: {
     max_iterations: limits.max_iterations || 10,

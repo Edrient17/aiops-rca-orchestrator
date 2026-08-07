@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
+import { reportTemplateSchema } from "../src/templates.js";
 
 function loadSchema(name: string): object {
   return JSON.parse(
@@ -46,6 +47,26 @@ describe("seeded incident_rca template", () => {
       .map((match) => match[1]!);
 
     expect(gated.sort()).toEqual(["incident_timing", "recovery", "timeline"]);
+  });
+});
+
+// The example templates are what an operator starts from, so a broken one is
+// discovered by whoever tries to use it. They go through the same validation
+// the API applies to anything an operator writes.
+describe("example templates", () => {
+  const dir = resolve(process.cwd(), "..", "templates");
+  const files = readdirSync(dir).filter((name) => name.endsWith(".json"));
+
+  it("ships at least one to start from", () => {
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  it.each(files)("%s is accepted by the template API's own validation", (name) => {
+    const body: unknown = JSON.parse(readFileSync(resolve(dir, name), "utf8"));
+    const parsed = reportTemplateSchema.safeParse(body);
+
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.success).toBe(true);
   });
 });
 
