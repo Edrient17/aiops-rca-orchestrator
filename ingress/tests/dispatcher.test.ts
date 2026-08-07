@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { N8nDispatcher } from "../src/dispatcher.js";
+import { N8nDispatcher, lockSecondsFor } from "../src/dispatcher.js";
 import type {
   AgentRunInput,
   DispatchJob,
@@ -57,6 +57,34 @@ const job: DispatchJob = {
     parent_ack_ts: null,
   },
 };
+
+describe("dispatch lock", () => {
+  // DISPATCH_TIMEOUT_MS is configurable up to 60_000 while the lock used to be
+  // a fixed 30 seconds, so a slow delivery outlived its own claim and a second
+  // dispatcher could send the same request to n8n again.
+  it.each([1_000, 10_000, 60_000])(
+    "outlives a delivery that takes the full %dms timeout",
+    (timeoutMs) => {
+      expect(lockSecondsFor(timeoutMs) * 1_000).toBeGreaterThan(timeoutMs);
+    },
+  );
+
+  it("passes the derived hold to the repository rather than a fixed one", async () => {
+    const repository = repositoryWithJob(job);
+    const dispatcher = new N8nDispatcher({
+      repository,
+      webhookUrl: "http://n8n/webhook/aiops-process",
+      internalToken: "token",
+      intervalMs: 1000,
+      timeoutMs: 60_000,
+      fetchImpl: vi.fn(async () => new Response(null, { status: 202 })),
+    });
+
+    await dispatcher.runOnce();
+
+    expect(repository.claimDispatch).toHaveBeenCalledWith(lockSecondsFor(60_000));
+  });
+});
 
 describe("n8n dispatcher", () => {
   it("marks successful webhook delivery complete", async () => {

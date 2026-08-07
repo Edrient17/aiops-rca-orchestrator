@@ -9,13 +9,33 @@ export interface DispatcherOptions {
   fetchImpl?: typeof fetch;
 }
 
+/**
+ * Slack left between a claim expiring and the delivery it belongs to finishing.
+ * Covers the database round trip that records the outcome, so the lock is still
+ * held when the job is marked done or rescheduled.
+ */
+const LOCK_MARGIN_SECONDS = 15;
+
+/**
+ * How long a claimed job stays locked. Derived from the delivery timeout rather
+ * than fixed: the lock was hardcoded at 30 seconds while DISPATCH_TIMEOUT_MS
+ * accepts up to 60_000, so a slow n8n could still be receiving a request whose
+ * claim had already lapsed, letting another dispatcher pick it up and run the
+ * same investigation twice.
+ */
+export function lockSecondsFor(timeoutMs: number): number {
+  return Math.ceil(timeoutMs / 1_000) + LOCK_MARGIN_SECONDS;
+}
+
 export class N8nDispatcher {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
   private readonly fetchImpl: typeof fetch;
+  private readonly lockSeconds: number;
 
   constructor(private readonly options: DispatcherOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.lockSeconds = lockSecondsFor(options.timeoutMs);
   }
 
   start(): void {
@@ -44,7 +64,7 @@ export class N8nDispatcher {
     this.running = true;
     try {
       while (true) {
-        const job = await this.options.repository.claimDispatch();
+        const job = await this.options.repository.claimDispatch(this.lockSeconds);
         if (!job) {
           return;
         }

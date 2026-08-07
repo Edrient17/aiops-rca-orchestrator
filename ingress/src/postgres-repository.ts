@@ -138,7 +138,7 @@ export class PostgresRequestRepository implements RequestRepository {
     return row ? { requestId: row.request_id, question: row.question } : null;
   }
 
-  async claimDispatch(): Promise<DispatchJob | null> {
+  async claimDispatch(lockSeconds: number): Promise<DispatchJob | null> {
     const result = await this.pool.query<{
       id: string;
       request_id: string;
@@ -168,7 +168,7 @@ export class PostgresRequestRepository implements RequestRepository {
         )
         UPDATE aiops_dispatch_queue AS queue
         SET attempts = queue.attempts + 1,
-            locked_until = now() + interval '30 seconds',
+            locked_until = now() + ($1 * interval '1 second'),
             updated_at = now()
         FROM candidate, aiops_requests AS request
         WHERE queue.id = candidate.id
@@ -197,6 +197,7 @@ export class PostgresRequestRepository implements RequestRepository {
             WHERE parent.request_id = request.parent_request_id
           ) AS parent_ack_ts
       `,
+      [lockSeconds],
     );
 
     const row = result.rows[0];

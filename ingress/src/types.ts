@@ -150,7 +150,13 @@ export interface RequestRepository {
     channelId: string,
     threadTs: string,
   ): Promise<PendingClarification | null>;
-  claimDispatch(): Promise<DispatchJob | null>;
+  /**
+   * Takes the next due job and holds it for `lockSeconds`. The caller sets the
+   * hold because only it knows how long it may keep the job in flight; the lock
+   * has to outlast that, or a second dispatcher can claim a job still being
+   * delivered and send the same request to n8n twice.
+   */
+  claimDispatch(lockSeconds: number): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;
   /**
