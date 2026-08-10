@@ -246,6 +246,24 @@ def main():
     print("  webhook                : " + (psql(
         'select "webhookPath" from webhook_entity;') or "(none registered)"))
 
+    # A tool node that reaches an authenticated server without a credential does
+    # not fail here -- it fails halfway through an investigation, as
+    # "Authentication failed", because n8n drops the header silently when it
+    # cannot resolve one. The carry-over above only covers nodes the deployed
+    # workflow already had, so a newly added MCP node arrives bare and nothing
+    # upstream notices. Checked after the import rather than before, because the
+    # imported workflow is what actually runs.
+    bare = psql(
+        "select string_agg(n->>'name', ', ') "
+        "from workflow_entity w, jsonb_array_elements(w.nodes::jsonb) n "
+        "where w.id='{}' and n->>'type' like '%mcpClientTool%' "
+        "and n->'credentials' is null;".format(WORKFLOW_ID))
+    if bare:
+        fail("MCP tool node(s) deployed without a credential: " + bare +
+             "\nAssign the credential in the n8n UI, then run this again -- the "
+             "carry-over will keep it from then on.")
+    print("  mcp nodes authenticated: yes")
+
 
 if __name__ == "__main__":
     main()
