@@ -1,11 +1,14 @@
 {
+  "template_id": "monthly_capacity_report",
   "title": "월말 용량 보고서",
   "description": "월말 정기 보고나 지난달 용량·가용성 요약처럼, 특정 사건 하나가 아니라 한 달간의 전반 상태를 묻는 요청. 조사 대상이 운영 전체이므로 질문이 호스트를 지목하지 않아도 된다.",
   "enabled": true,
   "collection": {
     "host_selector": {
       "mode": "host_group",
-      "group_ids": ["10"]
+      "group_ids": [
+        "10"
+      ]
     },
     "window": {
       "policy": "long_term_capacity",

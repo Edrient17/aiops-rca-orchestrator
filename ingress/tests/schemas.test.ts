@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { reportTemplateSchema } from "../src/templates.js";
+import { reportTemplateFileSchema } from "../src/templates.js";
 
 function loadSchema(name: string): object {
   return JSON.parse(
@@ -61,9 +61,9 @@ describe("example templates", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it.each(files)("%s is accepted by the template API's own validation", (name) => {
+  it.each(files)("%s is accepted by the same validation the sync applies", (name) => {
     const body: unknown = JSON.parse(readFileSync(resolve(dir, name), "utf8"));
-    const parsed = reportTemplateSchema.safeParse(body);
+    const parsed = reportTemplateFileSchema.safeParse(body);
 
     expect(parsed.error?.issues ?? []).toEqual([]);
     expect(parsed.success).toBe(true);

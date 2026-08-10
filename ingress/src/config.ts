@@ -21,6 +21,8 @@ const envSchema = z.object({
     ),
   DISPATCH_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1_000),
   DISPATCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  /** Mounted from the repository's templates/ directory. */
+  TEMPLATE_DIR: z.string().default("/opt/aiops/templates"),
 });
 
 export interface AppConfig {
@@ -35,6 +37,11 @@ export interface AppConfig {
   n8nWebhookUrl: string;
   dispatchIntervalMs: number;
   dispatchTimeoutMs: number;
+  /**
+   * Directory the report templates are read from at startup. The files decide
+   * which reports exist; the table follows them.
+   */
+  templateDir: string;
   /** Emoji name to verdict. Reactions outside this map are ignored. */
   labelReactions: ReadonlyMap<string, FeedbackLabel>;
   /**
@@ -65,6 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     n8nWebhookUrl: parsed.N8N_INTERNAL_WEBHOOK_URL,
     dispatchIntervalMs: parsed.DISPATCH_INTERVAL_MS,
     dispatchTimeoutMs: parsed.DISPATCH_TIMEOUT_MS,
+    templateDir: parsed.TEMPLATE_DIR,
     labelReactions: parseLabelReactions(parsed.SLACK_LABEL_REACTIONS),
     ...(parsed.SLACK_BOT_TOKEN ? { slackBotToken: parsed.SLACK_BOT_TOKEN } : {}),
   };

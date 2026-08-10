@@ -84,6 +84,11 @@ services:
       N8N_INTERNAL_WEBHOOK_URL: http://n8n:5678/webhook/aiops-process
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
       DISPATCH_TIMEOUT_MS: ${DISPATCH_TIMEOUT_MS:-10000}
+      TEMPLATE_DIR: /opt/aiops/templates
+    # Mounted rather than built in: the templates decide which reports exist, so
+    # editing one is a file change and a restart, not an image rebuild.
+    volumes:
+      - ./templates:/opt/aiops/templates:ro
     ports:
       - "127.0.0.1:${AIOPS_INGRESS_PORT:-8080}:8080"
     depends_on:

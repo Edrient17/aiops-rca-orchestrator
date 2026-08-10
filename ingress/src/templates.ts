@@ -119,6 +119,20 @@ export const reportTemplateSchema = z.object({
 
 export type ReportTemplateBody = z.infer<typeof reportTemplateSchema>;
 
+/**
+ * A template as it is written in templates/.
+ *
+ * The id lives in the file rather than being derived from the filename: a file
+ * is renamed by accident far more easily than its contents are edited, and a
+ * rename that silently created a second template while orphaning the first is
+ * not a mistake worth making possible.
+ */
+export const reportTemplateFileSchema = reportTemplateSchema.extend({
+  template_id: templateIdSchema,
+});
+
+export type ReportTemplateFile = z.infer<typeof reportTemplateFileSchema>;
+
 export interface ReportTemplate extends ReportTemplateBody {
   template_id: string;
   version: number;

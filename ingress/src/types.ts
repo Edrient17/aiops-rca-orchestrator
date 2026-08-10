@@ -1,10 +1,16 @@
 import type {
   ReportTemplate,
   ReportTemplateBody,
+  ReportTemplateFile,
   SaveTemplateResult,
 } from "./templates.js";
 
-export type { ReportTemplate, ReportTemplateBody, SaveTemplateResult };
+export type {
+  ReportTemplate,
+  ReportTemplateBody,
+  ReportTemplateFile,
+  SaveTemplateResult,
+};
 
 export interface SlackEventEnvelope {
   type: "event_callback";

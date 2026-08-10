@@ -86,6 +86,7 @@ const config: AppConfig = {
   n8nWebhookUrl: "http://n8n:5678/webhook/aiops-process",
   dispatchIntervalMs: 1000,
   dispatchTimeoutMs: 10000,
+  templateDir: "/unused-in-tests",
   labelReactions: new Map<string, FeedbackLabel>([
     ["white_check_mark", "correct"],
     ["x", "incorrect"],
