@@ -279,7 +279,7 @@
       "properties": {
         "evidence_id": {
           "type": "string",
-          "pattern": "^zbx:(event|trigger|metric):.+$"
+          "pattern": "^(zbx:(event|trigger|metric)|log:(summary|lines)):.+$"
         },
         "evidence_type": {
           "type": "string",
@@ -288,11 +288,14 @@
             "trigger",
             "metric_summary",
             "metric_history",
+            "log_summary",
+            "log_lines",
             "observation"
           ]
         },
         "source": {
-          "const": "zabbix"
+          "type": "string",
+          "enum": ["zabbix", "elasticsearch"]
         },
         "summary": {
           "type": "string",
@@ -438,6 +441,53 @@
                   "type": ["integer", "null"],
                   "minimum": 0,
                   "description": "Buckets the window would hold at this aggregation. With sample_count it explains how coverage_ratio was derived."
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "What a log tool reported about its own answer. Logs are stored unparsed, so how much of the window was read and how much of it was understood are both part of the finding rather than footnotes to it.",
+              "required": ["data_source", "partial"],
+              "properties": {
+                "data_source": {
+                  "const": "logs"
+                },
+                "partial": {
+                  "type": "boolean"
+                },
+                "sampled_fraction": {
+                  "type": ["number", "null"],
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Fraction of the matching lines the parsed figures actually describe. Level counts and volume through time are exact regardless."
+                },
+                "unlevelled_lines": {
+                  "type": ["integer", "null"],
+                  "minimum": 0
+                },
+                "formats": {
+                  "type": ["object", "null"],
+                  "additionalProperties": false,
+                  "description": "Lines by the log format they were recognised as. A high unrecognised count means the level and service figures rest on little.",
+                  "properties": {
+                    "spring": { "type": "integer", "minimum": 0 },
+                    "timestamped": { "type": "integer", "minimum": 0 },
+                    "syslog": { "type": "integer", "minimum": 0 },
+                    "unrecognised": { "type": "integer", "minimum": 0 }
+                  }
+                },
+                "scanned": {
+                  "type": ["integer", "null"],
+                  "minimum": 0
+                },
+                "matched_after_level_filter": {
+                  "type": ["integer", "null"],
+                  "minimum": 0
+                },
+                "messages_truncated": {
+                  "type": ["integer", "null"],
+                  "minimum": 0
                 }
               }
             },

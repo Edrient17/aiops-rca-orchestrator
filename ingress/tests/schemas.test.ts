@@ -259,6 +259,93 @@ describe("JSON Schema drafts", () => {
     ).toBe(false);
   });
 
+  // Logs became a second evidence source, so the package has to hold a finding
+  // that has no Zabbix object behind it -- no item, no trigger, no metric --
+  // while still tying it to the host whose metrics sit beside it.
+  it("accepts log evidence and keeps it tied to a resolved host", () => {
+    const ajv = schemaValidator();
+    const validate = ajv.compile(loadSchema("evidence-package.schema.json"));
+    const logEvidence = {
+      evidence_id: "log:summary:test-java-docker-vm:2026-08-10T07:00:00Z-2026-08-10T07:45:00Z",
+      evidence_type: "log_summary",
+      source: "elasticsearch",
+      summary: "07:25에 ERROR 38건이 몰렸고 전부 payment-service 호출 실패였다.",
+      observed_at: "2026-08-10T07:25:18+09:00",
+      window: { from: "2026-08-10T07:00:00+09:00", to: "2026-08-10T07:45:00+09:00" },
+      resource_ids: { host_id: "10084", event_id: null, trigger_id: null, item_id: null },
+      metric: null,
+      data_quality: {
+        data_source: "logs",
+        partial: true,
+        sampled_fraction: 0.2715,
+        unlevelled_lines: 100,
+        formats: { spring: 9898, syslog: 102 },
+      },
+      tool_call_id: "e0a1",
+    };
+
+    const withEvidence = (evidence: unknown) => ({
+      schema_version: "0.1.0",
+      request: { request_id: "R", original_question: "q", requested_by: "U1" },
+      query_context: {
+        hosts: [{ host: "test-java-docker-vm", host_id: "10084" }],
+        timezone: "Asia/Seoul",
+        anchor_time: "2026-08-10T07:30:00+09:00",
+      },
+      investigation: {
+        initial_window: { from: "2026-08-10T07:00:00+09:00", to: "2026-08-10T07:45:00+09:00" },
+        final_window: { from: "2026-08-10T07:00:00+09:00", to: "2026-08-10T07:45:00+09:00" },
+        iterations: 1,
+        tool_calls: [],
+        expansion_reasons: [],
+        stop_reason: "s",
+        limit_reached: false,
+      },
+      observed_failure_mode: "결제 호출 실패",
+      evidence: [evidence],
+      confirmed_facts: [],
+      hypotheses: [],
+      unknowns: [],
+    });
+
+    expect(validate(withEvidence(logEvidence))).toBe(true);
+    expect(validate.errors).toBeNull();
+
+    // The two data_quality shapes must stay distinguishable, or `oneOf` matches
+    // both and the schema silently stops checking either.
+    expect(
+      validate(
+        withEvidence({
+          ...logEvidence,
+          data_quality: { ...logEvidence.data_quality, data_source: "history" },
+        }),
+      ),
+    ).toBe(false);
+
+    // A prefix nothing produces would let a citation point at nothing.
+    expect(
+      validate(withEvidence({ ...logEvidence, evidence_id: "kibana:summary:x" })),
+    ).toBe(false);
+
+    // Zabbix evidence keeps its own shape: the widened source enum must not let
+    // a metric finding claim it came from the log cluster.
+    expect(
+      validate(
+        withEvidence({
+          ...logEvidence,
+          evidence_id: "zbx:metric:55036:a",
+          evidence_type: "metric_summary",
+          data_quality: {
+            data_source: "logs",
+            partial: false,
+            sample_count: 60,
+            coverage_ratio: 1,
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
   // The report shape stopped being incident-specific: headings come from the
   // template, so the writer only fills declared sections by id.
   it("accepts a filled-in section set and rejects an undeclared shape", () => {

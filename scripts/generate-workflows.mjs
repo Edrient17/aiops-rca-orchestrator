@@ -175,7 +175,11 @@ function buildMainWorkflow(input) {
     // The only stage observed to fail schema validation in operation, so it is
     // the only one given a retry. The other two parsers stay strict.
     parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema, true),
-    mcpNode("Zabbix MCP Tools", [2240, 140]),
+    mcpNode("Zabbix MCP Tools", [2240, 140], "ZABBIX_MCP_URL"),
+    // Metrics say when a host went wrong; logs say what failed. Both are
+    // reached by the same host string, which is what lets one report cite them
+    // side by side.
+    mcpNode("Log MCP Tools", [2240, 320], "ES_MCP_URL"),
     httpNode(
       "Persist Evidence Result",
       "POST",
@@ -290,6 +294,7 @@ function buildMainWorkflow(input) {
   // autoFix on the evidence parser requires its own model connection.
   connectAi(connections, "Investigation Model", "Evidence Package Parser", "ai_languageModel");
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
+  connectAi(connections, "Log MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
   connectAi(connections, "Report Parser", "RCA Writer", "ai_outputParser");
   // autoFix on the report parser requires its own model connection.
@@ -458,9 +463,11 @@ function parserNode(name, position, schema, autoFix = false) {
   );
 }
 
-function mcpNode(name, position) {
+// n8n prefixes every tool it exposes with the node name, so two MCP servers on
+// one agent cannot collide however they name their tools.
+function mcpNode(name, position, urlVariable) {
   return node(name, "@n8n/n8n-nodes-langchain.mcpClientTool", 1.4, position, {
-    endpointUrl: "={{ $env.ZABBIX_MCP_URL }}",
+    endpointUrl: "={{ $env." + urlVariable + " }}",
     serverTransport: "httpStreamable",
     authentication: "bearerAuth",
     include: "all",
@@ -923,6 +930,10 @@ const asTime = (value) => {
 
 const zabbixLink = (id) => {
   if (!zabbixBase) return null;
+  // Log evidence has no Zabbix object behind it. The host fallback below would
+  // still produce a link, and a footnote reading "최근 데이터" under a quoted log
+  // line sends the reader to metrics that were never what was cited.
+  if (id.startsWith('log:')) return null;
   const item = evidenceById.get(id);
   const ids = (item && item.resource_ids) || {};
   const window = (item && item.window) || {};
