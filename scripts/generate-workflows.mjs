@@ -193,7 +193,11 @@ function buildMainWorkflow(input) {
       3,
     ),
     modelNode("RCA Model", [2360, 140], MODELS.rca.id, MODELS.rca.reasoningEffort),
-    parserNode("Report Parser", [2560, 140], input.reportSchema),
+    // The writer joined the list of stages observed to fail schema validation
+    // in operation: a month of evidence in, six sections out, and one item
+    // missing a field rejects the whole report after the investigation has
+    // already been paid for. autoFix hands it back to be corrected instead.
+    parserNode("Report Parser", [2560, 140], input.reportSchema, true),
     httpNode(
       "Persist RCA Result",
       "POST",
@@ -282,6 +286,8 @@ function buildMainWorkflow(input) {
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
   connectAi(connections, "Report Parser", "RCA Writer", "ai_outputParser");
+  // autoFix on the report parser requires its own model connection.
+  connectAi(connections, "RCA Model", "Report Parser", "ai_languageModel");
 
   return {
     id: input.mainWorkflowId,
@@ -760,7 +766,16 @@ return [{ json: {
   limits: {
     max_iterations: limits.max_iterations || 10,
     max_tool_calls: limits.max_tool_calls || Math.min(60, 10 + 20 * hostCount),
-    max_window_hours: 24,
+    // Was a flat 24 whatever the template asked for, so a monthly report was
+    // handed a month-long window and told in the same breath not to look past a
+    // day. When the range produced a window, that window is the bound; without
+    // one it follows the policy, which is what decides the ceiling the MCP will
+    // actually enforce.
+    max_window_hours: window
+      ? Math.ceil((Date.parse(window.to) - Date.parse(window.from)) / 3600000)
+      : (collection.window && collection.window.policy === 'long_term_capacity'
+          ? 24 * 31
+          : 24),
   },
 }}];
 `.trim();
