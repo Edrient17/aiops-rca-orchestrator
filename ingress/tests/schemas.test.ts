@@ -150,6 +150,24 @@ describe("JSON Schema drafts", () => {
     }
   });
 
+  // A monthly report computes its own window, so the hint has no job. Forcing a
+  // value inside 5..1440 for a question spanning a month is how the analyzer
+  // rejected its own output.
+  it("lets the window hint be null, but still bounds it when present", () => {
+    const ajv = schemaValidator();
+    const validate = ajv.compile(loadSchema("parsed-request.schema.json"));
+    const withHint = (initial_window_hint: unknown) => ({
+      ...parsedRequest([]),
+      initial_window_hint,
+    });
+
+    expect(validate(withHint(null))).toBe(true);
+    expect(validate(withHint({ before_minutes: 720, after_minutes: 720 }))).toBe(true);
+    // A month in minutes is what a month-scale question invites.
+    expect(validate(withHint({ before_minutes: 43200, after_minutes: 43200 }))).toBe(false);
+    expect(validate(withHint({ before_minutes: 720 }))).toBe(false);
+  });
+
   it("rejects the single-host shape it replaced", () => {
     const ajv = schemaValidator();
     const validate = ajv.compile(loadSchema("parsed-request.schema.json"));

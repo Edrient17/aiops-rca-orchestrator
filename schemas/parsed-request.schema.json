@@ -31,7 +31,11 @@
     },
     "parse_status": {
       "type": "string",
-      "enum": ["ready", "needs_clarification", "unsupported"]
+      "enum": [
+        "ready",
+        "needs_clarification",
+        "unsupported"
+      ]
     },
     "request_type": {
       "type": "string",
@@ -49,7 +53,10 @@
       "description": "Every host or service name the request names, in the user's own words; the Evidence Collector resolves each to a Zabbix host. Empty when the request names none, which is what makes it need clarification."
     },
     "anchor_time": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time"
     },
     "timezone": {
@@ -63,7 +70,10 @@
       "maxLength": 2000
     },
     "incident_type_hint": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 200
     },
     "user_intent": {
@@ -72,9 +82,15 @@
       "maxLength": 500
     },
     "initial_window_hint": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["before_minutes", "after_minutes"],
+      "required": [
+        "before_minutes",
+        "after_minutes"
+      ],
       "properties": {
         "before_minutes": {
           "type": "integer",
@@ -87,7 +103,8 @@
           "maximum": 1440,
           "description": "Matches before_minutes. Asking about yesterday needs as much room after the anchor as before it, to see whether the incident recovered. This is only a hint: the Evidence Collector chooses the real window and the MCP caps it."
         }
-      }
+      },
+      "description": "Where to start looking, when the question is the only thing that says so. Null when the chosen report kind computes its own window -- a monthly report spans far more than the bound below, and inventing a value inside it would either be ignored or reject the whole output."
     },
     "allow_dynamic_expansion": {
       "type": "boolean"

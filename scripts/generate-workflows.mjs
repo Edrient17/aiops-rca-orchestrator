@@ -136,11 +136,15 @@ function buildMainWorkflow(input) {
       // per-request data read from a table, not part of this agent's role.
       // supplies_hosts is derived here so the analyzer can tell that a kind
       // which brings its own hosts does not need one named in the question.
-      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id), report_catalog: ($('Fetch Template Catalog').first().json.templates || []).map(entry => ({ id: entry.template_id, title: entry.title, when_to_use: entry.description, supplies_hosts: entry.collection.host_selector.mode !== 'from_question' })) }, null, 2) }}",
+      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id), report_catalog: ($('Fetch Template Catalog').first().json.templates || []).map(entry => ({ id: entry.template_id, title: entry.title, when_to_use: entry.description, supplies_hosts: entry.collection.host_selector.mode !== 'from_question', supplies_window: entry.collection.window.range !== 'anchor_relative' })) }, null, 2) }}",
       3,
     ),
     modelNode("Question Model", [1120, 260], MODELS.question.id, MODELS.question.reasoningEffort),
-    parserNode("Parsed Request Parser", [1320, 260], input.parsedSchema),
+    // The last strict parser, until a monthly question rejected the whole
+    // output over a field that kind of report does not even use. It is the
+    // cheapest stage to retry and the earliest to fail, so a rejection here
+    // costs a question that was already acknowledged.
+    parserNode("Parsed Request Parser", [1320, 260], input.parsedSchema, true),
     httpNode(
       "Persist Question Result",
       "POST",
@@ -279,6 +283,8 @@ function buildMainWorkflow(input) {
 
   connectAi(connections, "Question Model", "Question Analyzer", "ai_languageModel");
   connectAi(connections, "Parsed Request Parser", "Question Analyzer", "ai_outputParser");
+  // autoFix on the parsed-request parser requires its own model connection.
+  connectAi(connections, "Question Model", "Parsed Request Parser", "ai_languageModel");
   connectAi(connections, "Investigation Model", "Evidence Collector", "ai_languageModel");
   connectAi(connections, "Evidence Package Parser", "Evidence Collector", "ai_outputParser");
   // autoFix on the evidence parser requires its own model connection.
