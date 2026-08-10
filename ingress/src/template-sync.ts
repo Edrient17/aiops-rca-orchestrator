@@ -75,10 +75,43 @@ export async function syncTemplates(
 }
 
 /**
+ * Substitutes ${VAR} from the environment anywhere in a template.
+ *
+ * A template is meant to be reviewable in a commit, and a Zabbix host group id
+ * belongs to one installation rather than to the report. Without this the file
+ * would have to carry the id of whichever site the repository belongs to, which
+ * is both wrong for anyone else and a detail a public repository need not hold.
+ *
+ * An unset variable is an error rather than an empty string: a host group of ""
+ * would reach Zabbix as a query for nothing and read as an estate with no
+ * hosts in it.
+ */
+function expandEnv(value: unknown, file: string): unknown {
+  if (typeof value === "string") {
+    return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => {
+      const found = process.env[name];
+      if (found === undefined || found === "") {
+        throw new Error(`${file} refers to \${${name}}, which is not set`);
+      }
+      return found;
+    });
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => expandEnv(entry, file));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, expandEnv(entry, file)]),
+    );
+  }
+  return value;
+}
+
+/**
  * Reads and validates every template in the directory before any of them is
  * written, so one malformed file cannot leave the registry half updated.
  */
-async function readTemplateFiles(
+export async function readTemplateFiles(
   directory: string,
 ): Promise<ReportTemplateFile[]> {
   let names: string[];
@@ -102,7 +135,7 @@ async function readTemplateFiles(
       throw new Error(`${name} is not valid JSON: ${reason}`);
     }
 
-    const template = reportTemplateFileSchema.safeParse(parsed);
+    const template = reportTemplateFileSchema.safeParse(expandEnv(parsed, name));
     if (!template.success) {
       const issues = template.error.issues
         .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)

@@ -85,6 +85,9 @@ services:
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
       DISPATCH_TIMEOUT_MS: ${DISPATCH_TIMEOUT_MS:-10000}
       TEMPLATE_DIR: /opt/aiops/templates
+      # Which Zabbix host group the monthly report covers. Lives here rather
+      # than in the template so the file stays true for any installation.
+      AIOPS_MONTHLY_HOST_GROUP_ID: ${AIOPS_MONTHLY_HOST_GROUP_ID:-}
     # Mounted rather than built in: the templates decide which reports exist, so
     # editing one is a file change and a restart, not an image rebuild.
     volumes:

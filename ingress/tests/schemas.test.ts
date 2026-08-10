@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { reportTemplateFileSchema } from "../src/templates.js";
+import { readTemplateFiles } from "../src/template-sync.js";
 
 function loadSchema(name: string): object {
   return JSON.parse(
@@ -50,23 +50,33 @@ describe("seeded incident_rca template", () => {
   });
 });
 
-// The example templates are what an operator starts from, so a broken one is
-// discovered by whoever tries to use it. They go through the same validation
-// the API applies to anything an operator writes.
-describe("example templates", () => {
+// The shipped templates are what a deploy installs, so they go through the
+// exact path the deploy uses -- environment substitution included. Checking the
+// raw JSON instead would pass on a file that startup then rejects.
+describe("shipped templates", () => {
   const dir = resolve(process.cwd(), "..", "templates");
-  const files = readdirSync(dir).filter((name) => name.endsWith(".json"));
 
-  it("ships at least one to start from", () => {
+  it("all load through the same reader the sync uses", async () => {
+    process.env.AIOPS_MONTHLY_HOST_GROUP_ID = "10";
+    const files = await readTemplateFiles(dir);
+
     expect(files.length).toBeGreaterThan(0);
+    expect(files.map((file) => file.template_id).sort()).toEqual([
+      "incident_rca",
+      "monthly_capacity_report",
+    ]);
+    // Substitution happened: what reaches the database is a real group id.
+    const monthly = files.find((f) => f.template_id === "monthly_capacity_report")!;
+    const selector = monthly.collection.host_selector;
+    expect(selector.mode === "host_group" && selector.group_ids).toEqual(["10"]);
   });
 
-  it.each(files)("%s is accepted by the same validation the sync applies", (name) => {
-    const body: unknown = JSON.parse(readFileSync(resolve(dir, name), "utf8"));
-    const parsed = reportTemplateFileSchema.safeParse(body);
+  it("refuses to load when a referenced variable is unset", async () => {
+    delete process.env.AIOPS_MONTHLY_HOST_GROUP_ID;
 
-    expect(parsed.error?.issues ?? []).toEqual([]);
-    expect(parsed.success).toBe(true);
+    await expect(readTemplateFiles(dir)).rejects.toThrow(
+      /AIOPS_MONTHLY_HOST_GROUP_ID/,
+    );
   });
 });
 

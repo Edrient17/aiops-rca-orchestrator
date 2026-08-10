@@ -7,7 +7,7 @@
     "host_selector": {
       "mode": "host_group",
       "group_ids": [
-        "10"
+        "${AIOPS_MONTHLY_HOST_GROUP_ID}"
       ]
     },
     "window": {
