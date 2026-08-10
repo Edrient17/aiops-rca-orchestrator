@@ -202,16 +202,11 @@
             "maxLength": 2000
           },
           "supporting_evidence_refs": {
-            "$ref": "#/$defs/evidenceRefs"
+            "$ref": "#/$defs/optionalEvidenceRefs",
+            "description": "May be empty. A hypothesis the investigation considered and ruled out has no support and several contradictions, and recording it is what tells a reader the thing was checked. Requiring support here rejected an otherwise complete package for containing exactly that."
           },
           "contradicting_evidence_refs": {
-            "type": "array",
-            "maxItems": 50,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 300
-            }
+            "$ref": "#/$defs/optionalEvidenceRefs"
           },
           "confidence": {
             "type": "string",
@@ -253,7 +248,18 @@
     },
     "evidenceRefs": {
       "type": "array",
+      "description": "At least one reference. Used where the claim is that something is so -- a confirmed fact without evidence is not confirmed.",
       "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    },
+    "optionalEvidenceRefs": {
+      "type": "array",
+      "description": "May be empty. Used on the two sides of a hypothesis, where having nothing on one side is itself a finding.",
       "maxItems": 50,
       "items": {
         "type": "string",

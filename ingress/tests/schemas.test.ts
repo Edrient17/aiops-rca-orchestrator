@@ -259,6 +259,63 @@ describe("JSON Schema drafts", () => {
     ).toBe(false);
   });
 
+  // An investigation that checks a cause and rules it out has found something,
+  // and a hypothesis with no support and two contradictions is how that reads.
+  // Requiring support here threw away a complete package -- seven pieces of
+  // evidence and a correct conclusion -- over the one entry that recorded a
+  // ruled-out cause.
+  it("keeps a hypothesis the investigation ruled out", () => {
+    const ajv = schemaValidator();
+    const validate = ajv.compile(loadSchema("evidence-package.schema.json"));
+
+    const withHypotheses = (hypotheses: unknown[]) => ({
+      schema_version: "0.1.0",
+      request: { request_id: "R", original_question: "q", requested_by: "U1" },
+      query_context: {
+        hosts: [{ host: "web-01", host_id: "10084" }],
+        timezone: "Asia/Seoul",
+        anchor_time: "2026-08-10T16:25:00+09:00",
+      },
+      investigation: {
+        initial_window: { from: "2026-08-10T15:25:00+09:00", to: "2026-08-10T17:25:00+09:00" },
+        final_window: { from: "2026-08-10T15:25:00+09:00", to: "2026-08-10T17:25:00+09:00" },
+        iterations: 1,
+        tool_calls: [],
+        expansion_reasons: [],
+        stop_reason: "s",
+        limit_reached: false,
+      },
+      observed_failure_mode: "컨테이너가 종료됨",
+      evidence: [],
+      confirmed_facts: [],
+      hypotheses,
+      unknowns: [],
+    });
+
+    expect(
+      validate(
+        withHypotheses([
+          {
+            description: "CPU 또는 메모리 고갈이 원인이다",
+            supporting_evidence_refs: [],
+            contradicting_evidence_refs: ["zbx:metric:118233:a", "zbx:metric:118229:a"],
+            confidence: "low",
+          },
+        ]),
+      ),
+    ).toBe(true);
+    expect(validate.errors).toBeNull();
+
+    // A confirmed fact is a different claim: it says something is so, and one
+    // with nothing behind it is not confirmed.
+    expect(
+      validate({
+        ...withHypotheses([]),
+        confirmed_facts: [{ fact: "디스크가 찼다", evidence_refs: [] }],
+      }),
+    ).toBe(false);
+  });
+
   // Logs became a second evidence source, so the package has to hold a finding
   // that has no Zabbix object behind it -- no item, no trigger, no metric --
   // while still tying it to the host whose metrics sit beside it.
