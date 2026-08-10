@@ -1,0 +1,121 @@
+{
+  "enabled": true,
+  "title": "장애 RCA 보고서",
+  "description": "특정 호스트에서 일어난 장애나 이상 징후의 원인을 조사해 달라는 요청. 기준 시각 전후를 조사한다. 정기 요약이 아니라 사건 하나를 다룰 때 고른다.",
+  "collection": {
+    "limits": {},
+    "window": {
+      "range": "anchor_relative",
+      "policy": "standard"
+    },
+    "guidance": "",
+    "aggregation": null,
+    "host_selector": {
+      "mode": "from_question"
+    },
+    "metric_keywords": []
+  },
+  "output": {
+    "guidance": "요약만 존댓말 서술체로 쓰고 나머지는 개조식으로 쓴다. 확인된 사실과 원인 후보를 섞지 않는다. 쓸 내용이 없는 칸은 비운다 — 빈 칸은 정상적인 결과이고, 칸을 채우려고 일반론을 적으면 보고서를 읽는 사람이 실제 발견을 찾기 어려워진다. 본문에 zbx:로 시작하는 Evidence ID를 절대 쓰지 않는다. 근거 연결은 evidence_refs 필드로만 하고, 보고서에는 각주 번호로 자동 표시된다. 산문 안에 ID를 나열하면 문장이 읽히지 않는다.",
+    "sections": [
+      {
+        "id": "summary",
+        "heading": "요약",
+        "required": true,
+        "instruction": "운영자가 처음 읽는 문단. 무엇이 관측됐고 무엇이 확인되지 않았는지 존댓말 서술체로 3~5문장. body에 쓰고 items는 비운다. Evidence ID를 문장 안에 적지 않는다 — 요약은 근거 목록이 아니라 읽히는 글이어야 한다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "observed",
+        "heading": "관측된 형태",
+        "required": true,
+        "instruction": "증상을 원인이 아니라 관측된 그대로 한 항목으로 적는다. evidence_refs에는 그 문장을 직접 뒷받침하는 것만 넣는다. 조사한 증거를 전부 나열하지 않는다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "incident_timing",
+        "heading": "장애 시각",
+        "required": false,
+        "instruction": "문제 이벤트에서 얻은 심각도·발생·복구·지속 시간. 조사 구간을 장애 시각으로 옮겨 적지 않는다. 이벤트에 없는 값은 항목 자체를 만들지 않는다.",
+        "requires_problem_event": true
+      },
+      {
+        "id": "impact",
+        "heading": "영향",
+        "required": false,
+        "instruction": "증거로 확인된 영향만. 확인되지 않았으면 비운다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "scope",
+        "heading": "조사 범위",
+        "required": true,
+        "instruction": "실제로 조사한 호스트와 시간 구간을 한 항목으로.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "facts",
+        "heading": "확인된 사실",
+        "required": true,
+        "instruction": "증거가 뒷받침하는 사실만. 항목마다 evidence_refs 필수. 호스트가 여럿이면 어느 호스트인지 문장에 밝힌다. 조사 과정 자체는 사실이 아니다 — 호스트명이 해석됐다, 도구가 응답했다, 이벤트가 반환되지 않았다 같은 배관은 적지 않는다. 관측된 수치와 상태만 적는다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "timeline",
+        "heading": "타임라인",
+        "required": false,
+        "instruction": "시각 순서가 의미 있을 때만. 모든 항목이 같은 시각이면 순서가 아니므로 비운다. 시각은 text 앞에 쓴다.",
+        "requires_problem_event": true
+      },
+      {
+        "id": "signals",
+        "heading": "관련 신호",
+        "required": false,
+        "instruction": "장애와 시간적으로 겹치거나 앞뒤에 나타난 다른 관측. 관계를 label에 적는다(preceded/coincided/followed). 확인된 사실을 다시 말하는 항목은 넣지 않는다. 관계가 드러나지 않으면 비운다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "candidates",
+        "heading": "원인 후보 — 확정 원인 아님",
+        "required": true,
+        "instruction": "관측을 설명할 수 있는 가설. label에 HIGH/MEDIUM/LOW. 뒷받침은 evidence_refs, 반박은 counter_evidence_refs. \"문제 없음\"은 가설이 아니므로 넣지 않는다. 없으면 비운다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "recovery",
+        "heading": "복구",
+        "required": false,
+        "instruction": "증거로 확인된 복구 조치나 자동 회복.",
+        "requires_problem_event": true
+      },
+      {
+        "id": "immediate_actions",
+        "heading": "즉시 권고",
+        "required": false,
+        "instruction": "지금 해야 할 구체적인 조치. 수행된 사실이 아니라 제안임이 드러나게. 관측된 문제가 없으면 비운다. 일반론이나 '이상이 재발하면 확인하라'류는 적지 않는다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "preventive_actions",
+        "heading": "예방 권고",
+        "required": false,
+        "instruction": "이번 관측에서 근거가 나온 재발 방지 제안만. 모니터링을 강화하라는 식의 일반론은 적지 않는다. 없으면 비운다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "additional_data",
+        "heading": "추가 필요 데이터",
+        "required": false,
+        "instruction": "이번 조사의 결론을 바꿀 수 있었을 데이터만. Zabbix에 없어서 확인하지 못했고, 있었다면 판단이 달라졌을 것에 한한다. 없으면 비운다.",
+        "requires_problem_event": false
+      },
+      {
+        "id": "limitations",
+        "heading": "분석 한계",
+        "required": true,
+        "instruction": "이 결론을 얼마나 믿을 수 있는지에 실제로 영향을 주는 것만. partial, 낮은 coverage_ratio, 적은 sample_count, 조사 범위 밖이었던 대상. 한 줄로 충분하면 한 줄만 적는다.",
+        "requires_problem_event": false
+      }
+    ]
+  }
+}

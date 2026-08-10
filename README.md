@@ -220,11 +220,22 @@ UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정�
 매 배포마다 `ON CONFLICT DO NOTHING`으로 복원하니, 실수로 지워도 다음 배포에서
 원래 문구로 돌아옵니다. 수정한 내용은 덮어쓰지 않습니다.
 
-`templates/`에 바로 넣어 쓸 수 있는 예시가 있습니다. 월말 보고서를 설치하려면
-`group_ids`를 대상 Zabbix 호스트 그룹 ID로 바꾼 뒤:
+`templates/`에 바로 넣어 쓸 수 있는 파일이 있습니다. 런타임에 읽히는 것은 DB이고
+이 파일들은 설치용 출발점입니다.
+
+- `incident-rca.json` — 운영에서 다듬은 장애 RCA 템플릿. 시드(`007`)에는 최초
+  문구가 들어 있고, 이 파일이 그 뒤 조정한 결과입니다. 새 DB에서 시작하거나
+  시드 상태로 되돌아갔을 때 이걸 PUT하면 됩니다.
+- `monthly-capacity-report.json` — 월말 용량 보고서. `group_ids`는 자리표시자라
+  반드시 바꿔야 합니다.
+
+월말 보고서를 설치하려면 `group_ids`를 대상 Zabbix 호스트 그룹 ID로 바꾼 뒤:
 
 ```bash
-curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report   -H "X-AIOPS-Internal-Token: $AIOPS_INTERNAL_TOKEN"   -H "Content-Type: application/json"   --data-binary @templates/monthly-capacity-report.json
+curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \
+  -H "X-AIOPS-Internal-Token: $AIOPS_INTERNAL_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @templates/monthly-capacity-report.json
 ```
 
 넣고 나면 "지난달 월말 보고서 만들어줘"처럼 호스트를 지목하지 않는 질문이
