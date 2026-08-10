@@ -869,6 +869,29 @@ const evidenceById = new Map(
 );
 const zabbixBase = ($env.ZABBIX_FRONTEND_URL || '').replace(/\/+$/, '');
 
+// Footnote numbering only ever reached items[].evidence_refs, so an evidence id
+// written into prose printed raw -- a summary paragraph interrupted by
+// zbx:metric:55052:1785855600-1785942000-1h stops being readable. The writer is
+// told not to, but that is a request; this makes it not matter. Converted
+// rather than deleted, so the citation survives as the marker it should have
+// been, and only ids the investigation actually produced are touched.
+const escapeRe = (value) => value.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+const knownIds = [...evidenceById.keys()]
+  .filter(Boolean)
+  .sort((left, right) => right.length - left.length);
+const idPattern = knownIds.length > 0
+  ? new RegExp(knownIds.map(escapeRe).join('|'), 'g')
+  : null;
+const citeInline = (text) => {
+  if (!text || !idPattern) return text;
+  // replace() walks left to right, so markers number in reading order.
+  return text
+    .replace(idPattern, (id) => '[' + refNumber(id) + ']')
+    // A bracket that held nothing but ids now holds nothing but markers.
+    .replace(/\(\s*((?:\[\d+\]\s*[,;]?\s*)+)\)/g, (_, marks) => marks.replace(/[\s,;]+/g, ''))
+    .replace(/\s+([.,)])/g, '$1');
+};
+
 const asTime = (value) => {
   if (!value) return null;
   const parsed = new Date(value);
@@ -924,7 +947,7 @@ const zabbixLink = (id) => {
 
 const renderItem = (item) => {
   const label = item.label ? '*[' + String(item.label).toUpperCase() + ']* ' : '';
-  const lines = ['• ' + label + item.text + cite(item.evidence_refs)];
+  const lines = ['• ' + label + citeInline(item.text) + cite(item.evidence_refs)];
   const against = cite(item.counter_evidence_refs);
   if (against) lines.push('    ↳ 반박' + against);
   return lines.join('\n');
@@ -951,7 +974,7 @@ for (const declared of spec) {
   if (declared.requires_problem_event && !backedByEvent) continue;
 
   const section = filled.get(declared.id);
-  const body = section && section.body ? String(section.body).trim() : '';
+  const body = section && section.body ? citeInline(String(section.body).trim()) : '';
   const items = (section && section.items) || [];
   if (!body && items.length === 0) {
     // A section the template insists on is reported as empty rather than
