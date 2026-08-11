@@ -22,7 +22,11 @@
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["request_id", "original_question", "requested_by"],
+      "required": [
+        "request_id",
+        "original_question",
+        "requested_by"
+      ],
       "properties": {
         "request_id": {
           "type": "string",
@@ -44,7 +48,11 @@
     "query_context": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hosts", "timezone", "anchor_time"],
+      "required": [
+        "hosts",
+        "timezone",
+        "anchor_time"
+      ],
       "properties": {
         "hosts": {
           "type": "array",
@@ -54,7 +62,10 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["host", "host_id"],
+            "required": [
+              "host",
+              "host_id"
+            ],
             "properties": {
               "host": {
                 "type": "string",
@@ -109,7 +120,12 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["tool_call_id", "tool_name", "purpose", "status"],
+            "required": [
+              "tool_call_id",
+              "tool_name",
+              "purpose",
+              "status"
+            ],
             "properties": {
               "tool_call_id": {
                 "type": "string",
@@ -128,7 +144,11 @@
               },
               "status": {
                 "type": "string",
-                "enum": ["success", "partial", "failed"]
+                "enum": [
+                  "success",
+                  "partial",
+                  "failed"
+                ]
               }
             }
           }
@@ -170,7 +190,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["fact", "evidence_refs"],
+        "required": [
+          "fact",
+          "evidence_refs"
+        ],
         "properties": {
           "fact": {
             "type": "string",
@@ -210,7 +233,11 @@
           },
           "confidence": {
             "type": "string",
-            "enum": ["high", "medium", "low"]
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
           }
         }
       }
@@ -229,7 +256,10 @@
     "window": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["from", "to"],
+      "required": [
+        "from",
+        "to"
+      ],
       "properties": {
         "from": {
           "type": "string",
@@ -240,8 +270,20 @@
           "format": "date-time"
         },
         "aggregation": {
-          "type": ["string", "null"],
-          "enum": ["raw", "1m", "5m", "15m", "1h", "6h", "1d", null],
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "raw",
+            "1m",
+            "5m",
+            "15m",
+            "1h",
+            "6h",
+            "1d",
+            null
+          ],
           "description": "Bucket size the MCP aggregated this window at. Optional because investigation windows carry no aggregation of their own."
         }
       }
@@ -301,7 +343,10 @@
         },
         "source": {
           "type": "string",
-          "enum": ["zabbix", "elasticsearch"]
+          "enum": [
+            "zabbix",
+            "elasticsearch"
+          ]
         },
         "summary": {
           "type": "string",
@@ -309,7 +354,10 @@
           "maxLength": 3000
         },
         "observed_at": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "date-time"
         },
         "window": {
@@ -325,22 +373,36 @@
         "resource_ids": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["host_id", "event_id", "trigger_id", "item_id"],
+          "required": [
+            "host_id",
+            "event_id",
+            "trigger_id",
+            "item_id"
+          ],
           "properties": {
             "host_id": {
               "type": "string",
               "pattern": "^\\d+$"
             },
             "event_id": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "pattern": "^\\d+$"
             },
             "trigger_id": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "pattern": "^\\d+$"
             },
             "item_id": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "pattern": "^\\d+$"
             }
           }
@@ -368,26 +430,47 @@
                   "maxLength": 500
                 },
                 "unit": {
-                  "type": ["string", "null"],
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "maxLength": 100
                 },
                 "min": {
-                  "type": ["number", "null"]
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "max": {
-                  "type": ["number", "null"]
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "avg": {
-                  "type": ["number", "null"]
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "first": {
-                  "type": ["number", "null"]
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "last": {
-                  "type": ["number", "null"]
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "change_percent": {
-                  "type": ["number", "null"]
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "trend": {
                   "type": "string",
@@ -399,7 +482,10 @@
                   ]
                 },
                 "key": {
-                  "type": ["string", "null"],
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "maxLength": 500,
                   "description": "Zabbix item key such as system.cpu.util, which identifies the metric more precisely than its display name."
                 }
@@ -424,14 +510,20 @@
               "properties": {
                 "data_source": {
                   "type": "string",
-                  "enum": ["history", "trends"]
+                  "enum": [
+                    "history",
+                    "trends"
+                  ]
                 },
                 "sample_count": {
                   "type": "integer",
                   "minimum": 0
                 },
                 "coverage_ratio": {
-                  "type": ["number", "null"],
+                  "type": [
+                    "number",
+                    "null"
+                  ],
                   "minimum": 0,
                   "maximum": 1
                 },
@@ -439,12 +531,18 @@
                   "type": "boolean"
                 },
                 "returned_points": {
-                  "type": ["integer", "null"],
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 0,
                   "description": "Aggregated points the MCP actually returned. Part of the data_quality object every metric tool returns."
                 },
                 "expected_buckets": {
-                  "type": ["integer", "null"],
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 0,
                   "description": "Buckets the window would hold at this aggregation. With sample_count it explains how coverage_ratio was derived."
                 }
@@ -454,7 +552,10 @@
               "type": "object",
               "additionalProperties": false,
               "description": "What a log tool reported about its own answer. Logs are stored unparsed, so how much of the window was read and how much of it was understood are both part of the finding rather than footnotes to it.",
-              "required": ["data_source", "partial"],
+              "required": [
+                "data_source",
+                "partial"
+              ],
               "properties": {
                 "data_source": {
                   "const": "logs"
@@ -463,47 +564,97 @@
                   "type": "boolean"
                 },
                 "sampled_fraction": {
-                  "type": ["number", "null"],
+                  "type": [
+                    "number",
+                    "null"
+                  ],
                   "minimum": 0,
                   "maximum": 1,
                   "description": "Fraction of the matching lines the parsed figures actually describe. Level counts and volume through time are exact regardless."
                 },
                 "unlevelled_lines": {
-                  "type": ["integer", "null"],
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 0
                 },
                 "formats": {
-                  "type": ["object", "null"],
+                  "type": [
+                    "object",
+                    "null"
+                  ],
                   "additionalProperties": false,
                   "description": "Lines by the log format they were recognised as. A high unrecognised count means the level and service figures rest on little.",
                   "properties": {
-                    "spring": { "type": "integer", "minimum": 0 },
-                    "timestamped": { "type": "integer", "minimum": 0 },
-                    "syslog": { "type": "integer", "minimum": 0 },
-                    "unrecognised": { "type": "integer", "minimum": 0 }
+                    "spring": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "timestamped": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "syslog": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "unrecognised": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
                   }
                 },
                 "scanned": {
-                  "type": ["integer", "null"],
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 0
                 },
                 "matched_after_level_filter": {
-                  "type": ["integer", "null"],
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 0
                 },
                 "messages_truncated": {
-                  "type": ["integer", "null"],
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 0
                 },
                 "empty_because_filtered": {
-                  "type": ["object", "null"],
+                  "type": [
+                    "object",
+                    "null"
+                  ],
                   "additionalProperties": false,
                   "description": "Present when a filter emptied a window that was not empty. Without it, a narrowed miss and a silent host read the same, and the second is a far stronger claim -- it is the difference between 'nothing matched what was asked' and 'the host produced nothing'.",
-                  "required": ["lines_in_window", "matched_by_filters"],
+                  "required": [
+                    "lines_in_window",
+                    "matched_by_filters"
+                  ],
                   "properties": {
-                    "lines_in_window": { "type": "integer", "minimum": 0 },
-                    "matched_by_filters": { "type": "integer", "minimum": 0 }
+                    "lines_in_window": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "matched_by_filters": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
                   }
+                },
+                "omitted_from_middle": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "description": "Lines dropped from between the two ends of an overfull window. The cause sits at one end and the recovery at the other; what goes is the repetition between them."
                 }
               }
             },
@@ -518,7 +669,10 @@
           "maxLength": 200
         },
         "search_query": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 1000,
           "description": "The query this evidence was drawn from, as the tool reported it -- copied, not composed. A footnote carrying it can reopen the citation on the lines it came from; without it the reader lands on everything the host logged that hour, which is not what was cited."
         }
