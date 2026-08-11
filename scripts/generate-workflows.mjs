@@ -961,10 +961,11 @@ const kibanaLink = (id) => {
   if (!window.from || !window.to) return null;
 
   const host = hostNameById.get((item.resource_ids || {}).host_id);
-  // Rison quotes with apostrophes, so these are assembled from
-  // double-quoted strings and the apostrophes stay literal.
+  // The search the evidence came from, when the collector carried it across.
+  // Falling back to the host alone opens everything that host logged in the
+  // window, which is a different thing from what was cited.
   const q = "'";
-  const query = host ? 'host.name:"' + host + '"' : "*";
+  const query = item.search_query || (host ? 'host.name:"' + host + '"' : "*");
   const time = "(time:(from:" + q + window.from + q + ",to:" + q + window.to + q + "))";
   const app = "(index:" + q + kibanaDataView + q +
     ",query:(language:kuery,query:" + q + query + q + "))";
@@ -1076,9 +1077,14 @@ if (refs.length > 0) {
   sections.push('*근거*\n' + refs.map((id, index) => {
     const link = id.startsWith('log:') ? kibanaLink(id) : zabbixLink(id);
     const marker = '\`[' + (index + 1) + ']\`';
-    return link
+    const item = evidenceById.get(id) || {};
+    const shown = item.search_query
+      ? '
+     검색: \`' + item.search_query + '\`'
+      : '';
+    return (link
       ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'
-      : marker + ' \`' + id + '\`';
+      : marker + ' \`' + id + '\`') + shown;
   }).join('\n'));
 }
 

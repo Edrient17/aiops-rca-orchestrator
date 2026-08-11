@@ -78,7 +78,7 @@ VALUES (
         'instruction', '장애와 시간적으로 겹치거나 앞뒤에 나타난 다른 관측. '
           || '관계를 label에 적는다(preceded/coincided/followed).'),
       jsonb_build_object(
-        'id', 'candidates', 'heading', '원인 후보 — 확정 원인 아님', 'required', true,
+        'id', 'candidates', 'heading', '원인 후보', 'required', true,
         'requires_problem_event', false,
         'instruction', '관측을 설명할 수 있는 가설. label에 HIGH/MEDIUM/LOW. '
           || '뒷받침은 evidence_refs, 반박은 counter_evidence_refs. '
