@@ -316,6 +316,55 @@ describe("JSON Schema drafts", () => {
     ).toBe(false);
   });
 
+  // Not every tool reports on its own answer. get_incident_events returns no
+  // data_quality at all, so evidence drawn from it has none to copy -- and an
+  // investigation that invented a partial one, {partial: false}, had its whole
+  // package rejected. Both ends of that have to be pinned: null is right, and
+  // a half-filled object is not.
+  it("takes null data_quality, and refuses a partial object", () => {
+    const ajv = schemaValidator();
+    const validate = ajv.compile(loadSchema("evidence-package.schema.json"));
+
+    const withQuality = (data_quality: unknown) => ({
+      schema_version: "0.1.0",
+      request: { request_id: "R", original_question: "q", requested_by: "U1" },
+      query_context: {
+        hosts: [{ host: "web-01", host_id: "10084" }],
+        timezone: "Asia/Seoul",
+        anchor_time: "2026-08-11T02:30:00+09:00",
+      },
+      investigation: {
+        initial_window: { from: "2026-08-11T02:00:00+09:00", to: "2026-08-11T03:00:00+09:00" },
+        final_window: { from: "2026-08-11T02:00:00+09:00", to: "2026-08-11T03:00:00+09:00" },
+        iterations: 1,
+        tool_calls: [],
+        expansion_reasons: [],
+        stop_reason: "s",
+        limit_reached: false,
+      },
+      observed_failure_mode: "컨테이너 중단",
+      evidence: [{
+        evidence_id: "zbx:event:24526244",
+        evidence_type: "event",
+        source: "zabbix",
+        summary: "컨테이너 중단 이벤트",
+        observed_at: "2026-08-11T02:22:40+09:00",
+        window: { from: "2026-08-11T02:00:00+09:00", to: "2026-08-11T03:00:00+09:00" },
+        resource_ids: { host_id: "10084", event_id: "24526244", trigger_id: "74899", item_id: null },
+        metric: null,
+        data_quality,
+        tool_call_id: "e1",
+      }],
+      confirmed_facts: [],
+      hypotheses: [],
+      unknowns: [],
+    });
+
+    expect(validate(withQuality(null))).toBe(true);
+    expect(validate(withQuality({ partial: false }))).toBe(false);
+    expect(validate(withQuality({ data_source: "logs" }))).toBe(false);
+  });
+
   // Logs became a second evidence source, so the package has to hold a finding
   // that has no Zabbix object behind it -- no item, no trigger, no metric --
   // while still tying it to the host whose metrics sit beside it.

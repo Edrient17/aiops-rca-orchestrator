@@ -179,8 +179,10 @@ MCP가 한다. MCP가 돌려준 값을 그대로 쓰고 다시 계산하지 않�
 - `metric` — 단일 수치 시계열을 요약한 Evidence에만 채우고, 채울 때는 `name`,
   `unit`, `min`, `max`, `avg`, `first`, `last`, `change_percent`, `trend`를 모두
   넣는다. 로그를 포함한 그 외 Evidence에서는 `null`이다.
-- `data_quality` — MCP가 준 값을 그대로 옮긴다. `data_source`도 MCP가 넣어
-  주므로 직접 만들지 않는다.
+- `data_quality` — 도구가 `data_quality`를 돌려준 Evidence에만 채우고, 준 값을
+  그대로 옮긴다. 돌려주지 않았으면 `null`이다. 이벤트·트리거 조회가 그렇다.
+  일부 필드만 채운 객체는 스키마가 거부한다. `data_source`도 도구가 넣어 주므로
+  직접 만들지 않는다.
 - 조회 건수·검색 키워드 같은 조사 과정의 부산물은 여기 넣지 않는다. 의미가
   있으면 `summary`에, 판단에 영향을 주면 `unknowns`에 적는다.
 - `window` — `from`과 `to`는 필수. `aggregation`은 MCP 집계 결과에서 온
