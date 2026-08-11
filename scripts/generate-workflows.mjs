@@ -935,6 +935,47 @@ const asTime = (value) => {
     : parsed.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
 };
 
+const kibanaBase = ($env.KIBANA_URL || '').replace(/\/+$/, '');
+const kibanaDataView = $env.KIBANA_DATA_VIEW_ID || '';
+
+// Which host each piece of evidence belongs to. resource_ids carries the Zabbix
+// id, and Kibana has never heard of that -- the name is what the log index
+// stores, and query_context is where the two were put side by side.
+const hostNameById = new Map(
+  ((evidence.query_context && evidence.query_context.hosts) || [])
+    .map((entry) => [entry.host_id, entry.host]),
+);
+
+// A log citation quotes a line out of a window. The link opens Discover on that
+// window, for that host, so the reader lands where the quote came from rather
+// than at the top of the index.
+//
+// Both settings are required because neither works alone: without the data view
+// id Discover opens with no index selected, and the id means nothing without
+// the address it lives at. Absent either, log footnotes simply carry no link,
+// which is what they did before.
+const kibanaLink = (id) => {
+  if (!kibanaBase || !kibanaDataView) return null;
+  const item = evidenceById.get(id);
+  const window = (item && item.window) || {};
+  if (!window.from || !window.to) return null;
+
+  const host = hostNameById.get((item.resource_ids || {}).host_id);
+  // Rison quotes with apostrophes, so these are assembled from
+  // double-quoted strings and the apostrophes stay literal.
+  const q = "'";
+  const query = host ? 'host.name:"' + host + '"' : "*";
+  const time = "(time:(from:" + q + window.from + q + ",to:" + q + window.to + q + "))";
+  const app = "(index:" + q + kibanaDataView + q +
+    ",query:(language:kuery,query:" + q + query + q + "))";
+
+  return {
+    url: kibanaBase + '/app/discover#/?_g=' + encodeURIComponent(time) +
+      '&_a=' + encodeURIComponent(app),
+    label: '로그',
+  };
+};
+
 const zabbixLink = (id) => {
   if (!zabbixBase) return null;
   // Log evidence has no Zabbix object behind it. The host fallback below would
@@ -1033,7 +1074,7 @@ for (const declared of spec) {
 // Built last so every marker above has already been numbered.
 if (refs.length > 0) {
   sections.push('*근거*\n' + refs.map((id, index) => {
-    const link = zabbixLink(id);
+    const link = id.startsWith('log:') ? kibanaLink(id) : zabbixLink(id);
     const marker = '\`[' + (index + 1) + ']\`';
     return link
       ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'

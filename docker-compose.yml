@@ -201,6 +201,8 @@ services:
       ES_MCP_URL: ${ES_MCP_URL:?ES_MCP_URL is required}
       OSS_ES_MCP_URL: ${OSS_ES_MCP_URL:?OSS_ES_MCP_URL is required}
       ZABBIX_FRONTEND_URL: ${ZABBIX_FRONTEND_URL:-}
+      KIBANA_URL: ${KIBANA_URL:-}
+      KIBANA_DATA_VIEW_ID: ${KIBANA_DATA_VIEW_ID:-}
     ports:
       - "127.0.0.1:${N8N_PORT:-5678}:5678"
     volumes:
