@@ -476,6 +476,30 @@ describe("JSON Schema drafts", () => {
     ).toBe(false);
   });
 
+  // A prose section has no items and a list section has no body, and there is
+  // no third reading of an absent one. Demanding both discarded a finished
+  // report -- twelve sections, every one of them filled -- because the writer
+  // left out the half that did not apply.
+  it("takes a section that omits the half it does not use", () => {
+    const ajv = schemaValidator();
+    const validate = ajv.compile(loadSchema("report.schema.json"));
+    const report = (sections: unknown[]) => ({
+      schema_version: "0.1.0",
+      title: "제목",
+      sections,
+    });
+
+    expect(validate(report([{ id: "summary", body: "요약입니다." }]))).toBe(true);
+    expect(validate(report([{ id: "facts", items: [
+      { text: "디스크가 참", label: null, evidence_refs: ["zbx:metric:1:a"], counter_evidence_refs: [] },
+    ] }]))).toBe(true);
+    expect(validate(report([{ id: "scope" }]))).toBe(true);
+
+    // The id is still the one thing a section cannot do without: it is what
+    // matches the section to its template heading.
+    expect(validate(report([{ body: "제목 없는 칸" }]))).toBe(false);
+  });
+
   // The report shape stopped being incident-specific: headings come from the
   // template, so the writer only fills declared sections by id.
   it("accepts a filled-in section set and rejects an undeclared shape", () => {

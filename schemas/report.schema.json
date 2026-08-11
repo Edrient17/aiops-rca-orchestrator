@@ -5,7 +5,11 @@
   "description": "One shape for every kind of report. What a given kind is made of is decided by its template, which names the sections and says what belongs in each; this only fixes how a filled-in section is expressed. The shape is fixed because n8n's structured output parser takes a static schema, and it is the writer's contract rather than the document's layout: headings come from the template, not from here.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "title", "sections"],
+  "required": [
+    "schema_version",
+    "title",
+    "sections"
+  ],
   "properties": {
     "schema_version": {
       "const": "0.1.0"
@@ -28,7 +32,9 @@
     "section": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "body", "items"],
+      "required": [
+        "id"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -36,24 +42,33 @@
           "description": "The id of the template section being filled in. Sections are matched on this rather than on their heading, so the writer never has to reproduce a heading and cannot rename one."
         },
         "body": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 5000,
-          "description": "Prose for sections that read as a paragraph. Null for sections that are a list."
+          "description": "Prose for sections that read as a paragraph. Null for sections that are a list. Absent means the same as null."
         },
         "items": {
           "type": "array",
           "maxItems": 100,
-          "description": "Entries for sections that read as a list. Empty for sections that are prose. A section with neither is dropped from the report rather than printed empty.",
+          "description": "Entries for sections that read as a list. Empty for sections that are prose. A section with neither is dropped from the report rather than printed empty. Absent means the same as an empty list.",
           "items": {
             "$ref": "#/$defs/item"
           }
         }
-      }
+      },
+      "description": "A filled-in template section. Only the id is required. A section that reads as prose may omit items, and a list section may omit body -- there is no third reading of an absent one, and demanding both cost a complete investigation when the writer left them out."
     },
     "item": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["text", "label", "evidence_refs", "counter_evidence_refs"],
+      "required": [
+        "text",
+        "label",
+        "evidence_refs",
+        "counter_evidence_refs"
+      ],
       "properties": {
         "text": {
           "type": "string",
@@ -61,7 +76,10 @@
           "maxLength": 2000
         },
         "label": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 40,
           "description": "Short qualifier printed ahead of the text, such as a confidence for a cause candidate. Null when the entry needs none."
         },
