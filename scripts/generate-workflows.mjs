@@ -1105,15 +1105,15 @@ for (const declared of spec) {
 // Built last so every marker above has already been numbered.
 if (refs.length > 0) {
   sections.push('*근거*\n' + refs.map((id, index) => {
+    // The query goes into the link, not onto the page. A collector that names a
+    // dozen services produces a KQL string longer than the finding it supports,
+    // and the citation list stops being readable. Clicking still arrives at the
+    // same lines, which is what the query was for.
     const link = id.startsWith('log:') ? kibanaLink(id) : zabbixLink(id);
     const marker = '\`[' + (index + 1) + ']\`';
-    const item = evidenceById.get(id) || {};
-    const shown = item.search_query
-      ? '\n     검색: \`' + item.search_query + '\`'
-      : '';
-    return (link
+    return link
       ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'
-      : marker + ' \`' + id + '\`') + shown;
+      : marker + ' \`' + id + '\`';
   }).join('\n'));
 }
 
