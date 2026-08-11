@@ -331,12 +331,22 @@ describe("JSON Schema drafts", () => {
       window: { from: "2026-08-10T07:00:00+09:00", to: "2026-08-10T07:45:00+09:00" },
       resource_ids: { host_id: "10084", event_id: null, trigger_id: null, item_id: null },
       metric: null,
+      // Every field the log MCP puts in data_quality, together. The collector is
+      // told to copy that object verbatim, so any field the server adds and the
+      // schema does not know rejects the whole package -- which is how
+      // empty_because_filtered, added on the MCP side alone, threw away a
+      // complete investigation. Keeping the full shape here means the schema
+      // has to keep accepting it.
       data_quality: {
         data_source: "logs",
         partial: true,
         sampled_fraction: 0.2715,
         unlevelled_lines: 100,
         formats: { spring: 9898, syslog: 102 },
+        scanned: 38,
+        matched_after_level_filter: 38,
+        messages_truncated: 3,
+        empty_because_filtered: null,
       },
       tool_call_id: "e0a1",
     };
@@ -367,6 +377,20 @@ describe("JSON Schema drafts", () => {
 
     expect(validate(withEvidence(logEvidence))).toBe(true);
     expect(validate.errors).toBeNull();
+
+    // The narrowed-miss report has to survive with a value in it, not only as
+    // null: that is the case it exists for.
+    expect(
+      validate(
+        withEvidence({
+          ...logEvidence,
+          data_quality: {
+            ...logEvidence.data_quality,
+            empty_because_filtered: { lines_in_window: 45744, matched_by_filters: 0 },
+          },
+        }),
+      ),
+    ).toBe(true);
 
     // The two data_quality shapes must stay distinguishable, or `oneOf` matches
     // both and the schema silently stops checking either.

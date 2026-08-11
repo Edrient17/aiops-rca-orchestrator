@@ -494,6 +494,16 @@
                 "messages_truncated": {
                   "type": ["integer", "null"],
                   "minimum": 0
+                },
+                "empty_because_filtered": {
+                  "type": ["object", "null"],
+                  "additionalProperties": false,
+                  "description": "Present when a filter emptied a window that was not empty. Without it, a narrowed miss and a silent host read the same, and the second is a far stronger claim -- it is the difference between 'nothing matched what was asked' and 'the host produced nothing'.",
+                  "required": ["lines_in_window", "matched_by_filters"],
+                  "properties": {
+                    "lines_in_window": { "type": "integer", "minimum": 0 },
+                    "matched_by_filters": { "type": "integer", "minimum": 0 }
+                  }
                 }
               }
             },
