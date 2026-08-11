@@ -625,7 +625,37 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+/**
+ * Parses every Code node's body before the workflow is written.
+ *
+ * These bodies are JavaScript assembled inside template literals, so an escape
+ * that is one character off produces a file that looks fine and a node that
+ * throws "Invalid or unexpected token" -- in production, at the end of an
+ * investigation, after every token has already been spent. A `\n` written
+ * without doubling became a real newline inside a string literal and did
+ * exactly that.
+ *
+ * new Function parses without running, which is all that is needed: the code
+ * never executes here, and n8n's own globals ($env, $input) are never touched.
+ */
+function assertCodeNodesParse(workflow) {
+  for (const node of workflow.nodes) {
+    const code = node.parameters?.jsCode;
+    if (!code) continue;
+    try {
+      new Function(code);
+    } catch (error) {
+      throw new Error(
+        `Code node "${node.name}" does not parse: ${error.message}\n` +
+          "The body is built from a template literal, so check the escaping " +
+          "of \\n and backticks first.",
+      );
+    }
+  }
+}
+
 async function writeWorkflow(filename, workflow) {
+  assertCodeNodesParse(workflow);
   await writeFile(
     resolve(outputDir, filename),
     `${JSON.stringify(workflow, null, 2)}\n`,
@@ -1079,8 +1109,7 @@ if (refs.length > 0) {
     const marker = '\`[' + (index + 1) + ']\`';
     const item = evidenceById.get(id) || {};
     const shown = item.search_query
-      ? '
-     검색: \`' + item.search_query + '\`'
+      ? '\n     검색: \`' + item.search_query + '\`'
       : '';
     return (link
       ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'
