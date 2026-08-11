@@ -253,10 +253,13 @@ def main():
     # workflow already had, so a newly added MCP node arrives bare and nothing
     # upstream notices. Checked after the import rather than before, because the
     # imported workflow is what actually runs.
+    # A node set to authenticate with nothing is asking for no credential, so
+    # only the ones that declare an auth method are checked.
     bare = psql(
         "select string_agg(n->>'name', ', ') "
         "from workflow_entity w, jsonb_array_elements(w.nodes::jsonb) n "
         "where w.id='{}' and n->>'type' like '%mcpClientTool%' "
+        "and coalesce(n->'parameters'->>'authentication', 'none') <> 'none' "
         "and n->'credentials' is null;".format(WORKFLOW_ID))
     if bare:
         fail("MCP tool node(s) deployed without a credential: " + bare +

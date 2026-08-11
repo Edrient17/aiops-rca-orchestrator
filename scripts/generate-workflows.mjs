@@ -180,6 +180,12 @@ function buildMainWorkflow(input) {
     // reached by the same host string, which is what lets one report cite them
     // side by side.
     mcpNode("Log MCP Tools", [2240, 320], "ES_MCP_URL"),
+    // The general client, beside the two shaped ones. They answer the questions
+    // an investigation usually asks, already aggregated; this answers the rest
+    // -- across all of time, by any field, without a window. It authenticates
+    // with nothing because the server offers nothing to authenticate with; it
+    // is reachable only from the private network.
+    mcpNode("Elasticsearch Query Tools", [2240, 500], "OSS_ES_MCP_URL", "none"),
     httpNode(
       "Persist Evidence Result",
       "POST",
@@ -295,6 +301,7 @@ function buildMainWorkflow(input) {
   connectAi(connections, "Investigation Model", "Evidence Package Parser", "ai_languageModel");
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "Log MCP Tools", "Evidence Collector", "ai_tool");
+  connectAi(connections, "Elasticsearch Query Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
   connectAi(connections, "Report Parser", "RCA Writer", "ai_outputParser");
   // autoFix on the report parser requires its own model connection.
@@ -465,11 +472,11 @@ function parserNode(name, position, schema, autoFix = false) {
 
 // n8n prefixes every tool it exposes with the node name, so two MCP servers on
 // one agent cannot collide however they name their tools.
-function mcpNode(name, position, urlVariable) {
+function mcpNode(name, position, urlVariable, authentication = "bearerAuth") {
   return node(name, "@n8n/n8n-nodes-langchain.mcpClientTool", 1.4, position, {
     endpointUrl: "={{ $env." + urlVariable + " }}",
     serverTransport: "httpStreamable",
-    authentication: "bearerAuth",
+    authentication,
     include: "all",
     options: {
       timeout: 120_000,

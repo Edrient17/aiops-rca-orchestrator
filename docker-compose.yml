@@ -199,6 +199,7 @@ services:
       SLACK_ERROR_CHANNEL_ID: ${SLACK_ERROR_CHANNEL_ID:?SLACK_ERROR_CHANNEL_ID is required}
       ZABBIX_MCP_URL: ${ZABBIX_MCP_URL:?ZABBIX_MCP_URL is required}
       ES_MCP_URL: ${ES_MCP_URL:?ES_MCP_URL is required}
+      OSS_ES_MCP_URL: ${OSS_ES_MCP_URL:?OSS_ES_MCP_URL is required}
       ZABBIX_FRONTEND_URL: ${ZABBIX_FRONTEND_URL:-}
     ports:
       - "127.0.0.1:${N8N_PORT:-5678}:5678"
