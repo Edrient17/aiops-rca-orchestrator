@@ -1111,8 +1111,11 @@ if (refs.length > 0) {
     // same lines, which is what the query was for.
     const link = id.startsWith('log:') ? kibanaLink(id) : zabbixLink(id);
     const marker = '\`[' + (index + 1) + ']\`';
+    // The id is the collector's own bookkeeping and says nothing to a reader
+    // that the number and the link do not. It stays only when there is no link,
+    // so the line still identifies what it cites.
     return link
-      ? marker + ' <' + link.url + '|' + link.label + '>  \`' + id + '\`'
+      ? marker + ' <' + link.url + '|' + link.label + '>'
       : marker + ' \`' + id + '\`';
   }).join('\n'));
 }
