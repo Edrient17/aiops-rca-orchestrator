@@ -33,6 +33,17 @@ SOURCE = "workflows/01-aiops-main.json"
 PATCHED = "workflows/.redeploy-with-credentials.json"
 PATCHED_IN_CONTAINER = "/opt/aiops/workflows/.redeploy-with-credentials.json"
 
+# Credentials for nodes that have never been deployed, keyed by node name. The
+# carry-over below reads what the running workflow holds, which by definition is
+# nothing for a node being added. Entries here are safe to leave in place: they
+# apply only when the node has no credential yet, so once a node is deployed the
+# carry-over takes over and this stops mattering.
+FIRST_TIME_CREDENTIALS = {
+    "Wazuh MCP Tools": {
+        "httpBearerAuth": {"id": "wazuhMcpBearer01", "name": "Wazuh MCP Bearer Auth"},
+    },
+}
+
 # The error handler ships alongside the main workflow and needs none of the
 # credential carry-over below: both of its HTTP nodes authenticate from $env, so
 # there is nothing the UI holds that an import would drop. It still has to be
@@ -170,6 +181,15 @@ def main():
              "a version that would have none")
     print("  found on {} node(s): {}".format(
         len(credentials), ", ".join(sorted(credentials))))
+
+    # A node being deployed for the first time has nothing to carry over, so the
+    # guard at the end would reject the import and ask for a visit to the n8n UI
+    # between two runs. Naming the credential here lets a new MCP server land in
+    # one run. The credential must already exist; this only points at it.
+    for name, assignment in FIRST_TIME_CREDENTIALS.items():
+        if name not in credentials:
+            credentials[name] = assignment
+            print("  seeding first-time credential for: " + name)
 
     with open(os.path.join(REPO, SOURCE), encoding="utf-8") as handle:
         workflow = json.load(handle)

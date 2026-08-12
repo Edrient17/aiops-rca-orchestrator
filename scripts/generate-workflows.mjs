@@ -186,6 +186,12 @@ function buildMainWorkflow(input) {
     // with nothing because the server offers nothing to authenticate with; it
     // is reachable only from the private network.
     mcpNode("Elasticsearch Query Tools", [2240, 500], "OSS_ES_MCP_URL", "none"),
+    // Metrics and logs both describe what the machine did. This describes what
+    // a person did to it: Wazuh reads auditd and syslog on the agent host, so
+    // an operator's `docker compose stop payment-service` arrives as a record
+    // with the actor, the timestamp and the full command line -- not as a
+    // string to be grepped out of a log window that may have been truncated.
+    mcpNode("Wazuh MCP Tools", [2240, 680], "WAZUH_MCP_URL"),
     httpNode(
       "Persist Evidence Result",
       "POST",
@@ -302,6 +308,7 @@ function buildMainWorkflow(input) {
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "Log MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "Elasticsearch Query Tools", "Evidence Collector", "ai_tool");
+  connectAi(connections, "Wazuh MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
   connectAi(connections, "Report Parser", "RCA Writer", "ai_outputParser");
   // autoFix on the report parser requires its own model connection.

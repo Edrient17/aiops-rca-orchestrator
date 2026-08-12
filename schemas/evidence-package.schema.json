@@ -345,7 +345,8 @@
           "type": "string",
           "enum": [
             "zabbix",
-            "elasticsearch"
+            "elasticsearch",
+            "wazuh"
           ]
         },
         "summary": {
