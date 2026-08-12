@@ -1016,10 +1016,13 @@ const kibanaLink = (id) => {
 
 const zabbixLink = (id) => {
   if (!zabbixBase) return null;
-  // Log evidence has no Zabbix object behind it. The host fallback below would
-  // still produce a link, and a footnote reading "최근 데이터" under a quoted log
-  // line sends the reader to metrics that were never what was cited.
-  if (id.startsWith('log:')) return null;
+  // Only Zabbix ids get Zabbix links, stated as a whitelist rather than a list
+  // of exclusions. Evidence from anywhere else has no Zabbix object behind it,
+  // but it usually carries a host_id, so the fallback at the bottom would
+  // happily produce a "최근 데이터" link -- sending the reader to metrics under
+  // a citation that quoted an audit record or a log line. When a new source is
+  // added, its footnote should degrade to a bare id, not to a wrong link.
+  if (!id.startsWith('zbx:')) return null;
   const item = evidenceById.get(id);
   const ids = (item && item.resource_ids) || {};
   const window = (item && item.window) || {};

@@ -327,7 +327,7 @@
       "properties": {
         "evidence_id": {
           "type": "string",
-          "pattern": "^(zbx:(event|trigger|metric)|log:(summary|lines)):.+$"
+          "pattern": "^(zbx:(event|trigger|metric)|log:(summary|lines)|wazuh:alerts):.+$"
         },
         "evidence_type": {
           "type": "string",
@@ -338,6 +338,7 @@
             "metric_history",
             "log_summary",
             "log_lines",
+            "audit_alerts",
             "observation"
           ]
         },
