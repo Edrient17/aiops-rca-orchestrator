@@ -65,6 +65,10 @@ export type BenchCase = {
 };
 
 const MODEL = process.env.BENCH_MODEL ?? "gpt-5.6-terra";
+// Matches the Investigation Model node. Reasoning effort changes which plan the
+// model produces, so a benchmark run at a different effort is not measuring the
+// deployed agent.
+const EFFORT = process.env.BENCH_EFFORT ?? "medium";
 const KEY = process.env.OPENAI_API_KEY;
 
 export const benchEnabled = Boolean(KEY);
@@ -76,39 +80,42 @@ const bare = (name: string): string =>
 const toolsFor = (testCase: BenchCase) =>
   [...ALL_TOOLS, ...(testCase.noise ?? [])].map((tool) => ({
     type: "function" as const,
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
   }));
 
-function messagesFor(testCase: BenchCase) {
-  const messages: Record<string, unknown>[] = [
-    { role: "system", content: collectorPrompt() },
-  ];
+/**
+ * The trajectory as Responses API input items. Prior tool calls are their own
+ * item type here rather than a field on an assistant message, which is the
+ * shape n8n's agent sends.
+ */
+function inputFor(testCase: BenchCase) {
+  const input: Record<string, unknown>[] = [];
   for (const turn of testCase.trajectory) {
     if (turn.role === "user") {
-      messages.push({ role: "user", content: turn.content });
+      input.push({ role: "user", content: turn.content });
     } else if (turn.role === "assistant") {
-      messages.push({
-        role: "assistant",
-        content: turn.content ?? null,
-        tool_calls: [{
-          id: turn.call.name,
-          type: "function",
-          function: { name: turn.call.name, arguments: JSON.stringify(turn.call.args) },
-        }],
+      if (turn.content) input.push({ role: "assistant", content: turn.content });
+      input.push({
+        type: "function_call",
+        call_id: turn.call.name,
+        name: turn.call.name,
+        arguments: JSON.stringify(turn.call.args),
       });
     } else {
-      messages.push({ role: "tool", tool_call_id: turn.forCall, content: turn.content });
+      input.push({ type: "function_call_output", call_id: turn.forCall, output: turn.content });
     }
   }
-  return messages;
+  return input;
 }
 
 export async function predictNextAction(testCase: BenchCase): Promise<PredictedAction> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  // /v1/responses, not /v1/chat/completions. These models refuse function tools
+  // together with a reasoning effort on the older endpoint, and n8n's agent
+  // node uses the Responses API -- so measuring on chat/completions would score
+  // a configuration the deployed agent never runs.
+  const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -116,9 +123,11 @@ export async function predictNextAction(testCase: BenchCase): Promise<PredictedA
     },
     body: JSON.stringify({
       model: MODEL,
-      messages: messagesFor(testCase),
+      instructions: collectorPrompt(),
+      input: inputFor(testCase),
       tools: toolsFor(testCase),
       tool_choice: "auto",
+      reasoning: { effort: EFFORT },
     }),
   });
 
@@ -127,25 +136,31 @@ export async function predictNextAction(testCase: BenchCase): Promise<PredictedA
   }
 
   const body = await response.json() as {
-    choices: { message: { content: string | null; tool_calls?: { function: { name: string; arguments: string } }[] } }[];
+    output?: ({ type: string; name?: string; arguments?: string;
+                content?: { type: string; text?: string }[] })[];
   };
-  const message = body.choices[0]?.message;
-  const call = message?.tool_calls?.[0];
+  const items = body.output ?? [];
+  const call = items.find((item) => item.type === "function_call");
+  const said = items
+    .filter((item) => item.type === "message")
+    .flatMap((item) => item.content ?? [])
+    .map((part) => part.text ?? "")
+    .join(" ");
 
   let args: Record<string, unknown> = {};
   if (call) {
     try {
-      args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
     } catch {
       // A model that emits unparsable arguments has made a tool-use error, and
       // the case's own check should be the thing that says so.
-      args = { __unparsable: call.function.arguments };
+      args = { __unparsable: call.arguments };
     }
   }
 
   return {
-    tool: call ? bare(call.function.name) : null,
+    tool: call?.name ? bare(call.name) : null,
     args,
-    text: message?.content ?? "",
+    text: said,
   };
 }
