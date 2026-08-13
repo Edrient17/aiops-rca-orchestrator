@@ -1,0 +1,759 @@
+{
+  "_note": "Deployed tool schemas as the agent sees them. Refresh with scripts/snapshot-tools.py; see bench/README.md.",
+  "servers": {
+    "zabbix": [
+      {
+        "name": "Zabbix_MCP_Tools_find_hosts",
+        "bare_name": "find_hosts",
+        "description": "Resolve host names to Zabbix host IDs, which the other tools take. query searches allowlisted hosts by technical or display name; group_ids lists the hosts in those host groups; both together search within the groups. At least one is required. Returns every match, including several for one query.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "group_ids": {
+              "minItems": 1,
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\d+$"
+              }
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_get_incident_events",
+        "bare_name": "get_incident_events",
+        "description": "Retrieve trigger problem events and their recovery events for one host in a bounded time window. Filter by severity; include_recovery controls whether recovery events are paired in.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "time_from": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "time_to": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "severities": {
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "not_classified",
+                  "information",
+                  "warning",
+                  "average",
+                  "high",
+                  "disaster"
+                ]
+              }
+            },
+            "include_recovery": {
+              "default": true,
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "host_id",
+            "time_from",
+            "time_to"
+          ]
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_get_trigger_details",
+        "bare_name": "get_trigger_details",
+        "description": "Retrieve a read-only trigger definition, related items, dependencies, tags, and operational description.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "trigger_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            }
+          },
+          "required": [
+            "trigger_id"
+          ]
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_list_relevant_metrics",
+        "bare_name": "list_relevant_metrics",
+        "description": "Rank a host's numeric items against the supplied keywords, matching item name and key. Returns item_id, name, key, value type and units for the highest ranked, which the metric tools then take.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "keywords": {
+              "minItems": 1,
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "host_id",
+            "keywords"
+          ]
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_get_metric_summary",
+        "bare_name": "get_metric_summary",
+        "description": "Aggregate numeric metrics over a window, returning per-series statistics: min, max, avg, first, last, change percent and trend. Takes item_ids (up to 20) and an aggregation interval. The long_term_capacity policy reads trend data instead of history and requires an interval of 1h or more. include_points adds every aggregated bucket to the reply and is off by default; get_metric_history returns those points for a single item.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "item_ids": {
+              "minItems": 1,
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\d+$"
+              }
+            },
+            "time_from": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "time_to": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "aggregation": {
+              "type": "string",
+              "enum": [
+                "1m",
+                "5m",
+                "15m",
+                "1h",
+                "6h",
+                "1d"
+              ]
+            },
+            "policy": {
+              "default": "standard",
+              "type": "string",
+              "enum": [
+                "standard",
+                "long_term_capacity"
+              ]
+            },
+            "data_source": {
+              "default": "auto",
+              "type": "string",
+              "enum": [
+                "auto",
+                "history",
+                "trends"
+              ]
+            },
+            "include_points": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "host_id",
+            "item_ids",
+            "time_from",
+            "time_to",
+            "aggregation"
+          ]
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_get_metric_history",
+        "bare_name": "get_metric_history",
+        "description": "Retrieve the aggregated points for a single numeric item over a window. Takes one item_id and an optional max_points; exceeding the point limit is an error rather than a silent truncation.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "item_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "time_from": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "time_to": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "aggregation": {
+              "type": "string",
+              "enum": [
+                "raw",
+                "1m",
+                "5m",
+                "15m",
+                "1h",
+                "6h",
+                "1d"
+              ]
+            },
+            "max_points": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            }
+          },
+          "required": [
+            "host_id",
+            "item_id",
+            "time_from",
+            "time_to",
+            "aggregation"
+          ]
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_get_related_events",
+        "bare_name": "get_related_events",
+        "description": "Retrieve neighboring problem and recovery events on the same host, optionally restricted by trigger IDs or exact tags.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "time_from": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "time_to": {
+              "type": "string",
+              "description": "ISO 8601 timestamp including Z or an explicit UTC offset"
+            },
+            "exclude_event_id": {
+              "type": "string",
+              "pattern": "^\\d+$"
+            },
+            "trigger_ids": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\d+$"
+              }
+            },
+            "tags": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tag": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 255
+                  }
+                },
+                "required": [
+                  "tag",
+                  "value"
+                ]
+              }
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "host_id",
+            "time_from",
+            "time_to"
+          ]
+        }
+      },
+      {
+        "name": "Zabbix_MCP_Tools_query_zabbix",
+        "bare_name": "query_zabbix",
+        "description": "Call a Zabbix `.get` method directly with your own parameters and receive the raw API rows. Only `.get` methods are reachable, so nothing here can modify Zabbix. Group-scoped methods have this deployment's host group allowlist intersected into the query; naming a group outside it is an error rather than an empty result. Host-scoped methods require hostids. The reply is capped by row count and by size, and params_applied reports the query as actually sent. Naming fields in `output` reduces the reply. Allowed methods: dashboard.get, event.get, graph.get, host.get, hostgroup.get, hostinterface.get, httptest.get, item.get, problem.get, template.get, trigger.get, usermacro.get.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 60,
+              "description": "Zabbix API method, e.g. host.get or auditlog.get"
+            },
+            "params": {
+              "description": "Parameters for the method, exactly as the Zabbix API documents them. Set `output` to the fields you actually need. `groupids` is intersected with the allowlist; `limit` is capped.",
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "method"
+          ]
+        }
+      }
+    ],
+    "elasticsearch": [
+      {
+        "name": "Log_MCP_Tools_summarize_logs",
+        "bare_name": "summarize_logs",
+        "description": "Summarise the log lines a host produced in a window. Returns counts by level and by service, the distribution over ten time buckets, and the repeated messages grouped by shape. The lines themselves are not returned. by_level and volume_over_time are counted over the whole window. by_service and repeated_messages come from the fetched sample, whose extent is given by analysed_window and data_quality.sampled_fraction. Levels and service names are parsed from the raw text, so data_quality.formats and unlevelled_lines report how much of it was understood. Service names are whatever the text carries, including sources with no separate index field such as sudo, cron and the kernel. data_quality.empty_because_filtered appears when services or contains emptied a window that was not empty, and carries the window's true line count.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "description": "Host to read logs for, named exactly as Zabbix names it. This is what ties a log line to the metric evidence beside it."
+            },
+            "time_from": {
+              "type": "string",
+              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
+            },
+            "time_to": {
+              "type": "string",
+              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
+            },
+            "services": {
+              "description": "Narrow to these services. Omit to cover every service on the host.",
+              "minItems": 1,
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            },
+            "contains": {
+              "description": "Only lines containing this phrase.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "index": {
+              "description": "Omit this. The server already reads the right indices. Only set it to narrow to a specific one you were told to read -- a guessed pattern such as * is rejected by the allowlist and costs a call for nothing.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "host",
+            "time_from",
+            "time_to"
+          ]
+        }
+      },
+      {
+        "name": "Log_MCP_Tools_search_logs",
+        "bare_name": "search_logs",
+        "description": "Return individual log lines for a host in a window, narrowed by level, contains or services. Each line comes back parsed into timestamp, level, service and message body, with the Spring prefix removed; long messages are cut and flagged with message_truncated. Lines are returned in time order. When more lines match than the limit allows, both ends of the window are kept and the middle is dropped, with data_quality.omitted_from_middle giving how many. data_quality.empty_because_filtered appears when a filter emptied a window that was not empty, and carries the window's true line count.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255,
+              "description": "Host to read logs for, named exactly as Zabbix names it. This is what ties a log line to the metric evidence beside it."
+            },
+            "time_from": {
+              "type": "string",
+              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
+            },
+            "time_to": {
+              "type": "string",
+              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
+            },
+            "level": {
+              "description": "Keep only lines at this level, as parsed from the raw text.",
+              "type": "string",
+              "enum": [
+                "TRACE",
+                "DEBUG",
+                "INFO",
+                "WARN",
+                "ERROR",
+                "FATAL"
+              ]
+            },
+            "contains": {
+              "description": "Only lines containing this phrase.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "services": {
+              "description": "Narrow to these services. Omit to cover every service on the host.",
+              "minItems": 1,
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "index": {
+              "description": "Omit this. The server already reads the right indices. Only set it to narrow to a specific one you were told to read -- a guessed pattern such as * is rejected by the allowlist and costs a call for nothing.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "host",
+            "time_from",
+            "time_to"
+          ]
+        }
+      }
+    ],
+    "oss-elastic": [
+      {
+        "name": "Elasticsearch_Query_Tools_search",
+        "bare_name": "search",
+        "description": "Perform an Elasticsearch search with the provided query DSL.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "fields": {
+              "description": "Name of the fields that need to be returned (optional)",
+              "items": {
+                "type": "string"
+              },
+              "nullable": true,
+              "type": "array"
+            },
+            "index": {
+              "description": "Name of the Elasticsearch index to search",
+              "type": "string"
+            },
+            "query_body": {
+              "additionalProperties": true,
+              "description": "Complete Elasticsearch query DSL object that can include query, size, from, sort, etc.",
+              "type": "object"
+            }
+          },
+          "required": [
+            "index",
+            "query_body"
+          ],
+          "title": "SearchParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Elasticsearch_Query_Tools_esql",
+        "bare_name": "esql",
+        "description": "Perform an Elasticsearch ES|QL query.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "query": {
+              "description": "Complete Elasticsearch ES|QL query",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "title": "EsqlQueryParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Elasticsearch_Query_Tools_list_indices",
+        "bare_name": "list_indices",
+        "description": "List all available Elasticsearch indices",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "index_pattern": {
+              "description": "Index pattern of Elasticsearch indices to list",
+              "type": "string"
+            }
+          },
+          "required": [
+            "index_pattern"
+          ],
+          "title": "ListIndicesParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Elasticsearch_Query_Tools_get_mappings",
+        "bare_name": "get_mappings",
+        "description": "Get field mappings for a specific Elasticsearch index",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "index": {
+              "description": "Name of the Elasticsearch index to get mappings for",
+              "type": "string"
+            }
+          },
+          "required": [
+            "index"
+          ],
+          "title": "GetMappingsParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Elasticsearch_Query_Tools_get_shards",
+        "bare_name": "get_shards",
+        "description": "Get shard information for all or specific indices.",
+        "parameters": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "properties": {
+            "index": {
+              "description": "Optional index name to get shard information for",
+              "nullable": true,
+              "type": "string"
+            }
+          },
+          "title": "GetShardsParams",
+          "type": "object"
+        }
+      }
+    ],
+    "wazuh": [
+      {
+        "name": "Wazuh_MCP_Tools_get_wazuh_alert_summary",
+        "bare_name": "get_wazuh_alert_summary",
+        "description": "Search Wazuh alerts in a time window. Each alert returns timestamp, agent, rule level and description, plus the executed command, working directory and user where the alert carries them. Requires time_from and time_to (ISO 8601); optional agent_name, min_level, search_term, limit. The reply states how many alerts the window held before filtering, how many matched, and how many were returned. Command execution and sudo escalation are recorded at rule level 3.",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "description": "Parameters for searching alerts",
+          "properties": {
+            "agent_name": {
+              "description": "Restrict to one agent, by the name Wazuh knows it by (e.g. \"vm-java-docker-2\"). Omit to cover every agent.",
+              "nullable": true,
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of alerts to return (default: 100)",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "min_level": {
+              "description": "Keep only alerts at this rule level or above. Command execution and sudo escalation are level 3.",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "search_term": {
+              "description": "Substring matched against the executed command, the raw log line and the rule description.",
+              "nullable": true,
+              "type": "string"
+            },
+            "time_from": {
+              "description": "Start of the window, ISO 8601 (e.g. \"2026-08-12T14:00:00+09:00\"). Required.",
+              "type": "string"
+            },
+            "time_to": {
+              "description": "End of the window, ISO 8601. Required.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "time_from",
+            "time_to"
+          ],
+          "title": "GetAlertSummaryParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Wazuh_MCP_Tools_get_wazuh_agents",
+        "bare_name": "get_wazuh_agents",
+        "description": "List the hosts Wazuh has an agent on: id, name, IP, connection status, OS and last activity. Optional filters: status, name, ip, group, os_platform, version, limit. Omitting status returns every agent, including disconnected ones.",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "group": {
+              "description": "Agent group to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "ip": {
+              "description": "Agent IP address to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of agents to retrieve (default: 300)",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "name": {
+              "description": "Agent name to search for (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "os_platform": {
+              "description": "Operating system platform to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "status": {
+              "description": "Agent status filter (active, disconnected, pending, never_connected). Omit to cover every status.",
+              "nullable": true,
+              "type": "string"
+            },
+            "version": {
+              "description": "Agent version to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            }
+          },
+          "title": "GetAgentsParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Wazuh_MCP_Tools_get_wazuh_agent_processes",
+        "bare_name": "get_wazuh_agent_processes",
+        "description": "List the processes running on an agent host: PID, name, state, PPID, user and command. Requires agent_id; optional search (matches name or command) and limit. Reports the host at the time of the call; there is no time parameter.",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "agent_id": {
+              "description": "Agent ID to get processes for (required, e.g., \"0\", \"1\", \"001\")",
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of processes to retrieve (default: 300)",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "search": {
+              "description": "Search string to filter processes by name or command (optional)",
+              "nullable": true,
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_id"
+          ],
+          "title": "GetAgentProcessesParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Wazuh_MCP_Tools_get_wazuh_agent_ports",
+        "bare_name": "get_wazuh_agent_ports",
+        "description": "List the network ports open on an agent host: local and remote address, protocol, state and owning process with its PID. Requires agent_id, protocol and state; optional limit. Reports the host at the time of the call; there is no time parameter.",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "agent_id": {
+              "description": "Agent ID to get network ports for (required, e.g., \"001\", \"002\", \"003\")",
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of ports to retrieve (default: 300)",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "protocol": {
+              "description": "Protocol to filter by (e.g., \"tcp\", \"udp\")",
+              "type": "string"
+            },
+            "state": {
+              "description": "State to filter by (e.g., \"LISTENING\", \"ESTABLISHED\")",
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_id",
+            "protocol",
+            "state"
+          ],
+          "title": "GetAgentPortsParams",
+          "type": "object"
+        }
+      }
+    ]
+  }
+}

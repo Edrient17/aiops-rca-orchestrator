@@ -53,9 +53,13 @@ async function main() {
 // -- editing only the node would leave the audit table attributing timings and
 // output to whichever model used to be there, which is exactly the data you
 // consult when deciding whether a cheaper model was good enough.
+// The investigation stage is the one that plans: it chooses tools, windows and
+// when to stop, and every failure worth chasing here has been a planning
+// failure rather than a writing one. It is the stage worth spending a larger
+// model on, and bench/ measures whether that spend shows up.
 const MODELS = {
   question: { id: "gpt-5.4-mini", reasoningEffort: "low" },
-  investigation: { id: "gpt-5.4-mini", reasoningEffort: "medium" },
+  investigation: { id: "gpt-5.6-terra", reasoningEffort: "medium" },
   rca: { id: "gpt-5.4-mini", reasoningEffort: "medium" },
 };
 
