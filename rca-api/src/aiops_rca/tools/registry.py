@@ -92,6 +92,19 @@ class ToolRegistry:
         _validate_tool_specific_arguments(name, arguments)
         return policy
 
+    def effects(self) -> tuple[str, ...]:
+        """Every effect some allowlisted tool can produce.
+
+        route_effect matches an effect exactly, so a planner that writes
+        "related_events around the target window" instead of "related_events"
+        routes to nothing and the investigation stops with a stop_reason that
+        reads like a missing capability. Offering this list as the only
+        permitted values turns that into an impossibility.
+        """
+        return tuple(
+            sorted({effect for policy in self._policies.values() for effect in policy.effects})
+        )
+
     def route_effect(
         self,
         effect: str,

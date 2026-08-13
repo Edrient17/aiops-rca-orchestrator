@@ -1,8 +1,9 @@
 """Narrow LLM outputs that are converted into graph state deterministically."""
 
+from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, create_model
 
 from aiops_rca.schemas.base import StrictModel, ZabbixId
 from aiops_rca.schemas.investigation import Hypothesis
@@ -38,6 +39,26 @@ class ObservationDecision(StrictModel):
     candidates: Annotated[list[ToolCandidate], Field(max_length=20)]
     generic_fallback_allowed: bool
     stop_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None
+
+
+@lru_cache(maxsize=8)
+def observation_decision_for(effects: tuple[str, ...]) -> type[ObservationDecision]:
+    """ObservationDecision whose required_effect must name a routable effect.
+
+    The router matches an effect exactly. A planner that answered
+    "related_events around the target window" -- the registered effect with a
+    qualifier attached -- routed to nothing, and the run ended with a
+    stop_reason that read like a missing capability rather than a malformed
+    request. The valid names are known here, so they are offered as the only
+    ones the model can produce.
+    """
+    if not effects:
+        return ObservationDecision
+    return create_model(
+        "RoutableObservationDecision",
+        __base__=ObservationDecision,
+        required_effect=(Literal[effects] | None, ...),  # type: ignore[valid-type]
+    )
 
 
 class HypothesisUpdate(StrictModel):

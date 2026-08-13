@@ -18,8 +18,8 @@ from aiops_rca.services.llm import StructuredModel
 from aiops_rca.services.model_contracts import (
     HypothesisPlan,
     HypothesisUpdateDecision,
-    ObservationDecision,
     PhenomenonDecision,
+    observation_decision_for,
 )
 from aiops_rca.tools.adapters.base import McpAdapter
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
@@ -184,13 +184,16 @@ class ObservationPlannerNode:
         self.model = model
         self.model_name = model_name
         self.registry = registry
+        # Bound once: the registry is fixed for the lifetime of the service, so
+        # the set of routable effects is too.
+        self.output_type = observation_decision_for(registry.effects())
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
         if state.stop_reason:
             return {"visited_nodes": [*state.visited_nodes, "observation_planner"]}
         decision = await self.model.complete(
             model=self.model_name,
-            output_type=ObservationDecision,
+            output_type=self.output_type,
             system_prompt=_prompt("observation_planner.md"),
             payload={
                 "phenomenon": state.phenomenon,

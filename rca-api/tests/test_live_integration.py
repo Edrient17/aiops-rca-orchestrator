@@ -181,7 +181,7 @@ class FixtureModel:
                 hypotheses=[],
                 stop_reason="The shallow event evidence is sufficient for this fixture.",
             )
-        if output_type is ObservationDecision:
+        if issubclass(output_type, ObservationDecision):
             return ObservationDecision(
                 question="Do logs show a downstream connection failure?",
                 discriminates_hypothesis_ids=["h1"],
@@ -376,9 +376,10 @@ def test_graph_can_use_elasticsearch_after_the_initial_host_and_event_scan():
         "get_incident_events",
     ]
     assert [name for name, _arguments in elasticsearch.calls] == ["search"]
-    assert "ObservationDecision" in model.output_types
+    # Named for the effect list it was bound to, not for the base contract.
+    assert "RoutableObservationDecision" in model.output_types
     assert "HypothesisUpdateDecision" in model.output_types
-    catalog = model.payloads["ObservationDecision"]["tool_catalog"]
+    catalog = model.payloads["RoutableObservationDecision"]["tool_catalog"]
     query_zabbix = next(item for item in catalog if item["name"] == "query_zabbix")
     method_schema = query_zabbix["input_schema"]["properties"]["method"]
     assert method_schema["enum"] == ["host.get", "item.get"]
