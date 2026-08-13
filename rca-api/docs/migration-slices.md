@@ -1,10 +1,12 @@
 # LangGraph migration slices
 
-The migration keeps n8n as the Slack ingress/egress and audit boundary until the
-LangGraph path has passed shadow comparisons. Each slice is independently
-deployable and must leave the production workflow usable.
+The migration keeps n8n as the Slack ingress/egress and audit boundary. Each
+slice leaves the production workflow usable; the current implementation wires
+the core code paths through slice 5 and exposes slice 6 as an explicit
+environment flag, but golden replay, live quality and canary exit criteria are
+still operational work.
 
-## Slice 1 — contracts and deterministic graph shell (this change)
+## Slice 1 — contracts and deterministic graph shell (implemented)
 
 - Mirror the existing parsed request, evidence package, and report contracts in
   strict Pydantic models.
@@ -16,7 +18,7 @@ deployable and must leave the production workflow usable.
 Exit criteria: mock graph tests, registry guard tests, JSON Schema compatibility,
 and existing TypeScript regressions pass.
 
-## Slice 2 — request analysis service
+## Slice 2 — request analysis service (core path implemented)
 
 - Implement the Question Analyzer as a structured-output LangGraph node.
 - Add a small internal API endpoint with correlation and idempotency keys.
@@ -27,7 +29,7 @@ and existing TypeScript regressions pass.
 Exit criteria: golden request fixtures cover Korean/English questions, explicit
 and relative time ranges, missing hosts, and malformed model output.
 
-## Slice 3 — diagnostic collection loop
+## Slice 3 — diagnostic collection loop (core path implemented)
 
 - Implement phenomenon establishment, hypothesis planning, observation planning,
   tool execution, hypothesis updates, and stop guards.
@@ -39,30 +41,31 @@ Exit criteria: fixture-driven investigations prove ambiguity handling, historica
 query protection, generic-search fallback policy, budget stops, and deterministic
 evidence IDs.
 
-## Slice 4 — evidence package and RCA report
+## Slice 4 — evidence package and RCA report (core path implemented)
 
 - Build the final evidence package deterministically from state.
 - Implement the RCA Writer against the existing report contract.
-- Persist checkpoints and final artifacts by thread/correlation ID.
+- Checkpoint graph state by investigation ID and return final artifacts to n8n
+  for persistence.
 - Expose the complete internal investigation API without changing Slack routing.
 
 Exit criteria: end-to-end API tests validate both JSON Schemas and resumability.
 
-## Slice 5 — n8n shadow path
+## Slice 5 — n8n integration path (implemented, default off)
 
-- Add a separate n8n workflow that sends the same normalized request to the
-  LangGraph API without posting its report to Slack.
-- Record latency, tool calls, stop reason, evidence overlap, and report contract
-  validity for current and candidate paths.
-- Keep the current workflow authoritative.
+- Add a feature-flagged branch in the existing workflow that sends the normalized
+  request and template catalog to the LangGraph API.
+- Persist returned Agent runs and, for completed investigations, tool-call
+  records and final artifacts through the same ingress APIs as the legacy branch.
+- Keep the legacy branch authoritative by default.
 
 Exit criteria: an agreed replay/canary set has no contract regressions, no
 write-capable tool calls, and acceptable latency/cost/error rates.
 
-## Slice 6 — controlled cutover
+## Slice 6 — controlled cutover (operator-gated)
 
-- Route a small canary percentage to LangGraph while retaining the legacy path as
-  an operational fallback.
+- Set `RCA_EXECUTION_MODE=langgraph` after smoke/canary validation while retaining
+  `legacy` as an operational fallback.
 - Increase traffic only after audit and quality gates pass.
 - Remove n8n reasoning nodes after the rollback window; retain n8n for Slack
   ingress/egress and workflow-level operations unless a later decision changes

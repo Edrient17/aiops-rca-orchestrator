@@ -131,6 +131,78 @@ function buildMainWorkflow(input) {
       [960, 0],
       "internal",
     ),
+    ifNode(
+      "Use LangGraph?",
+      "={{ ($env.RCA_EXECUTION_MODE || 'legacy').toLowerCase() }}",
+      "langgraph",
+      [1080, -420],
+    ),
+    httpNode(
+      "Call LangGraph RCA",
+      "POST",
+      "={{ $env.RCA_API_URL + '/v1/investigations' }}",
+      "={{ JSON.stringify({ request: { request_id: $('Normalize Request').first().json.request_id, source: 'slack', received_at: $('Normalize Request').first().json.received_at, timezone: 'Asia/Seoul', question: $('Normalize Request').first().json.question, metadata: { channel_id: $('Normalize Request').first().json.channel_id, user_id: $('Normalize Request').first().json.user_id, message_ts: $('Normalize Request').first().json.message_ts, thread_ts: $('Normalize Request').first().json.thread_ts || null, parent_request_id: $('Normalize Request').first().json.parent_request_id || null } }, prior_question: $('Normalize Request').first().json.prior_question || null, templates: $('Fetch Template Catalog').first().json.templates || [] }) }}",
+      [1320, -520],
+      "internal",
+      {},
+      900_000,
+    ),
+    codeNode("Prepare LangGraph Audit Runs", [1560, -520], prepareLangGraphAuditCode),
+    httpNode(
+      "Persist LangGraph Audit Runs",
+      "POST",
+      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
+      "={{ JSON.stringify({ stage: $json.stage, status: $json.status, model: $json.model, duration_ms: $json.duration_ms, output: $json.output }) }}",
+      [1800, -520],
+      "internal",
+    ),
+    codeNode("Collapse LangGraph Audit Runs", [2040, -520], collapseItemsCode),
+    ifNode(
+      "LangGraph Completed?",
+      "={{ $('Call LangGraph RCA').first().json.status }}",
+      "completed",
+      [2280, -520],
+    ),
+    codeNode("Format LangGraph RCA", [2520, -660], langGraphRcaFormatter()),
+    httpNode(
+      "Post LangGraph RCA Report",
+      "POST",
+      "https://slack.com/api/chat.postMessage",
+      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Assert ACK Posted').first().json.thread_anchor_ts, text: $('Format LangGraph RCA').first().json.slack_markdown }) }}",
+      [2760, -660],
+      "slack",
+    ),
+    codeNode("Assert LangGraph RCA Posted", [3000, -660], assertSlackCode),
+    httpNode(
+      "Save LangGraph Completed Report",
+      "PUT",
+      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/report' }}",
+      "={{ JSON.stringify({ parsed_request: $('Call LangGraph RCA').first().json.parsed_request, evidence_package: $('Call LangGraph RCA').first().json.evidence_package, rca_report: $('Call LangGraph RCA').first().json.report, slack_markdown: $('Format LangGraph RCA').first().json.slack_markdown, slack_channel_id: $env.SLACK_ANSWER_CHANNEL_ID, slack_message_ts: $('Post LangGraph RCA Report').first().json.ts }) }}",
+      [3240, -660],
+      "internal",
+    ),
+    codeNode(
+      "Format LangGraph Clarification",
+      [2520, -360],
+      langGraphClarificationFormatter(),
+    ),
+    httpNode(
+      "Post LangGraph Clarification",
+      "POST",
+      "https://slack.com/api/chat.postMessage",
+      "={{ JSON.stringify({ channel: $('Normalize Request').first().json.channel_id, thread_ts: $('Normalize Request').first().json.thread_ts || $('Normalize Request').first().json.message_ts, text: $('Format LangGraph Clarification').first().json.text }) }}",
+      [2760, -360],
+      "slack",
+    ),
+    codeNode("Assert LangGraph Clarification Posted", [3000, -360], assertSlackCode),
+    httpNode(
+      "Mark LangGraph Needs Clarification",
+      "POST",
+      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/status' }}",
+      "={{ JSON.stringify({ status: $('Call LangGraph RCA').first().json.status }) }}",
+      [3240, -360],
+      "internal",
+    ),
     codeNode("Stamp Question Start", [1080, 0], stampCode),
     agentNode(
       "Question Analyzer",
@@ -275,7 +347,46 @@ function buildMainWorkflow(input) {
   connectMain(connections, "Post Business ACK", "Assert ACK Posted");
   connectMain(connections, "Assert ACK Posted", "Fetch Template Catalog");
   connectMain(connections, "Fetch Template Catalog", "Mark Analyzing");
-  connectMain(connections, "Mark Analyzing", "Stamp Question Start");
+  connectMain(connections, "Mark Analyzing", "Use LangGraph?");
+  connectMain(connections, "Use LangGraph?", "Call LangGraph RCA", 0);
+  connectMain(connections, "Use LangGraph?", "Stamp Question Start", 1);
+  connectMain(connections, "Call LangGraph RCA", "Prepare LangGraph Audit Runs");
+  connectMain(connections, "Prepare LangGraph Audit Runs", "Persist LangGraph Audit Runs");
+  connectMain(connections, "Persist LangGraph Audit Runs", "Collapse LangGraph Audit Runs");
+  connectMain(connections, "Collapse LangGraph Audit Runs", "LangGraph Completed?");
+  connectMain(connections, "LangGraph Completed?", "Format LangGraph RCA", 0);
+  connectMain(
+    connections,
+    "LangGraph Completed?",
+    "Format LangGraph Clarification",
+    1,
+  );
+  connectMain(connections, "Format LangGraph RCA", "Post LangGraph RCA Report");
+  connectMain(
+    connections,
+    "Post LangGraph RCA Report",
+    "Assert LangGraph RCA Posted",
+  );
+  connectMain(
+    connections,
+    "Assert LangGraph RCA Posted",
+    "Save LangGraph Completed Report",
+  );
+  connectMain(
+    connections,
+    "Format LangGraph Clarification",
+    "Post LangGraph Clarification",
+  );
+  connectMain(
+    connections,
+    "Post LangGraph Clarification",
+    "Assert LangGraph Clarification Posted",
+  );
+  connectMain(
+    connections,
+    "Assert LangGraph Clarification Posted",
+    "Mark LangGraph Needs Clarification",
+  );
   connectMain(connections, "Stamp Question Start", "Question Analyzer");
   connectMain(connections, "Question Analyzer", "Persist Question Result");
   connectMain(connections, "Persist Question Result", "Select Template");
@@ -492,7 +603,16 @@ function mcpNode(name, position, urlVariable, authentication = "bearerAuth") {
 // all. Main-workflow calls leave it empty: a step that fails there must abort so
 // the error workflow fires, which is the whole reporting path.
 // jsonBody of null sends no body at all, for the GET that reads the catalog.
-function httpNode(name, method, url, jsonBody, position, authKind, extras = {}) {
+function httpNode(
+  name,
+  method,
+  url,
+  jsonBody,
+  position,
+  authKind,
+  extras = {},
+  timeoutMs = null,
+) {
   const headers =
     authKind === "slack"
       ? [
@@ -532,7 +652,7 @@ function httpNode(name, method, url, jsonBody, position, authKind, extras = {}) 
           body: jsonBody,
         }),
     options: {
-      timeout: authKind === "slack" ? 30_000 : 10_000,
+      timeout: timeoutMs ?? (authKind === "slack" ? 30_000 : 10_000),
     },
   }, extras);
 }
@@ -738,6 +858,19 @@ const stampCode = String.raw`
 return [{ json: { ...$input.first().json, stage_started_ms: Date.now() } }];
 `.trim();
 
+const prepareLangGraphAuditCode = String.raw`
+const response = $input.first().json;
+const runs = Array.isArray(response.agent_runs) ? response.agent_runs : [];
+if (runs.length === 0) {
+  throw new Error('LangGraph RCA returned no agent audit records');
+}
+return runs.map((run) => ({ json: run }));
+`.trim();
+
+const collapseItemsCode = String.raw`
+return [{ json: { persisted: $input.all().length } }];
+`.trim();
+
 // Turns the kind the analyzer named into the template that defines it, and
 // settles the investigation budget while it is at it.
 //
@@ -894,6 +1027,13 @@ if (!unsupported) {
 
 return [{ json: { text: sections.join('\n\n') } }];
 `.trim();
+
+function langGraphClarificationFormatter() {
+  return formatClarificationCode.replace(
+    "const parsed = $('Question Analyzer').first().json.output;",
+    "const parsed = $('Call LangGraph RCA').first().json.parsed_request;",
+  );
+}
 
 const formatRcaCode = String.raw`
 const request = $('Normalize Request').first().json;
@@ -1138,6 +1278,22 @@ return [{
   },
 }];
 `.trim();
+
+function langGraphRcaFormatter() {
+  return formatRcaCode
+    .replace(
+      "const selection = $('Select Template').first().json;",
+      "const selectedTemplate = $('Call LangGraph RCA').first().json.template;\nconst selection = { ...selectedTemplate, template_version: selectedTemplate.version };",
+    )
+    .replace(
+      "const evidence = $('Evidence Collector').first().json.output;",
+      "const evidence = $('Call LangGraph RCA').first().json.evidence_package;",
+    )
+    .replace(
+      "const report = $('RCA Writer').first().json.output;",
+      "const report = $('Call LangGraph RCA').first().json.report;",
+    );
+}
 
 const formatErrorCode = String.raw`
 const payload = $input.first().json;

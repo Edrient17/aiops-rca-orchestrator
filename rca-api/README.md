@@ -1,36 +1,60 @@
 # LangGraph RCA service
 
-This directory is the migration target for diagnostic reasoning that currently
-lives inside the n8n workflow. It is deliberately not wired into production
-yet. The current n8n path remains the control path while this service is built
-and compared in shadow runs.
+This service now implements the live reasoning path behind n8n. n8n still owns
+Slack ingress/delivery and audit persistence; the service owns request analysis,
+the LangGraph investigation loop, live MCP calls and RCA writing.
 
-## Current migration inventory
+## Runtime flow
 
-The existing workflow contracts being preserved are:
+```text
+n8n
+  -> POST /v1/investigations
+  -> Question Analyzer (OpenAI structured output)
+  -> Resolve hosts (Zabbix find_hosts)
+  -> Shallow incident-event scan
+  -> Hypothesis / observation LangGraph loop
+  -> Zabbix, official Elasticsearch, or Wazuh MCP adapter
+  -> Evidence package
+  -> RCA Writer (OpenAI structured output)
+  -> n8n audit persistence and Slack delivery
+```
 
-- `Question Analyzer` produces `../schemas/parsed-request.schema.json`.
-- `Evidence Collector` consumes the parsed request and a selected report
-  template, calls the Zabbix, Elasticsearch and Wazuh MCP servers, and produces
-  `../schemas/evidence-package.schema.json`.
-- `RCA Writer` consumes only that evidence package and the selected template,
-  and produces `../schemas/report.schema.json`.
-- n8n owns Slack delivery, clarification delivery and integration-level error
-  notification.
-- ingress and PostgreSQL remain the audit boundary for requests, agent runs,
-  tool calls, reports and feedback.
+The API preserves the existing parsed-request, evidence-package and report
+contracts. Every MCP call passes through the read-only allowlist and runtime
+guards before a Streamable HTTP MCP session is opened. At the start of an
+investigation, the service reads the live MCP tool catalogs, removes example
+keywords, filters out tools outside the allowlist, and checkpoints the remaining
+descriptions and input/output schemas in shared graph state. This preserves
+`enum`, `pattern`, `format` and required-field constraints without steering the
+planner with concrete example values. The graph state also contains shared
+hosts, hypotheses, evidence, unknowns, budgets and trace data; model nodes
+receive only the slice needed for their decision.
 
-## Scope of this first migration slice
+## HTTP API
 
-- Pydantic models matching the three existing JSON contracts
-- explicit `InvestigationState`
-- MCP adapter interfaces and normalized execution results
-- read-only tool registry and deterministic guards
-- injectable LangGraph collector skeleton with a conditional investigation loop
-- mock-fixture unit tests
+- `GET /healthz`
+- `GET /readyz`
+- `POST /v1/investigations`
 
-There is intentionally no HTTP API, live MCP transport, model call, prompt
-rewrite, or n8n workflow change in this slice.
+The investigation endpoint requires `X-AIOPS-Internal-Token`. Its body contains
+the request envelope, optional prior clarification question, and the enabled
+report-template catalog fetched by n8n. The response contains the selected
+template, three stable output contracts, agent-run audit records and the graph
+trace.
+
+## Configuration
+
+Required settings are validated at process startup:
+
+- `AIOPS_INTERNAL_TOKEN`
+- `OPENAI_API_KEY`
+- `ZABBIX_MCP_URL`, `ZABBIX_MCP_AUTH_TOKEN`
+- `OSS_ES_MCP_URL`
+- `WAZUH_MCP_URL`, `WAZUH_MCP_AUTH_TOKEN`
+
+The model names can be overridden with `RCA_QUESTION_MODEL`,
+`RCA_INVESTIGATION_MODEL` and `RCA_WRITER_MODEL`. MCP and model deadlines use
+`MCP_TIMEOUT_SECONDS` and `MODEL_TIMEOUT_SECONDS`.
 
 ## Development
 
@@ -38,4 +62,10 @@ rewrite, or n8n workflow change in this slice.
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
 .\.venv\Scripts\python -m pytest
+```
+
+Run locally after setting the required environment variables:
+
+```powershell
+.\.venv\Scripts\aiops-rca-api.exe
 ```

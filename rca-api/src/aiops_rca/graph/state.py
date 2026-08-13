@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from aiops_rca.schemas.base import StrictModel
+from aiops_rca.schemas.base import StrictModel, ZabbixId
 from aiops_rca.schemas.evidence_package import Evidence, EvidencePackage
 from aiops_rca.schemas.investigation import (
     Hypothesis,
@@ -49,7 +49,11 @@ class InvestigationState(StrictModel):
     next_question: ObservationQuestion | None = None
     planned_tool_call: PlannedToolCall | None = None
     candidate_tool_arguments: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    candidate_tool_hosts: dict[str, ZabbixId] = Field(default_factory=dict)
     generic_fallback_allowed: bool = False
+    # Discovered once per investigation and checkpointed so every planning
+    # turn sees one consistent set of live MCP contracts.
+    tool_catalog: list[dict[str, Any]] = Field(default_factory=list)
 
     evidence: Annotated[list[Evidence], Field(max_length=200)] = Field(
         default_factory=list
@@ -60,6 +64,9 @@ class InvestigationState(StrictModel):
     )
     tool_errors: Annotated[list[ToolExecutionResult], Field(max_length=100)] = Field(
         default_factory=list,
+    )
+    tool_call_purposes: dict[str, Annotated[str, Field(max_length=1000)]] = Field(
+        default_factory=dict,
     )
 
     iteration_count: Annotated[int, Field(ge=0, le=20)] = 0
@@ -111,6 +118,12 @@ class InvestigationState(StrictModel):
                 raise ValueError(
                     f"planned_tool_call references unknown hypotheses: {sorted(missing)}"
                 )
+            if (
+                self.planned_tool_call.host_id
+                and self.planned_tool_call.host_id
+                not in {host.host_id for host in self.hosts}
+            ):
+                raise ValueError("planned_tool_call references an unresolved host")
         if self.tool_call_count != len(self.tool_results):
             raise ValueError("tool_call_count must equal the number of tool_results")
         return self

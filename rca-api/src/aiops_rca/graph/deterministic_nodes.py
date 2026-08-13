@@ -31,6 +31,7 @@ class ResolveHostsNode:
         resolved = {host.host_id: host for host in state.hosts}
         unresolved = list(state.unresolved_hosts)
         unknowns = list(state.unknowns)
+        purposes = dict(state.tool_call_purposes)
 
         for index, arguments in enumerate(requests):
             if len(results) >= state.limits.max_tool_calls:
@@ -50,6 +51,7 @@ class ResolveHostsNode:
             )
             result = await self.zabbix.execute("find_hosts", arguments, context)
             results.append(result)
+            purposes[result.tool_call_id] = "Resolve the requested investigation hosts"
             if result.status == "error":
                 errors.append(result)
                 query = arguments.get("query")
@@ -124,6 +126,7 @@ class ResolveHostsNode:
             "tool_results": results,
             "tool_errors": errors,
             "tool_call_count": len(results),
+            "tool_call_purposes": purposes,
             "last_observation": results[-1] if results else state.last_observation,
             "stop_reason": stop_reason,
             "visited_nodes": [*state.visited_nodes, "resolve_hosts"],
@@ -170,6 +173,7 @@ class ToolRouterNode:
                 arguments=dict(state.candidate_tool_arguments[policy.name]),
                 purpose=question.question,
                 target_hypothesis_ids=question.discriminates_hypothesis_ids,
+                host_id=state.candidate_tool_hosts.get(policy.name),
             ),
             "visited_nodes": [*state.visited_nodes, "tool_router"],
         }
@@ -219,6 +223,10 @@ class ToolExecutorNode:
             "tool_errors": errors,
             "unknowns": unknowns,
             "tool_call_count": len(results),
+            "tool_call_purposes": {
+                **state.tool_call_purposes,
+                result.tool_call_id: planned.purpose,
+            },
             "visited_nodes": [*state.visited_nodes, "tool_executor"],
         }
 
@@ -286,9 +294,14 @@ def _resolved_host(candidate: Any, *, query: str | None = None) -> ResolvedHost 
 
 def _host_for_plan(state: InvestigationState) -> ResolvedHost | None:
     arguments = state.planned_tool_call.arguments if state.planned_tool_call else {}
+    planned_host_id = (
+        state.planned_tool_call.host_id if state.planned_tool_call else None
+    )
     wanted_id = str(arguments.get("host_id") or "")
     wanted_name = str(arguments.get("host") or arguments.get("agent_name") or "")
     for host in state.hosts:
+        if planned_host_id and host.host_id == planned_host_id:
+            return host
         if wanted_id and host.host_id == wanted_id:
             return host
         if wanted_name and host.host.casefold() == wanted_name.casefold():

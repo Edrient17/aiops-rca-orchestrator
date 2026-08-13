@@ -1,14 +1,15 @@
 # AIOps RCA Orchestrator
 
-Slack 요청을 안전하게 접수하고 n8n에서 Zabbix 증거 조사와 RCA 작성을 실행하는
-독립 배포 단위입니다.
+Slack 요청을 안전하게 접수하고, n8n과 LangGraph RCA 서비스가 MCP 증거 조사와
+RCA 작성을 실행하는 독립 배포 단위입니다.
 
 ## 구성 요소
 
 - `ingress`: Slack 서명 검증, 이벤트 중복 방지, 즉시 ACK, n8n 전달 재시도
 - `postgres`: n8n DB와 AIOps 요청·Agent 실행·보고서 감사 데이터
 - `n8n-import`: 워크플로가 없을 때만 최초 자동 import하는 일회성 서비스
-- `n8n`: 질문 분석 → Zabbix MCP 조사 → RCA 작성 → Slack 게시
+- `n8n`: Slack 흐름, 템플릿 조회, 감사 저장, 보고서 게시와 레거시 조사 경로
+- `rca-api`: HTTP API → 모델 노드 → LangGraph 조사 → 라이브 MCP adapter
 - `caddy`: 선택 사항인 공개 HTTPS reverse proxy
 
 Ingress가 요청을 먼저 Postgres에 저장한 뒤 Slack에 200을 응답합니다. AI 실행은
@@ -36,6 +37,10 @@ Copy-Item .env.example .env
 - `AIOPS_INTERNAL_TOKEN`: ingress와 n8n만 공유하는 내부 토큰
 - `SLACK_*`: Slack App 자격 증명과 질문·답변·오류 채널 ID
 - `ZABBIX_MCP_URL`: Zabbix Investigation MCP의 공개 또는 사설 `/mcp` URL
+- `OSS_ES_MCP_URL`, `WAZUH_MCP_URL`: 공식 Elasticsearch MCP와 Wazuh MCP의
+  Streamable HTTP `/mcp` URL
+- `OPENAI_API_KEY`, `RCA_*_MODEL`: LangGraph 서비스의 모델 연결
+- `RCA_EXECUTION_MODE`: `legacy`면 기존 n8n Agent, `langgraph`면 새 HTTP API 경로
 - `N8N_ENCRYPTION_KEY`: 최초 설정 후 절대 변경하지 않는 n8n credential 암호화 키
 
 ## 2. Slack App
@@ -103,6 +108,8 @@ docker compose --profile proxy up -d --build
 - n8n: `127.0.0.1:5678`
 
 외부 reverse proxy는 `/slack/events`만 ingress 8080으로 전달하면 됩니다.
+`rca-api`의 8090 포트는 호스트에 공개하지 않고 Docker 네트워크 안에서 n8n만
+호출합니다.
 
 n8n editor는 공개하지 않습니다. 포함된 Caddyfile도 `/slack/events` 외의 모든
 경로에 404를 반환합니다. editor에는 SSH 터널로 접근합니다.
@@ -198,6 +205,35 @@ python3 scripts/redeploy-workflow.py --force      # 손실을 감수하고 강�
 ```
 
 UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정해야 합니다.
+
+### LangGraph 경로 활성화
+
+새 경로를 포함한 워크플로를 먼저 재배포한 뒤 API를 올립니다. 처음에는 `.env`의
+`RCA_EXECUTION_MODE=legacy`를 유지해 기존 요청 경로를 보존합니다.
+
+```bash
+docker compose up -d --build rca-api
+docker compose ps rca-api
+docker compose exec rca-api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8090/readyz').read().decode())"
+python3 scripts/redeploy-workflow.py --wait 300
+```
+
+API가 healthy이고 재배포한 워크플로가 활성화된 것을 확인한 후 `.env`를 바꾸고
+n8n만 재생성하면 새 요청부터 LangGraph로 전달됩니다.
+
+```dotenv
+RCA_EXECUTION_MODE=langgraph
+```
+
+```bash
+docker compose up -d n8n
+docker compose logs --tail=100 rca-api n8n
+```
+
+문제가 있으면 값을 `legacy`로 되돌리고 같은 `docker compose up -d n8n`을 실행하면
+코드나 데이터 롤백 없이 새 요청을 즉시 기존 경로로 보낼 수 있습니다. 완료된 새
+경로 응답의 Agent 실행은 `aiops_agent_runs`, MCP 호출은 증거 패키지를 통해
+`aiops_tool_calls`, 최종 결과는 `aiops_reports`에 기존과 동일하게 저장됩니다.
 
 ## 5. 보안 경계
 

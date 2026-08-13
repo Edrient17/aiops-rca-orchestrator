@@ -63,6 +63,9 @@ class PlannedToolCall(StrictModel):
     arguments: dict[str, Any]
     purpose: Annotated[str, Field(min_length=1, max_length=1000)]
     target_hypothesis_ids: Annotated[list[str], Field(max_length=20)]
+    # Association metadata for evidence normalization. It is deliberately not
+    # inserted into arguments because MCP input schemas reject unknown fields.
+    host_id: ZabbixId | None = None
 
 
 class InvestigationLimits(StrictModel):

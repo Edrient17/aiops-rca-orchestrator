@@ -17,6 +17,9 @@ from aiops_rca.tools.result import ToolExecutionResult
 
 
 class McpTransport(Protocol):
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """Return the server's live tool metadata and JSON Schemas."""
+
     async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
         """Call one MCP tool and return its decoded structured result."""
 
@@ -36,6 +39,14 @@ class McpAdapter:
         self.registry = registry
         self.transport = transport
         self.timeout_seconds = timeout_seconds
+
+    async def list_tools(self) -> list[dict[str, Any]]:
+        """Read the live catalog through the same bounded transport boundary."""
+
+        return await asyncio.wait_for(
+            self.transport.list_tools(),
+            timeout=self.timeout_seconds,
+        )
 
     async def execute(
         self,
