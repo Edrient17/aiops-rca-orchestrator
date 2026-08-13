@@ -123,11 +123,6 @@ class EstablishPhenomenonNode:
         )
         return {
             "phenomenon": decision.phenomenon,
-            "incident_anchor": (
-                decision.anchor.model_dump(exclude_none=True)
-                if decision.anchor
-                else None
-            ),
             "evidence": evidence,
             "unknowns": unknowns,
             "tool_results": results,

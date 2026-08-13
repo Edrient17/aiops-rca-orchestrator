@@ -8,16 +8,8 @@ from aiops_rca.schemas.base import StrictModel, ZabbixId
 from aiops_rca.schemas.investigation import Hypothesis
 
 
-class IncidentAnchorDecision(StrictModel):
-    event_id: ZabbixId | None
-    trigger_id: ZabbixId | None
-    started_at: str | None
-    recovered_at: str | None
-
-
 class PhenomenonDecision(StrictModel):
     phenomenon: Annotated[str, Field(min_length=1, max_length=2000)]
-    anchor: IncidentAnchorDecision | None
 
 
 class HypothesisPlan(StrictModel):

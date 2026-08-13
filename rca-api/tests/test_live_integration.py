@@ -15,7 +15,6 @@ from aiops_rca.services.investigation import InvestigationService
 from aiops_rca.services.model_contracts import (
     HypothesisPlan,
     HypothesisUpdateDecision,
-    IncidentAnchorDecision,
     ObservationDecision,
     PhenomenonDecision,
     ToolCandidate,
@@ -159,12 +158,9 @@ class FixtureModel:
             )
         if output_type is PhenomenonDecision:
             return PhenomenonDecision(
-                phenomenon="A service-unavailable event was observed.",
-                anchor=IncidentAnchorDecision(
-                    event_id="20202",
-                    trigger_id="30303",
-                    started_at="2026-08-13T00:00:00Z",
-                    recovered_at=None,
+                phenomenon=(
+                    "A service-unavailable event was observed at "
+                    "2026-08-13T00:00:00Z and had not recovered."
                 ),
             )
         if output_type is HypothesisPlan:

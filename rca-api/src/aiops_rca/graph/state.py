@@ -35,7 +35,6 @@ class InvestigationState(StrictModel):
     )
 
     phenomenon: Annotated[str, Field(max_length=2000)] | None = None
-    incident_anchor: dict[str, Any] | None = None
     hypotheses: Annotated[list[Hypothesis], Field(max_length=20)] = Field(
         default_factory=list
     )
