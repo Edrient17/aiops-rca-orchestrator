@@ -2,14 +2,38 @@
 
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, model_validator
 
 from aiops_rca.schemas.base import StrictModel, TemplateId
 
 
-class InitialWindowHint(StrictModel):
+class RelativeWindowHint(StrictModel):
+    """Minutes either side of the anchor, for a question about a moment."""
+
     before_minutes: Annotated[int, Field(ge=5, le=1440)]
     after_minutes: Annotated[int, Field(ge=5, le=1440)]
+
+
+class AbsoluteWindowHint(StrictModel):
+    """The interval itself, for a question that names one.
+
+    "어제" has two edges. Expressed as an anchor and a span it had to be
+    guessed at -- the analyzer chose midnight, the end of the day being asked
+    about, and the window landed on the hour around it. Neither the model nor
+    the prompt was wrong; the shape could not hold the answer.
+    """
+
+    from_: AwareDatetime = Field(alias="from")
+    to: AwareDatetime
+
+    @model_validator(mode="after")
+    def end_follows_start(self) -> "AbsoluteWindowHint":
+        if self.to <= self.from_:
+            raise ValueError("window hint 'to' must be later than 'from'")
+        return self
+
+
+InitialWindowHint = RelativeWindowHint | AbsoluteWindowHint
 
 
 class ParsedRequest(StrictModel):

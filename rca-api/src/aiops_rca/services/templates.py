@@ -5,7 +5,14 @@ from zoneinfo import ZoneInfo
 
 from aiops_rca.api.models import ReportTemplate
 from aiops_rca.schemas.investigation import InvestigationLimits, RequestEnvelope
-from aiops_rca.schemas.parsed_request import ParsedRequest
+from aiops_rca.schemas.parsed_request import (
+    AbsoluteWindowHint,
+    ParsedRequest,
+    RelativeWindowHint,
+)
+
+# Used when the analyzer names no range at all.
+DEFAULT_WINDOW_UNSPECIFIED = timedelta(hours=3)
 
 
 def select_template(
@@ -71,13 +78,26 @@ def resolve_window(
     if range_name != "anchor_relative":
         raise ValueError(f"unsupported collection window range: {range_name}")
 
-    anchor = parsed.anchor_time or received
     hint = parsed.initial_window_hint
-    before = hint.before_minutes if hint else 30
-    after = hint.after_minutes if hint else 30
+    if isinstance(hint, AbsoluteWindowHint):
+        return _window(hint.from_.astimezone(UTC), hint.to.astimezone(UTC))
+
+    anchor = (parsed.anchor_time or received).astimezone(UTC)
+    if isinstance(hint, RelativeWindowHint):
+        return _window(
+            anchor - timedelta(minutes=hint.before_minutes),
+            anchor + timedelta(minutes=hint.after_minutes),
+        )
+
+    # No hint at all. The former default was thirty minutes either side, which
+    # is the narrowest window this system can open: an analyzer that omits the
+    # field blinds the investigation at the first step, and nothing downstream
+    # can tell that from a question that genuinely concerned one hour. Three
+    # hours is still bounded, and DEFAULT_WINDOW_UNSPECIFIED is recorded so the
+    # collector can say the range was assumed rather than asked for.
     return _window(
-        anchor.astimezone(UTC) - timedelta(minutes=before),
-        anchor.astimezone(UTC) + timedelta(minutes=after),
+        anchor - DEFAULT_WINDOW_UNSPECIFIED,
+        anchor + DEFAULT_WINDOW_UNSPECIFIED,
     )
 
 

@@ -82,29 +82,54 @@
       "maxLength": 500
     },
     "initial_window_hint": {
-      "type": [
-        "object",
-        "null"
-      ],
-      "additionalProperties": false,
-      "required": [
-        "before_minutes",
-        "after_minutes"
-      ],
-      "properties": {
-        "before_minutes": {
-          "type": "integer",
-          "minimum": 5,
-          "maximum": 1440
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "before_minutes",
+            "after_minutes"
+          ],
+          "properties": {
+            "before_minutes": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 1440
+            },
+            "after_minutes": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 1440,
+              "description": "Matches before_minutes. This is only a hint: the Evidence Collector chooses the real window and the MCP caps it."
+            }
+          },
+          "description": "Minutes either side of anchor_time. For a question anchored on a moment -- an alert, a deploy, \"장애 전후\" -- where the span follows from the anchor rather than standing on its own."
         },
-        "after_minutes": {
-          "type": "integer",
-          "minimum": 5,
-          "maximum": 1440,
-          "description": "Matches before_minutes. Asking about yesterday needs as much room after the anchor as before it, to see whether the incident recovered. This is only a hint: the Evidence Collector chooses the real window and the MCP caps it."
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "from",
+            "to"
+          ],
+          "properties": {
+            "from": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "to": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Exclusive end, and later than from."
+            }
+          },
+          "description": "The interval itself, when the question names one with edges -- 어제, 오늘 오전, 지난 주말. State it rather than choosing an anchor inside it and hoping the minutes reach both edges."
+        },
+        {
+          "type": "null"
         }
-      },
-      "description": "Where to start looking, when the question is the only thing that says so. Null when the chosen report kind computes its own window -- a monthly report spans far more than the bound below, and inventing a value inside it would either be ignored or reject the whole output."
+      ],
+      "description": "Where to start looking, when the question is the only thing that says so. Null when the chosen report kind computes its own window -- a monthly report spans far more than any bound here."
     },
     "allow_dynamic_expansion": {
       "type": "boolean"
