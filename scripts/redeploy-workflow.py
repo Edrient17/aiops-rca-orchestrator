@@ -44,15 +44,6 @@ FIRST_TIME_CREDENTIALS = {
     },
 }
 
-# Nodes deliberately taken out of the workflow. The carry-over refuses to import
-# when a node it holds a credential for has vanished, because that is what a
-# renamed node looks like and the rename would silently deploy an unauthenticated
-# tool. Naming a node here says the disappearance was meant. The credential
-# itself is left in n8n, so reconnecting the node picks it up again.
-RETIRED_NODES = {
-    "Log MCP Tools",
-}
-
 # The error handler ships alongside the main workflow and needs none of the
 # credential carry-over below: both of its HTTP nodes authenticate from $env, so
 # there is nothing the UI holds that an import would drop. It still has to be
@@ -203,14 +194,11 @@ def main():
     with open(os.path.join(REPO, SOURCE), encoding="utf-8") as handle:
         workflow = json.load(handle)
     names = {node["name"] for node in workflow["nodes"]}
-    for name in sorted(set(credentials) & RETIRED_NODES - names):
-        del credentials[name]
-        print("  retired, credential not carried: " + name)
     missing = [name for name in credentials if name not in names]
     if missing:
         fail("these nodes no longer exist in the new workflow, so their "
              "credentials cannot be carried over: " + ", ".join(missing) +
-             "\nIf the removal was intended, add the name to RETIRED_NODES.")
+             "\nRemove obsolete nodes from the deployed workflow before importing.")
     for node in workflow["nodes"]:
         if node["name"] in credentials:
             node["credentials"] = credentials[node["name"]]

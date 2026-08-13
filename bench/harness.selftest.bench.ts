@@ -56,12 +56,12 @@ describe("harness parses a model reply", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({
         output: [{ type: "function_call", call_id: "c",
-                   name: "Log_MCP_Tools_search_logs", arguments: "{broken" }],
+                   name: "Elasticsearch_Query_Tools_search", arguments: "{broken" }],
       }),
       { status: 200 },
     )));
-    const action = await predictNextAction(caseById("filtered-empty-is-not-silence"));
-    expect(action.tool).toBe("search_logs");
+    const action = await predictNextAction(caseById("broken-tool-is-routed-around"));
+    expect(action.tool).toBe("search");
     expect(action.args.__unparsable).toBe("{broken");
   });
 
@@ -94,12 +94,8 @@ describe("each case's check separates the known failure from the fix", () => {
       // 17:15Z the previous day. Note that 11:15+09:00 would have been
       // correct -- the same instant as 02:15Z -- so the check has to look at
       // the resolved moment rather than at the offset.
-      bad: ["summarize_logs", { host: "vm-java-docker-2", time_from: "2026-08-11T02:15:00+09:00", time_to: "2026-08-11T02:35:00+09:00" }],
-      good: ["summarize_logs", { host: "vm-java-docker-2", time_from: "2026-08-11T02:15:00Z", time_to: "2026-08-11T02:35:00Z" }],
-    },
-    "filtered-empty-is-not-silence": {
-      bad: [null, {}, "payment-service 로그가 없어 조용했습니다."],
-      good: ["summarize_logs", { host: "vm-java-docker-2", time_from: "2026-08-12T02:20:00Z", time_to: "2026-08-12T02:45:00Z" }],
+      bad: ["get_incident_events", { host_id: "11094", time_from: "2026-08-11T02:15:00+09:00", time_to: "2026-08-11T02:35:00+09:00" }],
+      good: ["get_incident_events", { host_id: "11094", time_from: "2026-08-11T02:15:00Z", time_to: "2026-08-11T02:35:00Z" }],
     },
     "metric-history-takes-one-item": {
       bad: ["get_metric_history", { host_id: "11094", item_ids: ["120124"], time_from: "2026-08-12T02:00:00Z", time_to: "2026-08-12T03:00:00Z" }],

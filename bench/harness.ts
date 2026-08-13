@@ -94,7 +94,7 @@ export const benchEnabled = Boolean(KEY);
 
 /** n8n exposes tools prefixed with the node name; cases are written bare. */
 const bare = (name: string): string =>
-  name.replace(/^(Zabbix_MCP_Tools_|Log_MCP_Tools_|Elasticsearch_Query_Tools_|Wazuh_MCP_Tools_)/, "");
+  name.replace(/^(Zabbix_MCP_Tools_|Elasticsearch_Query_Tools_|Wazuh_MCP_Tools_)/, "");
 
 const toolsFor = (testCase: BenchCase) =>
   [...ALL_TOOLS, ...(testCase.noise ?? [])].map((tool) => ({

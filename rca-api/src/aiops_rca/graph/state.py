@@ -1,0 +1,124 @@
+"""Source-of-truth state checkpointed between diagnostic graph nodes."""
+
+from datetime import datetime
+from typing import Annotated, Any
+
+from pydantic import AwareDatetime, Field, model_validator
+
+from aiops_rca.schemas.base import StrictModel
+from aiops_rca.schemas.evidence_package import Evidence, EvidencePackage
+from aiops_rca.schemas.investigation import (
+    Hypothesis,
+    InvestigationLimits,
+    KnownFact,
+    ObservationQuestion,
+    PlannedToolCall,
+    RequestEnvelope,
+    ResolvedHost,
+    UnknownItem,
+)
+from aiops_rca.schemas.parsed_request import ParsedRequest
+from aiops_rca.tools.result import ToolExecutionResult
+
+
+class InvestigationState(StrictModel):
+    investigation_id: Annotated[str, Field(min_length=1, max_length=200)]
+    request: RequestEnvelope
+    parsed_request: ParsedRequest
+    collection: dict[str, Any] | None = None
+
+    hosts: Annotated[list[ResolvedHost], Field(max_length=20)] = Field(
+        default_factory=list
+    )
+    unresolved_hosts: Annotated[list[str], Field(max_length=20)] = Field(
+        default_factory=list
+    )
+
+    phenomenon: Annotated[str, Field(max_length=2000)] | None = None
+    incident_anchor: dict[str, Any] | None = None
+    hypotheses: Annotated[list[Hypothesis], Field(max_length=20)] = Field(
+        default_factory=list
+    )
+    known_facts: Annotated[list[KnownFact], Field(max_length=100)] = Field(
+        default_factory=list
+    )
+    unknowns: Annotated[list[UnknownItem], Field(max_length=100)] = Field(
+        default_factory=list
+    )
+
+    next_question: ObservationQuestion | None = None
+    planned_tool_call: PlannedToolCall | None = None
+    candidate_tool_arguments: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    generic_fallback_allowed: bool = False
+
+    evidence: Annotated[list[Evidence], Field(max_length=200)] = Field(
+        default_factory=list
+    )
+    last_observation: ToolExecutionResult | None = None
+    tool_results: Annotated[list[ToolExecutionResult], Field(max_length=100)] = Field(
+        default_factory=list,
+    )
+    tool_errors: Annotated[list[ToolExecutionResult], Field(max_length=100)] = Field(
+        default_factory=list,
+    )
+
+    iteration_count: Annotated[int, Field(ge=0, le=20)] = 0
+    tool_call_count: Annotated[int, Field(ge=0, le=100)] = 0
+    limits: InvestigationLimits = Field(default_factory=InvestigationLimits)
+    started_at: AwareDatetime
+    stop_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
+    limit_reached: bool = False
+    fatal_error: Annotated[str, Field(min_length=1, max_length=10_000)] | None = None
+
+    evidence_package: EvidencePackage | None = None
+    visited_nodes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_graph_invariants(self) -> "InvestigationState":
+        _unique([host.host_id for host in self.hosts], "host_id")
+        hypothesis_ids = [hypothesis.id for hypothesis in self.hypotheses]
+        _unique(hypothesis_ids, "hypothesis id")
+        _unique([item.evidence_id for item in self.evidence], "evidence_id")
+        _unique([item.tool_call_id for item in self.tool_results], "tool_call_id")
+
+        known_hypotheses = set(hypothesis_ids)
+        known_evidence = {item.evidence_id for item in self.evidence}
+        referenced_evidence = {
+            evidence_id
+            for fact in self.known_facts
+            for evidence_id in fact.evidence_ids
+        }
+        for hypothesis in self.hypotheses:
+            referenced_evidence.update(hypothesis.supporting_evidence_ids)
+            referenced_evidence.update(hypothesis.counter_evidence_ids)
+        if missing_evidence := referenced_evidence - known_evidence:
+            raise ValueError(
+                f"known_facts reference unknown evidence: {sorted(missing_evidence)}"
+            )
+        if self.next_question:
+            missing = (
+                set(self.next_question.discriminates_hypothesis_ids) - known_hypotheses
+            )
+            if missing:
+                raise ValueError(
+                    f"next_question references unknown hypotheses: {sorted(missing)}"
+                )
+        if self.planned_tool_call:
+            missing = (
+                set(self.planned_tool_call.target_hypothesis_ids) - known_hypotheses
+            )
+            if missing:
+                raise ValueError(
+                    f"planned_tool_call references unknown hypotheses: {sorted(missing)}"
+                )
+        if self.tool_call_count != len(self.tool_results):
+            raise ValueError("tool_call_count must equal the number of tool_results")
+        return self
+
+    def elapsed_seconds(self, now: datetime) -> float:
+        return max(0, (now - self.started_at).total_seconds())
+
+
+def _unique(values: list[str], label: str) -> None:
+    if len(values) != len(set(values)):
+        raise ValueError(f"{label} values must be unique")

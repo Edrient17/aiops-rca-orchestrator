@@ -28,29 +28,30 @@ const REMOVED_WAZUH: ToolSpec[] = [
   parameters: { type: "object", properties: { limit: { type: "number" } } },
 }));
 
-// The summary the log tool really returns for a two-hour window on this host:
-// thousands of lines, dominated by routine INFO, with the restart visible only
-// as a shape.
-const LOG_SUMMARY_WITH_RESTART = JSON.stringify({
-  host: "vm-java-docker-2",
-  window: { from: "2026-08-12T02:20:00Z", to: "2026-08-12T02:45:00Z" },
-  window_local: "2026-08-12 11:20:00 ~ 2026-08-12 11:45:00 (Asia/Seoul)",
-  total_matched: 3820,
-  by_level: [
-    { level: "ERROR", count: 42, confirmed_ratio: 1 },
-    { level: "INFO", count: 3608, confirmed_ratio: 0.997 },
-  ],
-  by_service: [
-    { service: "api-service", count: 1204 },
-    { service: "payment-service", count: 611 },
-    { service: "systemd", count: 402 },
-    { service: "sudo", count: 6 },
-  ],
-  repeated_messages: [
-    { level: "ERROR", count: 38, shape: "I/O error on POST request for \"http://payment-service:8084/<N>\": Connection refused" },
-    { level: "INFO", count: 12, shape: "Started PaymentServiceApplication in <N> seconds" },
-  ],
-  data_quality: { data_source: "logs", sampled_fraction: 1, partial: false },
+const ELASTICSEARCH_SEARCH_WITH_RESTART = JSON.stringify({
+  hits: {
+    total: { value: 3820, relation: "eq" },
+    hits: [
+      {
+        _source: {
+          "@timestamp": "2026-08-12T02:22:40Z",
+          "host.name": "vm-java-docker-2",
+          "service.name": "payment-service",
+          "log.level": "ERROR",
+          message: "Connection refused while calling payment-service",
+        },
+      },
+      {
+        _source: {
+          "@timestamp": "2026-08-12T02:28:40Z",
+          "host.name": "vm-java-docker-2",
+          "service.name": "payment-service",
+          "log.level": "INFO",
+          message: "Started PaymentServiceApplication in 4.8 seconds",
+        },
+      },
+    ],
+  },
 });
 
 const ZABBIX_EVENT_WITH_LOCAL_TIME = JSON.stringify({
@@ -89,9 +90,21 @@ export const CASES: BenchCase[] = [
       },
       {
         role: "assistant",
-        call: { name: "Log_MCP_Tools_summarize_logs", args: { host: "vm-java-docker-2", time_from: iso("2026-08-12T02:20:00Z"), time_to: iso("2026-08-12T02:45:00Z") } },
+        call: {
+          name: "Elasticsearch_Query_Tools_search",
+          args: {
+            index: "vm-logs-*",
+            query_body: {
+              query: { bool: { filter: [
+                { term: { "host.name": "vm-java-docker-2" } },
+                { range: { "@timestamp": { gte: "2026-08-12T02:20:00Z", lte: "2026-08-12T02:45:00Z" } } },
+              ] } },
+              size: 50,
+            },
+          },
+        },
       },
-      { role: "tool", forCall: "Log_MCP_Tools_summarize_logs", content: LOG_SUMMARY_WITH_RESTART },
+      { role: "tool", forCall: "Elasticsearch_Query_Tools_search", content: ELASTICSEARCH_SEARCH_WITH_RESTART },
     ],
     check: (action) => {
       if (action.tool === null) {
@@ -100,7 +113,7 @@ export const CASES: BenchCase[] = [
       }
       if (action.tool === "get_wazuh_alert_summary") return null;
       // Reading the actual lines around the restart is also a discriminating step.
-      if (action.tool === "search_logs") return null;
+      if (action.tool === "search") return null;
       return `chose ${action.tool}, which does not separate an internal failure from an operator action`;
     },
   },
@@ -190,51 +203,6 @@ export const CASES: BenchCase[] = [
       const hours = Math.round((start - incident) / 3_600_000);
       return `window ${from} .. ${to} misses the incident by about ${hours} hours; ` +
         `the event was 02:22:40Z, which is 11:22 local`;
-    },
-  },
-
-  {
-    id: "filtered-empty-is-not-silence",
-    kind: "step-wise",
-    guards: "E6",
-    origin:
-      "the log tool reported zero lines for a window that held 45,744, because " +
-      "the service filter matched an indexed field present on a twentieth of " +
-      "the documents. The zero read as a quiet host.",
-    trajectory: [
-      { role: "user", content: "vm-java-docker-2의 payment-service 로그 확인해줘" },
-      {
-        role: "assistant",
-        call: { name: "Log_MCP_Tools_summarize_logs", args: { host: "vm-java-docker-2", time_from: iso("2026-08-12T02:20:00Z"), time_to: iso("2026-08-12T02:45:00Z"), services: ["payment-service"] } },
-      },
-      {
-        role: "tool",
-        forCall: "Log_MCP_Tools_summarize_logs",
-        content: JSON.stringify({
-          host: "vm-java-docker-2",
-          total_matched: 0,
-          by_level: [],
-          by_service: [],
-          data_quality: {
-            data_source: "logs",
-            empty_because_filtered: { lines_in_window: 45744, matched_by_filters: 0 },
-            partial: false,
-          },
-        }),
-      },
-    ],
-    check: (action) => {
-      if (action.tool === null) {
-        return "stopped on an empty result whose own data_quality says the window held 45,744 lines";
-      }
-      if (action.tool === "summarize_logs" || action.tool === "search_logs") {
-        const services = action.args.services;
-        if (Array.isArray(services) && services.includes("payment-service")) {
-          return "repeated the same service filter that just emptied a window of 45,744 lines";
-        }
-        return null;
-      }
-      return null;
     },
   },
 
@@ -375,12 +343,29 @@ export const CASES: BenchCase[] = [
       },
       {
         role: "assistant",
-        call: { name: "Log_MCP_Tools_summarize_logs", args: { host: "vm-java-docker-2", time_from: iso("2026-08-12T02:00:00Z"), time_to: iso("2026-08-12T03:00:00Z") } },
+        call: {
+          name: "Elasticsearch_Query_Tools_search",
+          args: {
+            index: "vm-logs-*",
+            query_body: {
+              query: { bool: { filter: [
+                { term: { "host.name": "vm-java-docker-2" } },
+                { range: { "@timestamp": { gte: "2026-08-12T02:00:00Z", lte: "2026-08-12T03:00:00Z" } } },
+              ] } },
+              size: 20,
+            },
+          },
+        },
       },
       {
         role: "tool",
-        forCall: "Log_MCP_Tools_summarize_logs",
-        content: JSON.stringify({ host: "vm-java-docker-2", total_matched: 118, by_level: [{ level: "INFO", count: 118 }], repeated_messages: [], data_quality: { data_source: "logs", partial: false } }),
+        forCall: "Elasticsearch_Query_Tools_search",
+        content: JSON.stringify({
+          hits: {
+            total: { value: 118, relation: "eq" },
+            hits: [{ _source: { "@timestamp": "2026-08-12T02:30:00Z", "log.level": "INFO", message: "health check passed" } }],
+          },
+        }),
       },
     ],
     check: (action) => {
@@ -401,7 +386,7 @@ export const CASES: BenchCase[] = [
 // still connected is a separate question, answered per case by missingTools --
 // throwing on that would take the whole file down every time a server is
 // disconnected, which is exactly when the remaining cases matter most.
-const PREFIXES = /^(Zabbix_MCP_Tools_|Log_MCP_Tools_|Elasticsearch_Query_Tools_|Wazuh_MCP_Tools_)/;
+const PREFIXES = /^(Zabbix_MCP_Tools_|Elasticsearch_Query_Tools_|Wazuh_MCP_Tools_)/;
 for (const testCase of CASES) {
   for (const turn of testCase.trajectory) {
     if (turn.role !== "assistant") continue;

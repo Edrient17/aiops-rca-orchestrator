@@ -180,16 +180,9 @@ function buildMainWorkflow(input) {
     // the only one given a retry. The other two parsers stay strict.
     parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema, true),
     mcpNode("Zabbix MCP Tools", [2240, 140], "ZABBIX_MCP_URL"),
-    // Our shaped log tools are disconnected while the general Elasticsearch
-    // client is tried on its own. Deliberately left as a comment rather than
-    // deleted: the node name is what the credential carry-over keys on, so
-    // restoring it is uncommenting this line.
-    // mcpNode("Log MCP Tools", [2240, 320], "ES_MCP_URL"),
-    // The general client, beside the two shaped ones. They answer the questions
-    // an investigation usually asks, already aggregated; this answers the rest
-    // -- across all of time, by any field, without a window. It authenticates
-    // with nothing because the server offers nothing to authenticate with; it
-    // is reachable only from the private network.
+    // Elasticsearch search and ES|QL are intentionally routed through the
+    // official MCP server. It offers no authentication, so it must only be
+    // reachable from the private network.
     mcpNode("Elasticsearch Query Tools", [2240, 500], "OSS_ES_MCP_URL", "none"),
     // Metrics and logs both describe what the machine did. This describes what
     // a person did to it: Wazuh reads auditd and syslog on the agent host, so
@@ -311,7 +304,6 @@ function buildMainWorkflow(input) {
   // autoFix on the evidence parser requires its own model connection.
   connectAi(connections, "Investigation Model", "Evidence Package Parser", "ai_languageModel");
   connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
-  // connectAi(connections, "Log MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "Elasticsearch Query Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "Wazuh MCP Tools", "Evidence Collector", "ai_tool");
   connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");

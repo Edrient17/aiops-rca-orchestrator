@@ -1,0 +1,21 @@
+{
+  "hits": {
+    "total": {
+      "value": 0,
+      "relation": "eq"
+    },
+    "hits": []
+  },
+  "data_quality": {
+    "data_source": "logs",
+    "scanned": 0,
+    "matched_after_level_filter": null,
+    "omitted_from_middle": null,
+    "messages_truncated": 0,
+    "empty_because_filtered": {
+      "lines_in_window": 3820,
+      "matched_by_filters": 0
+    },
+    "partial": false
+  }
+}

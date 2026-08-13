@@ -1,0 +1,142 @@
+"""Transport-independent, mockable MCP adapter layer."""
+
+import asyncio
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Protocol
+from uuid import uuid4
+
+from aiops_rca.tools.registry import (
+    RoutingContext,
+    ToolPolicy,
+    ToolRegistry,
+    ToolSource,
+)
+from aiops_rca.tools.result import ToolExecutionResult
+
+
+class McpTransport(Protocol):
+    async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
+        """Call one MCP tool and return its decoded structured result."""
+
+
+class McpAdapter:
+    """Validate, execute, classify and trace one source's MCP calls."""
+
+    def __init__(
+        self,
+        *,
+        source: ToolSource,
+        registry: ToolRegistry,
+        transport: McpTransport,
+        timeout_seconds: float = 120,
+    ) -> None:
+        self.source = source
+        self.registry = registry
+        self.transport = transport
+        self.timeout_seconds = timeout_seconds
+
+    async def execute(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        context: RoutingContext,
+        *,
+        tool_call_id: str | None = None,
+    ) -> ToolExecutionResult:
+        policy = self.registry.validate_call(tool_name, arguments, context)
+        if policy.source != self.source:
+            raise ValueError(
+                f"{tool_name} belongs to {policy.source}, not adapter {self.source}",
+            )
+
+        call_id = tool_call_id or f"call-{uuid4()}"
+        started_at = datetime.now(UTC)
+        try:
+            response = await asyncio.wait_for(
+                self.transport.call_tool(tool_name, arguments),
+                timeout=self.timeout_seconds,
+            )
+            status, error = classify_result(policy, response)
+        except TimeoutError:
+            response = None
+            status = "error"
+            error = f"tool call timed out after {self.timeout_seconds:g} seconds"
+        # A transport implementation may surface library-specific exception
+        # types. This boundary intentionally normalizes every such failure into
+        # investigation state instead of leaking it as an API-level failure.
+        except Exception as exception:
+            response = None
+            status = "error"
+            error = str(exception) or exception.__class__.__name__
+
+        return ToolExecutionResult(
+            tool_call_id=call_id,
+            tool_name=tool_name,
+            source=self.source,
+            status=status,
+            request=dict(arguments),
+            response=response,
+            error=error,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+        )
+
+
+def classify_result(policy: ToolPolicy, response: Any) -> tuple[str, str | None]:
+    """Classify meaning without interpreting the observation as root-cause evidence."""
+
+    if isinstance(response, Mapping):
+        explicit_error = response.get("error")
+        if explicit_error:
+            return "error", _error_text(explicit_error)
+        if response.get("isError") is True:
+            return "error", _error_text(response.get("message") or response)
+
+        quality = response.get("data_quality")
+        if isinstance(quality, Mapping):
+            if quality.get("empty_because_filtered") is not None:
+                return "filtered_empty", None
+            if quality.get("partial") is True:
+                return "partial", None
+        if response.get("partial") is True:
+            return "partial", None
+
+        for field in policy.result_list_fields:
+            value = response.get(field)
+            if isinstance(value, list):
+                return ("empty", None) if len(value) == 0 else ("ok", None)
+            if isinstance(value, Mapping) and isinstance(value.get(field), list):
+                nested = value[field]
+                return ("empty", None) if len(nested) == 0 else ("ok", None)
+        if len(response) == 0:
+            return "empty", None
+
+    if isinstance(response, list):
+        return ("empty", None) if len(response) == 0 else ("ok", None)
+    if response is None:
+        return "empty", None
+    if isinstance(response, str) and response.strip().lower().startswith("no "):
+        return "empty", None
+    return "ok", None
+
+
+def _error_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value[:10_000]
+    return repr(value)[:10_000]
+
+
+@dataclass(frozen=True)
+class AdapterSet:
+    zabbix: McpAdapter
+    elasticsearch: McpAdapter
+    wazuh: McpAdapter
+
+    def for_source(self, source: ToolSource) -> McpAdapter:
+        return {
+            "zabbix": self.zabbix,
+            "elasticsearch": self.elasticsearch,
+            "wazuh": self.wazuh,
+        }[source]
