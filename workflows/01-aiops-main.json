@@ -444,25 +444,6 @@
     },
     {
       "parameters": {
-        "endpointUrl": "={{ $env.ES_MCP_URL }}",
-        "serverTransport": "httpStreamable",
-        "authentication": "bearerAuth",
-        "include": "all",
-        "options": {
-          "timeout": 120000
-        }
-      },
-      "id": "b4766fd7-3e35-5b7d-84b9-e43213310af9",
-      "name": "Log MCP Tools",
-      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
-      "typeVersion": 1.4,
-      "position": [
-        2240,
-        320
-      ]
-    },
-    {
-      "parameters": {
         "endpointUrl": "={{ $env.OSS_ES_MCP_URL }}",
         "serverTransport": "httpStreamable",
         "authentication": "none",
@@ -1170,17 +1151,6 @@
       ]
     },
     "Zabbix MCP Tools": {
-      "ai_tool": [
-        [
-          {
-            "node": "Evidence Collector",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Log MCP Tools": {
       "ai_tool": [
         [
           {

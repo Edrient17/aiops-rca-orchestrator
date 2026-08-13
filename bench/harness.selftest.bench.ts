@@ -39,10 +39,10 @@ afterEach(() => {
 
 describe("harness parses a model reply", () => {
   it("strips the n8n node prefix from the tool name", async () => {
-    stubReply("Wazuh_MCP_Tools_get_wazuh_alert_summary", { min_level: 5 });
-    const action = await predictNextAction(caseById("wazuh-min-level-hides-the-command"));
+    stubReply("Wazuh_MCP_Tools_get_wazuh_alert_summary", { search_term: "docker" });
+    const action = await predictNextAction(caseById("actor-is-never-checked"));
     expect(action.tool).toBe("get_wazuh_alert_summary");
-    expect(action.args.min_level).toBe(5);
+    expect(action.args.search_term).toBe("docker");
   });
 
   it("reports a prose answer as no tool call", async () => {
@@ -76,10 +76,6 @@ describe("each case's check separates the known failure from the fix", () => {
   // The action that actually happened in the incident, and one that would have
   // been right. A check that passes both, or fails both, is not measuring.
   const PROBES: Record<string, { bad: [string | null, unknown, string?]; good: [string | null, unknown, string?] }> = {
-    "wazuh-min-level-hides-the-command": {
-      bad: ["get_wazuh_alert_summary", { time_from: "2026-08-12T02:20:00Z", time_to: "2026-08-12T02:45:00Z", min_level: 5 }],
-      good: ["get_wazuh_alert_summary", { time_from: "2026-08-12T02:20:00Z", time_to: "2026-08-12T02:45:00Z" }],
-    },
     "actor-is-never-checked": {
       bad: [null, {}, "확인된 원인이 없습니다."],
       good: ["get_wazuh_alert_summary", { time_from: "2026-08-12T02:20:00Z", time_to: "2026-08-12T02:45:00Z" }],

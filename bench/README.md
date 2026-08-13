@@ -26,7 +26,7 @@ Evidence Collector가 **다음에 무엇을 조회할지 고르는 능력**만 �
 논문은 LLM-as-Judge로 계획의 질을 등급화합니다. 여기서는 그렇게 하지 않습니다.
 
 **회귀 벤치마크의 케이스는 전부 이미 일어난 실패**이고, 실패마다 검사 가능한
-서명이 있기 때문입니다. "`min_level`을 3보다 크게 넣었는가"는 불리언이지 등급이
+서명이 있기 때문입니다. "`get_metric_history`에 배열을 넘겼는가"는 불리언이지 등급이
 아닙니다. 판정자를 LLM으로 두면 채점 자체가 흔들려 회귀를 회귀로 못 읽습니다.
 
 대신 논문의 **오류 분류(E1–E6)** 는 그대로 씁니다. 케이스마다 어느 유형을 막는
@@ -69,7 +69,7 @@ OPENAI_API_KEY=sk-... npm run bench
 특정 케이스만:
 
 ```bash
-OPENAI_API_KEY=sk-... npm run bench -- -t "min_level"
+OPENAI_API_KEY=sk-... npm run bench -- -t "utc-is-not"
 ```
 
 ## 케이스를 추가할 때

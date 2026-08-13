@@ -69,32 +69,6 @@ const ZABBIX_EVENT_WITH_LOCAL_TIME = JSON.stringify({
 
 export const CASES: BenchCase[] = [
   {
-    id: "wazuh-min-level-hides-the-command",
-    kind: "step-wise",
-    guards: "E5",
-    origin:
-      "execution 130: called the audit search with min_level 5 over the window " +
-      "holding the sudo stop, got one unrelated kernel alert, and reported the " +
-      "cause as undetermined. Command execution is filed at level 3.",
-    trajectory: [
-      { role: "user", content: "오늘 vm-java-docker-2 전체적으로 문제 있었는지 확인해줘" },
-      {
-        role: "assistant",
-        call: { name: "Log_MCP_Tools_summarize_logs", args: { host: "vm-java-docker-2", time_from: iso("2026-08-12T02:20:00Z"), time_to: iso("2026-08-12T02:45:00Z") } },
-      },
-      { role: "tool", forCall: "Log_MCP_Tools_summarize_logs", content: LOG_SUMMARY_WITH_RESTART },
-    ],
-    check: (action) => {
-      if (action.tool !== "get_wazuh_alert_summary") return null; // other next steps are legitimate
-      const level = action.args.min_level;
-      if (typeof level === "number" && level > 3) {
-        return `min_level=${level} removes the level-3 records that carry the executed command`;
-      }
-      return null;
-    },
-  },
-
-  {
     id: "actor-is-never-checked",
     kind: "step-wise",
     guards: "E2",

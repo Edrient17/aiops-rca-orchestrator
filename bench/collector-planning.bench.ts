@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CASES } from "./cases.js";
-import { benchEnabled, predictNextAction } from "./harness.js";
+import { benchEnabled, missingTools, predictNextAction } from "./harness.js";
 
 /**
  * Planning is scored on its own, without running the investigation, because an
@@ -26,24 +26,33 @@ describe.skipIf(!benchEnabled)("Evidence Collector planning", () => {
 
     describe(setting, () => {
       for (const testCase of cases) {
-        it(`[${testCase.guards}] ${testCase.id}`, { timeout: 180_000 }, async () => {
-          const failures: string[] = [];
-          for (let attempt = 0; attempt < REPEATS; attempt += 1) {
-            const action = await predictNextAction(testCase);
-            const reason = testCase.check(action);
-            if (reason) {
-              failures.push(
-                `attempt ${attempt + 1}: ${reason}\n` +
-                `  chose: ${action.tool ?? "(no tool call)"} ${JSON.stringify(action.args)}`,
-              );
+        // A case built on a tool that is no longer connected is not a
+        // regression waiting to happen -- it is a question about a tool the
+        // agent cannot reach. Skipped rather than deleted, so reconnecting the
+        // server brings its cases back with it.
+        const absent = missingTools(testCase);
+        it.skipIf(absent.length > 0)(
+          `[${testCase.guards}] ${testCase.id}${absent.length ? ` (needs ${absent.join(", ")})` : ""}`,
+          { timeout: 180_000 },
+          async () => {
+            const failures: string[] = [];
+            for (let attempt = 0; attempt < REPEATS; attempt += 1) {
+              const action = await predictNextAction(testCase);
+              const reason = testCase.check(action);
+              if (reason) {
+                failures.push(
+                  `attempt ${attempt + 1}: ${reason}\n` +
+                  `  chose: ${action.tool ?? "(no tool call)"} ${JSON.stringify(action.args)}`,
+                );
+              }
             }
-          }
-          expect(
-            failures,
-            `${testCase.id} guards ${testCase.guards}.\n` +
-            `Origin: ${testCase.origin}\n\n${failures.join("\n")}`,
-          ).toEqual([]);
-        });
+            expect(
+              failures,
+              `${testCase.id} guards ${testCase.guards}.\n` +
+              `Origin: ${testCase.origin}\n\n${failures.join("\n")}`,
+            ).toEqual([]);
+          },
+        );
       }
     });
   }

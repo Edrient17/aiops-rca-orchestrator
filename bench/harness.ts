@@ -64,6 +64,25 @@ export type BenchCase = {
   check: (action: PredictedAction) => string | null;
 };
 
+/**
+ * Bare tool names a case needs in the snapshot, read from its own trajectory.
+ * A case whose prior calls no longer exist is asking the model about a tool it
+ * cannot see, and would fail for a reason that has nothing to do with planning.
+ */
+export function requiredTools(testCase: BenchCase): string[] {
+  return [...new Set(
+    testCase.trajectory
+      .filter((turn): turn is Extract<Turn, { role: "assistant" }> => turn.role === "assistant")
+      .map((turn) => bare(turn.call.name)),
+  )];
+}
+
+const available = new Set(ALL_TOOLS.map((t) => t.bare_name));
+
+/** Which of a case's tools are missing, so a skip can say why. */
+export const missingTools = (testCase: BenchCase): string[] =>
+  requiredTools(testCase).filter((name) => !available.has(name));
+
 const MODEL = process.env.BENCH_MODEL ?? "gpt-5.6-terra";
 // Matches the Investigation Model node. Reasoning effort changes which plan the
 // model produces, so a benchmark run at a different effort is not measuring the

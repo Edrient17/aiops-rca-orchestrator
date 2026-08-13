@@ -136,16 +136,6 @@ prerequisite가 충족되지 않았거나 effect가 `next_question`을 답하지
   구분할 수 없음
 * effect: 해당 시계열의 temporal shape 확인
 
-`summarize_logs`
-
-* prerequisite: host와 조사 창이 있음
-* effect: 실제 서비스·레벨·시간 분포·반복 패턴을 넓게 파악
-
-`search_logs`
-
-* prerequisite: 원문을 확인해야 하는 시간·서비스·패턴이 좁혀짐
-* effect: 해당 가설을 지지하거나 반박할 실제 로그 줄 확보
-
 `get_wazuh_alert_summary`
 
 * prerequisite: 과거의 실행자·명령 여부가 가설을 구분함
@@ -162,13 +152,20 @@ prerequisite가 충족되지 않았거나 effect가 `next_question`을 답하지
 * effect: 지금의 process 또는 listening port 상태 확인
 * 과거 장애 당시 상태의 증거는 만들지 않음
 
-`query_zabbix`, `esql`, `search`
+`esql`, `search`
 
-* prerequisite: 같은 질문을 정형 tool로 표현할 수 없음
-* effect: 정형 tool이 제공하지 않는 관측 확보
+* prerequisite: 확인할 로그의 host, 시간, 문자열 중 하나 이상이 정해짐
+* effect: 해당 조건의 원본 로그 줄 확보
+* 인덱스는 `vm-logs-*`이고 원문 한 줄이 `message`에 통째로 들어 있다.
+  필드는 `@timestamp`, `host.name`, `message`.
+* 원본 문서를 그대로 돌려주므로 `KEEP`으로 열을 줄이고 `LIMIT`을 반드시 건다.
+  부분 일치는 `WHERE message LIKE "*문자열*"`.
+* 시간 창 제약이 없으므로 `이번 사건에 특이적인가`를 답할 수 있는 유일한 tool이다.
 
-범용 tool을 호출하기 전에 반드시
-`왜 정형 tool로는 이 질문에 답할 수 없는가`를 확인한다.
+`query_zabbix`
+
+* prerequisite: 같은 질문을 Zabbix 정형 tool로 표현할 수 없음
+* effect: 정형 tool이 제공하지 않는 Zabbix 객체 확보
 
 ## 5. 결과를 받고 즉시 갱신한다
 
@@ -202,8 +199,6 @@ tool 호출 자체가 실패했으면:
 * 해당 사실이 존재하지 않는다고 결론내리지 않는다.
 * 같은 질문을 답하는 허용된 대체 tool이 있으면 우회한다.
 * 우회할 수 없고 판단에 중요하면 `unknowns`에 남긴다.
-
-`empty_because_filtered`는 데이터 부재가 아니다.
 
 Wazuh의 빈 결과를 행위 부재로 사용하려면 agent 상태를 먼저 확인한다.
 
@@ -288,12 +283,12 @@ Wazuh의 빈 결과를 행위 부재로 사용하려면 agent 상태를 먼저 �
 
 ## 증거원별 필드
 
-| | 메트릭·이벤트 | 로그 요약 | 로그 줄 | 감사 |
-|---|---|---|---|---|
-| `evidence_id` | `zbx:event:…` `zbx:trigger:…` `zbx:metric:…` | `log:summary:<호스트>:<시작>-<끝>` | `log:lines:<호스트>:<조건>` | `wazuh:alerts:<호스트>:<조건>` |
-| `source` | `zabbix` | `elasticsearch` | `elasticsearch` | `wazuh` |
-| `evidence_type` | `event` `trigger` `metric_summary` `metric_history` | `log_summary` | `log_lines` | `audit_alerts` |
-| `search_query` | `null` | 도구가 준 `query_kql` | 도구가 준 `query_kql` | `null` |
+| | 메트릭·이벤트 | 로그 | 감사 |
+|---|---|---|---|
+| `evidence_id` | `zbx:event:…` `zbx:trigger:…` `zbx:metric:…` | `log:lines:<호스트>:<조건>` | `wazuh:alerts:<호스트>:<조건>` |
+| `source` | `zabbix` | `elasticsearch` | `wazuh` |
+| `evidence_type` | `event` `trigger` `metric_summary` `metric_history` | `log_lines` | `audit_alerts` |
+| `search_query` | `null` | 실행한 ES\|QL 또는 KQL 문자열 | `null` |
 
 `evidence_id`는 서로 겹치지 않게 짓는다. 위에 없는 접두사는 패턴이 거부한다.
 
