@@ -396,14 +396,20 @@ export const CASES: BenchCase[] = [
   },
 ];
 
-// Sanity: every non-noise tool a case expects has to exist in the snapshot.
-const known = new Set(ALL_TOOLS.map((t) => t.bare_name));
+// Sanity: a trajectory must name tools in the prefixed form the agent sees, or
+// the harness cannot tell which server a call belongs to. Whether the tool is
+// still connected is a separate question, answered per case by missingTools --
+// throwing on that would take the whole file down every time a server is
+// disconnected, which is exactly when the remaining cases matter most.
+const PREFIXES = /^(Zabbix_MCP_Tools_|Log_MCP_Tools_|Elasticsearch_Query_Tools_|Wazuh_MCP_Tools_)/;
 for (const testCase of CASES) {
   for (const turn of testCase.trajectory) {
     if (turn.role !== "assistant") continue;
-    const bare = turn.call.name.replace(/^[A-Za-z]+_MCP_Tools_|^Elasticsearch_Query_Tools_/, "");
-    if (!known.has(bare)) {
-      throw new Error(`case ${testCase.id} calls ${bare}, which is not in tools.snapshot.json`);
+    if (!PREFIXES.test(turn.call.name)) {
+      throw new Error(
+        `case ${testCase.id} calls "${turn.call.name}" without a node prefix; ` +
+        "write it as the agent sees it, e.g. Wazuh_MCP_Tools_get_wazuh_alert_summary",
+      );
     }
   }
 }

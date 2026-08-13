@@ -354,131 +354,6 @@
         }
       }
     ],
-    "elasticsearch": [
-      {
-        "name": "Log_MCP_Tools_summarize_logs",
-        "bare_name": "summarize_logs",
-        "description": "Summarise the log lines a host produced in a window. Returns counts by level and by service, the distribution over ten time buckets, and the repeated messages grouped by shape. The lines themselves are not returned. by_level and volume_over_time are counted over the whole window. by_service and repeated_messages come from the fetched sample, whose extent is given by analysed_window and data_quality.sampled_fraction. Levels and service names are parsed from the raw text, so data_quality.formats and unlevelled_lines report how much of it was understood. Service names are whatever the text carries, including sources with no separate index field such as sudo, cron and the kernel. data_quality.empty_because_filtered appears when services or contains emptied a window that was not empty, and carries the window's true line count.",
-        "parameters": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "type": "object",
-          "properties": {
-            "host": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 255,
-              "description": "Host to read logs for, named exactly as Zabbix names it. This is what ties a log line to the metric evidence beside it."
-            },
-            "time_from": {
-              "type": "string",
-              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
-            },
-            "time_to": {
-              "type": "string",
-              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
-            },
-            "services": {
-              "description": "Narrow to these services. Omit to cover every service on the host.",
-              "minItems": 1,
-              "maxItems": 20,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 120
-              }
-            },
-            "contains": {
-              "description": "Only lines containing this phrase.",
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "index": {
-              "description": "Omit this. The server already reads the right indices. Only set it to narrow to a specific one you were told to read -- a guessed pattern such as * is rejected by the allowlist and costs a call for nothing.",
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            }
-          },
-          "required": [
-            "host",
-            "time_from",
-            "time_to"
-          ]
-        }
-      },
-      {
-        "name": "Log_MCP_Tools_search_logs",
-        "bare_name": "search_logs",
-        "description": "Return individual log lines for a host in a window, narrowed by level, contains or services. Each line comes back parsed into timestamp, level, service and message body, with the Spring prefix removed; long messages are cut and flagged with message_truncated. Lines are returned in time order. When more lines match than the limit allows, both ends of the window are kept and the middle is dropped, with data_quality.omitted_from_middle giving how many. data_quality.empty_because_filtered appears when a filter emptied a window that was not empty, and carries the window's true line count.",
-        "parameters": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "type": "object",
-          "properties": {
-            "host": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 255,
-              "description": "Host to read logs for, named exactly as Zabbix names it. This is what ties a log line to the metric evidence beside it."
-            },
-            "time_from": {
-              "type": "string",
-              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
-            },
-            "time_to": {
-              "type": "string",
-              "description": "ISO 8601 timestamp with a timezone, e.g. 2026-08-10T07:00:00+09:00"
-            },
-            "level": {
-              "description": "Keep only lines at this level, as parsed from the raw text.",
-              "type": "string",
-              "enum": [
-                "TRACE",
-                "DEBUG",
-                "INFO",
-                "WARN",
-                "ERROR",
-                "FATAL"
-              ]
-            },
-            "contains": {
-              "description": "Only lines containing this phrase.",
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            },
-            "services": {
-              "description": "Narrow to these services. Omit to cover every service on the host.",
-              "minItems": 1,
-              "maxItems": 20,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 120
-              }
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            },
-            "index": {
-              "description": "Omit this. The server already reads the right indices. Only set it to narrow to a specific one you were told to read -- a guessed pattern such as * is rejected by the allowlist and costs a call for nothing.",
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            }
-          },
-          "required": [
-            "host",
-            "time_from",
-            "time_to"
-          ]
-        }
-      }
-    ],
     "oss-elastic": [
       {
         "name": "Elasticsearch_Query_Tools_search",
@@ -590,104 +465,6 @@
     ],
     "wazuh": [
       {
-        "name": "Wazuh_MCP_Tools_get_wazuh_alert_summary",
-        "bare_name": "get_wazuh_alert_summary",
-        "description": "Search Wazuh alerts in a time window. Each alert returns timestamp, agent, rule level and description, plus the executed command, working directory and user where the alert carries them. Requires time_from and time_to (ISO 8601); optional agent_name, min_level, search_term, limit. The reply states how many alerts the window held before filtering, how many matched, and how many were returned. Command execution and sudo escalation are recorded at rule level 3.",
-        "parameters": {
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "description": "Parameters for searching alerts",
-          "properties": {
-            "agent_name": {
-              "description": "Restrict to one agent, by the name Wazuh knows it by (e.g. \"vm-java-docker-2\"). Omit to cover every agent.",
-              "nullable": true,
-              "type": "string"
-            },
-            "limit": {
-              "description": "Maximum number of alerts to return (default: 100)",
-              "format": "uint32",
-              "minimum": 0,
-              "nullable": true,
-              "type": "integer"
-            },
-            "min_level": {
-              "description": "Keep only alerts at this rule level or above. Command execution and sudo escalation are level 3.",
-              "format": "uint32",
-              "minimum": 0,
-              "nullable": true,
-              "type": "integer"
-            },
-            "search_term": {
-              "description": "Substring matched against the executed command, the raw log line and the rule description.",
-              "nullable": true,
-              "type": "string"
-            },
-            "time_from": {
-              "description": "Start of the window, ISO 8601 (e.g. \"2026-08-12T14:00:00+09:00\"). Required.",
-              "type": "string"
-            },
-            "time_to": {
-              "description": "End of the window, ISO 8601. Required.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "time_from",
-            "time_to"
-          ],
-          "title": "GetAlertSummaryParams",
-          "type": "object"
-        }
-      },
-      {
-        "name": "Wazuh_MCP_Tools_get_wazuh_agents",
-        "bare_name": "get_wazuh_agents",
-        "description": "List the hosts Wazuh has an agent on: id, name, IP, connection status, OS and last activity. Optional filters: status, name, ip, group, os_platform, version, limit. Omitting status returns every agent, including disconnected ones.",
-        "parameters": {
-          "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "properties": {
-            "group": {
-              "description": "Agent group to filter by (optional)",
-              "nullable": true,
-              "type": "string"
-            },
-            "ip": {
-              "description": "Agent IP address to filter by (optional)",
-              "nullable": true,
-              "type": "string"
-            },
-            "limit": {
-              "description": "Maximum number of agents to retrieve (default: 300)",
-              "format": "uint32",
-              "minimum": 0,
-              "nullable": true,
-              "type": "integer"
-            },
-            "name": {
-              "description": "Agent name to search for (optional)",
-              "nullable": true,
-              "type": "string"
-            },
-            "os_platform": {
-              "description": "Operating system platform to filter by (optional)",
-              "nullable": true,
-              "type": "string"
-            },
-            "status": {
-              "description": "Agent status filter (active, disconnected, pending, never_connected). Omit to cover every status.",
-              "nullable": true,
-              "type": "string"
-            },
-            "version": {
-              "description": "Agent version to filter by (optional)",
-              "nullable": true,
-              "type": "string"
-            }
-          },
-          "title": "GetAgentsParams",
-          "type": "object"
-        }
-      },
-      {
         "name": "Wazuh_MCP_Tools_get_wazuh_agent_processes",
         "bare_name": "get_wazuh_agent_processes",
         "description": "List the processes running on an agent host: PID, name, state, PPID, user and command. Requires agent_id; optional search (matches name or command) and limit. Reports the host at the time of the call; there is no time parameter.",
@@ -751,6 +528,97 @@
             "state"
           ],
           "title": "GetAgentPortsParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Wazuh_MCP_Tools_get_wazuh_agents",
+        "bare_name": "get_wazuh_agents",
+        "description": "List the hosts Wazuh has an agent on: id, name, IP, connection status, OS and last activity. Optional filters: status, name, ip, group, os_platform, version, limit. Omitting status returns every agent, including disconnected ones.",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "group": {
+              "description": "Agent group to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "ip": {
+              "description": "Agent IP address to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of agents to retrieve (default: 300)",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "name": {
+              "description": "Agent name to search for (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "os_platform": {
+              "description": "Operating system platform to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            },
+            "status": {
+              "description": "Agent status filter (active, disconnected, pending, never_connected). Omit to cover every status.",
+              "nullable": true,
+              "type": "string"
+            },
+            "version": {
+              "description": "Agent version to filter by (optional)",
+              "nullable": true,
+              "type": "string"
+            }
+          },
+          "title": "GetAgentsParams",
+          "type": "object"
+        }
+      },
+      {
+        "name": "Wazuh_MCP_Tools_get_wazuh_alert_summary",
+        "bare_name": "get_wazuh_alert_summary",
+        "description": "Search Wazuh alerts in a time window. Each alert returns timestamp, agent, rule level and description, plus the executed command, working directory and user where the alert carries them. Requires time_from and time_to (ISO 8601); optional agent_name, search_term, limit. The reply states how many alerts the window held before filtering, how many matched, and how many were returned.",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "description": "Parameters for searching alerts",
+          "properties": {
+            "agent_name": {
+              "description": "Restrict to one agent, by the name Wazuh knows it by (e.g. \"vm-java-docker-2\"). Omit to cover every agent.",
+              "nullable": true,
+              "type": "string"
+            },
+            "limit": {
+              "description": "Maximum number of alerts to return (default: 100)",
+              "format": "uint32",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            },
+            "search_term": {
+              "description": "Substring matched against the executed command, the raw log line and the rule description.",
+              "nullable": true,
+              "type": "string"
+            },
+            "time_from": {
+              "description": "Start of the window, ISO 8601 (e.g. \"2026-08-12T14:00:00+09:00\"). Required.",
+              "type": "string"
+            },
+            "time_to": {
+              "description": "End of the window, ISO 8601. Required.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "time_from",
+            "time_to"
+          ],
+          "title": "GetAlertSummaryParams",
           "type": "object"
         }
       }
