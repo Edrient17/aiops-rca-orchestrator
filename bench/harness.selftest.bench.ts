@@ -109,6 +109,18 @@ describe("each case's check separates the known failure from the fix", () => {
       bad: ["get_metric_history", { host_id: "11094", item_ids: ["120124"], time_from: "2026-08-12T02:00:00Z", time_to: "2026-08-12T03:00:00Z" }],
       good: ["get_metric_history", { host_id: "11094", item_id: "120124", time_from: "2026-08-12T02:00:00Z", time_to: "2026-08-12T03:00:00Z" }],
     },
+    "no-invented-keys-in-the-package": {
+      bad: [null, {}, JSON.stringify({
+        evidence_id: "zbx:event:11094:daily-none",
+        window: { from: "2026-08-11T15:00:00Z", to: "2026-08-12T15:00:00Z", local: "2026-08-12 00:00~" },
+        data_quality: { partial: false, result_count: 0 },
+      })],
+      good: [null, {}, JSON.stringify({
+        evidence_id: "zbx:event:11094:daily-none",
+        window: { from: "2026-08-11T15:00:00Z", to: "2026-08-12T15:00:00Z" },
+        data_quality: null,
+      })],
+    },
     "unanswerable-is-recorded-not-invented": {
       bad: [null, {}, "배포가 원인으로 확인됩니다."],
       good: [null, {}, "배포 이력은 이 시스템이 볼 수 없어 unknowns에 남깁니다."],

@@ -311,6 +311,67 @@ export const CASES: BenchCase[] = [
   },
 
   {
+    id: "no-invented-keys-in-the-package",
+    kind: "step-wise",
+    guards: "E3",
+    origin:
+      "execution 134: the investigation found the operator command and then " +
+      "lost the whole package to additionalProperties, having added window.local " +
+      "and data_quality.result_count. Both are forbidden, and the rule saying so " +
+      "had been dropped from the prompt.",
+    trajectory: [
+      { role: "user", content: "오늘 vm-java-docker-2 확인해줘" },
+      {
+        role: "assistant",
+        call: { name: "Zabbix_MCP_Tools_get_incident_events", args: { host_id: "11094", time_from: iso("2026-08-11T15:00:00Z"), time_to: iso("2026-08-12T15:00:00Z") } },
+      },
+      {
+        role: "tool",
+        forCall: "Zabbix_MCP_Tools_get_incident_events",
+        content: JSON.stringify({
+          host_id: "11094",
+          window: { from: "2026-08-11T15:00:00Z", to: "2026-08-12T15:00:00Z" },
+          window_local: "2026-08-12 00:00:00 ~ 2026-08-13 00:00:00 (Asia/Seoul)",
+          events: [],
+        }),
+      },
+      {
+        role: "user",
+        content:
+          "지금까지 확인한 것으로 이 이벤트 조회에 해당하는 Evidence 객체 하나만 " +
+          "evidence-package.schema.json 형식의 JSON으로 만들어줘. 다른 설명은 붙이지 마.",
+      },
+    ],
+    check: (action) => {
+      if (action.tool !== null) return null; // still investigating is fine
+      const text = action.text;
+      const start = text.indexOf("{");
+      if (start === -1) return null;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(text.slice(start, text.lastIndexOf("}") + 1)) as Record<string, unknown>;
+      } catch {
+        return null; // prose about the plan is not what this case scores
+      }
+      const evidence = (Array.isArray((parsed as { evidence?: unknown }).evidence)
+        ? (parsed as { evidence: Record<string, unknown>[] }).evidence[0]
+        : parsed) ?? {};
+
+      const window = evidence.window as Record<string, unknown> | null | undefined;
+      if (window) {
+        const extra = Object.keys(window).filter((k) => !["from", "to", "aggregation"].includes(k));
+        if (extra.length) return `window carries ${extra.join(", ")}; only from/to/aggregation exist`;
+      }
+      const quality = evidence.data_quality as Record<string, unknown> | null | undefined;
+      if (quality && !("data_source" in quality)) {
+        return `data_quality was built by hand (${Object.keys(quality).join(", ")}) instead of copied ` +
+          "from a tool, or left null where the tool returned none";
+      }
+      return null;
+    },
+  },
+
+  {
     id: "unanswerable-is-recorded-not-invented",
     kind: "unsolvable",
     guards: "E6",

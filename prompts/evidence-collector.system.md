@@ -257,3 +257,46 @@ Wazuh의 빈 결과를 행위 부재로 사용하려면 agent 상태를 먼저 �
 관측 가능성의 한계 때문에 둘 이상의 후보가 남으면 그 상태 자체가 조사 결과이며
 `unknowns`에 무엇이 부족한지 적는다.
 </조사_루프>
+
+<출력>
+`evidence-package.schema.json`을 준수하는 JSON만 반환한다.
+
+## 스키마가 거부하는 것
+
+**모든 객체에 `additionalProperties: false`가 적용된다.** 정의되지 않은 키를
+하나만 추가해도 **출력 전체가 거부되어 조사가 통째로 버려진다.** 기록할 곳이 없는
+정보는 `summary`에 문장으로 쓰거나 버린다.
+
+특히 다음을 만들어 넣지 않는다.
+
+* `window`에 `local` 같은 키 — 허용되는 키는 `from`, `to`, `aggregation`뿐이다.
+* `data_quality`에 `result_count`처럼 조회 건수·검색어를 담은 키.
+
+필수 키는 값이 없어도 생략하지 않고 `null`을 넣는다.
+
+## `metric`과 `data_quality`
+
+정해진 필드를 모두 갖춘 객체이거나 `null`이며 중간은 없다. 일부만 채운 객체는
+거부된다.
+
+* `metric` — 단일 수치 시계열을 요약한 Evidence에만 채우고, 채울 때는 `name`,
+  `unit`, `min`, `max`, `avg`, `first`, `last`, `change_percent`, `trend`를 모두
+  넣는다. 로그와 감사를 포함한 그 외 Evidence에서는 `null`이다.
+* `data_quality` — **도구가 준 객체를 그대로 옮긴다.** 직접 만들지 않는다.
+  도구가 돌려주지 않았으면 `null`이다. 이벤트·트리거 조회와 감사 조회가 그렇다.
+  `data_source`도 도구가 넣어 주는 값이다.
+
+## 증거원별 필드
+
+| | 메트릭·이벤트 | 로그 요약 | 로그 줄 | 감사 |
+|---|---|---|---|---|
+| `evidence_id` | `zbx:event:…` `zbx:trigger:…` `zbx:metric:…` | `log:summary:<호스트>:<시작>-<끝>` | `log:lines:<호스트>:<조건>` | `wazuh:alerts:<호스트>:<조건>` |
+| `source` | `zabbix` | `elasticsearch` | `elasticsearch` | `wazuh` |
+| `evidence_type` | `event` `trigger` `metric_summary` `metric_history` | `log_summary` | `log_lines` | `audit_alerts` |
+| `search_query` | `null` | 도구가 준 `query_kql` | 도구가 준 `query_kql` | `null` |
+
+`evidence_id`는 서로 겹치지 않게 짓는다. 위에 없는 접두사는 패턴이 거부한다.
+
+`resource_ids`의 네 키(`host_id`, `event_id`, `trigger_id`, `item_id`)는 모두
+필수이며, 해당 없으면 `null`을 넣는다.
+</출력>
