@@ -138,7 +138,10 @@ class FixtureModel:
         del model, system_prompt, reasoning_effort
         self.output_types.append(output_type.__name__)
         self.payloads[output_type.__name__] = payload
-        if output_type is ParsedRequest:
+        # The analyzer's type is built per request, narrowing request_type to
+        # the catalog it was handed, so this dispatches on the base rather than
+        # on identity.
+        if issubclass(output_type, ParsedRequest):
             request_id = payload["request_id"]
             question = payload["question"]
             return ParsedRequest(
@@ -337,8 +340,10 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
     assert zabbix.list_count == 1
     assert elasticsearch.list_count == 1
     assert elasticsearch.calls == []
+    # The first entry is the per-request analyzer type, named for the catalog
+    # it was bound to rather than for the stored contract.
     assert model.output_types == [
-        "ParsedRequest",
+        "CatalogBoundParsedRequest",
         "PhenomenonDecision",
         "HypothesisPlan",
         "Report",

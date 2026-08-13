@@ -2,12 +2,14 @@
 
 import asyncio
 from datetime import UTC, datetime
+from functools import lru_cache
 from importlib.resources import files
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import create_model
 
 from aiops_rca.api.models import (
     AgentRun,
@@ -96,9 +98,12 @@ class InvestigationService:
         runs: list[AgentRun] = []
 
         started = perf_counter()
+        catalog_ids = [
+            item.template_id for item in api_request.templates if item.enabled
+        ]
         parsed = await self.model.complete(
             model=self.settings.rca_question_model,
-            output_type=ParsedRequest,
+            output_type=_analyzer_output_type(tuple(catalog_ids)),
             system_prompt=_prompt("question_analyzer.md"),
             payload={
                 "request_id": api_request.request.request_id,
@@ -138,7 +143,9 @@ class InvestigationService:
             )
         )
 
-        template = select_template(parsed.request_type, api_request.templates)
+        template, template_unknown = select_template(
+            parsed.request_type, api_request.templates
+        )
         if parsed.parse_status != "ready":
             return InvestigationApiResponse(
                 status=parsed.parse_status,
@@ -164,7 +171,11 @@ class InvestigationService:
             # actually begins collecting evidence.
             started_at=datetime.now(UTC),
             tool_catalog=tool_catalog,
-            unknowns=catalog_unknowns,
+            unknowns=(
+                [*catalog_unknowns, template_unknown]
+                if template_unknown
+                else catalog_unknowns
+            ),
         )
         started = perf_counter()
         output = await self.graph.ainvoke(
@@ -386,6 +397,30 @@ def _validate_report(report: Report, output: dict[str, Any], package: Any) -> No
 
 def _prompt(name: str) -> str:
     return files("aiops_rca.prompts").joinpath(name).read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=32)
+def _analyzer_output_type(catalog_ids: tuple[str, ...]) -> type[ParsedRequest]:
+    """ParsedRequest with request_type narrowed to the catalog of this request.
+
+    The stored contract deliberately keeps request_type a free string: report
+    kinds are rows an operator adds, so a fixed enum in the schema could never
+    grow, and an id matching nothing falls back to incident_rca.
+
+    That tolerance belongs at the boundary where the value is read, not where it
+    is produced. Asked for a kind with a two-row catalog in front of it, the
+    analyzer answered "incident_inquiry" -- a plausible name for the question,
+    and not one of the two. The fallback then chose correctly and silently, so
+    a wrong classification looked exactly like a right one. Structured output
+    with a Literal makes the invented id unrepresentable rather than survivable.
+    """
+    if not catalog_ids:
+        return ParsedRequest
+    return create_model(
+        "CatalogBoundParsedRequest",
+        __base__=ParsedRequest,
+        request_type=(Literal[catalog_ids], ...),  # type: ignore[valid-type]
+    )
 
 
 def _without_examples(value: Any) -> Any:

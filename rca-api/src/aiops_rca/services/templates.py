@@ -4,7 +4,11 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiops_rca.api.models import ReportTemplate
-from aiops_rca.schemas.investigation import InvestigationLimits, RequestEnvelope
+from aiops_rca.schemas.investigation import (
+    InvestigationLimits,
+    RequestEnvelope,
+    UnknownItem,
+)
 from aiops_rca.schemas.parsed_request import (
     AbsoluteWindowHint,
     ParsedRequest,
@@ -18,21 +22,36 @@ DEFAULT_WINDOW_UNSPECIFIED = timedelta(hours=3)
 def select_template(
     requested_id: str,
     templates: list[ReportTemplate],
-) -> ReportTemplate:
+) -> tuple[ReportTemplate, UnknownItem | None]:
+    """Pick the requested kind, or fall back and say that it happened.
+
+    The fallback is deliberate -- report kinds are rows an operator adds, so an
+    id this build has never heard of should still produce an investigation. But
+    a silent fallback makes a misclassification indistinguishable from a
+    correct one, and the first LangGraph run to hit it invented a kind, landed
+    on incident_rca by luck, and reported nothing unusual.
+    """
     enabled = [item for item in templates if item.enabled]
     selected = next(
         (item for item in enabled if item.template_id == requested_id),
         None,
     )
     if selected:
-        return selected
+        return selected, None
     fallback = next(
         (item for item in enabled if item.template_id == "incident_rca"),
         None,
     )
     if fallback is None:
         raise ValueError("incident_rca fallback template is missing")
-    return fallback
+    return fallback, UnknownItem(
+        code="report_kind_not_in_catalog",
+        message=(
+            f"요청된 보고서 종류 '{requested_id}'가 카탈로그에 없어 "
+            f"'{fallback.template_id}'로 조사했다. 조사 범위와 구성이 "
+            f"요청과 다를 수 있다."
+        ),
+    )
 
 
 def prepare_collection(
