@@ -37,6 +37,7 @@ from aiops_rca.schemas.parsed_request import ParsedRequest
 from aiops_rca.schemas.report import Report
 from aiops_rca.services.llm import OpenAIStructuredModel, StructuredModel
 from aiops_rca.services.templates import prepare_collection, select_template
+from aiops_rca.services.tracing import configure as configure_tracing
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
 from aiops_rca.tools.adapters.streamable_http import StreamableHttpMcpTransport
 from aiops_rca.tools.executor import ToolExecutor
@@ -171,6 +172,17 @@ class InvestigationService:
             config={
                 "configurable": {"thread_id": investigation_id},
                 "recursion_limit": 8 + limits.max_iterations * 6,
+                # A trace is only useful if the run can be found again from a
+                # Slack thread or a failed report, so it carries the ids that
+                # appear everywhere else.
+                "run_name": f"investigation {api_request.request.request_id}",
+                "metadata": {
+                    "request_id": api_request.request.request_id,
+                    "investigation_id": investigation_id,
+                    "host_queries": parsed.host_queries,
+                    "model": self.settings.rca_investigation_model,
+                },
+                "tags": ["evidence_collector", parsed.request_type],
             },
         )
         finished = InvestigationState.model_validate(output)
@@ -297,10 +309,12 @@ class InvestigationService:
 
 
 def build_live_service(settings: Settings) -> InvestigationService:
+    traced = configure_tracing(settings)
     model = OpenAIStructuredModel(
         api_key=settings.openai_api_key.get_secret_value(),
         base_url=settings.openai_base_url,
         timeout_seconds=settings.model_timeout_seconds,
+        traced=traced,
     )
     transports = {
         "zabbix": StreamableHttpMcpTransport(

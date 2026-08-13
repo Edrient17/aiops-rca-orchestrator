@@ -29,8 +29,14 @@ class OpenAIStructuredModel:
         api_key: str,
         base_url: str | None = None,
         timeout_seconds: float = 180,
+        traced: bool = False,
     ) -> None:
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        from aiops_rca.services.tracing import wrap_openai_client
+
+        self.client = wrap_openai_client(
+            AsyncOpenAI(api_key=api_key, base_url=base_url),
+            enabled=traced,
+        )
         self.timeout_seconds = timeout_seconds
 
     async def complete(

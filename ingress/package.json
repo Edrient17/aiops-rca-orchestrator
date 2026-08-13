@@ -11,8 +11,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "bench": "vitest run --config vitest.bench.config.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "express": "5.2.1",

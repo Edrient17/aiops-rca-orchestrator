@@ -11,6 +11,8 @@ dependencies = [
   "fastapi>=0.141,<1",
   "httpx>=0.28,<1",
   "langgraph>=1.2,<2",
+  # Pulled in transitively, named here because tracing.py imports it directly.
+  "langsmith>=0.10,<1",
   "mcp>=1.29,<2",
   "openai>=3,<4",
   "pydantic>=2.13,<3",

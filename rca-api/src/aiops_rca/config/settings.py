@@ -33,6 +33,21 @@ class Settings(BaseSettings):
     model_timeout_seconds: Annotated[float, Field(gt=0, le=600)] = 180
     mcp_retry_attempts: Annotated[int, Field(ge=1, le=3)] = 2
 
+    # Tracing is off unless a key is present, so a deployment without LangSmith
+    # behaves exactly as before rather than failing or silently retrying.
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "aiops-rca"
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
+    @property
+    def tracing_enabled(self) -> bool:
+        return bool(
+            self.langsmith_tracing
+            and self.langsmith_api_key
+            and self.langsmith_api_key.get_secret_value()
+        )
+
     @model_validator(mode="after")
     def reject_empty_secrets(self) -> "Settings":
         required = {
