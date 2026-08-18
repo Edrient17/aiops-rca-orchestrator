@@ -68,6 +68,12 @@ class InvestigationState(StrictModel):
         default_factory=dict,
     )
 
+    # Effects the coverage sweep has tried, whether or not it succeeded. The
+    # sweep subtracts these so a declared effect it cannot collect is attempted
+    # once and recorded, rather than retried until the budget is gone.
+    swept_effects: Annotated[list[str], Field(max_length=50)] = Field(
+        default_factory=list,
+    )
     iteration_count: Annotated[int, Field(ge=0, le=20)] = 0
     tool_call_count: Annotated[int, Field(ge=0, le=100)] = 0
     limits: InvestigationLimits = Field(default_factory=InvestigationLimits)

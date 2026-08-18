@@ -19,6 +19,7 @@ from aiops_rca.api.models import (
 )
 from aiops_rca.config.settings import Settings
 from aiops_rca.graph.builder import CollectorNodes, build_collector_graph
+from aiops_rca.graph.coverage_nodes import CoverageSweepNode
 from aiops_rca.graph.deterministic_nodes import (
     EvidenceNormalizerNode,
     ResolveHostsNode,
@@ -36,8 +37,9 @@ from aiops_rca.graph.live_nodes import (
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.schemas.investigation import UnknownItem
 from aiops_rca.schemas.parsed_request import ParsedRequest
-from aiops_rca.schemas.report import Report
+from aiops_rca.schemas.report import Report, ReportItem, ReportSection
 from aiops_rca.services.llm import OpenAIStructuredModel, StructuredModel
+from aiops_rca.services.template_contract import parse_sections
 from aiops_rca.services.templates import prepare_collection, select_template
 from aiops_rca.services.tracing import configure as configure_tracing
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
@@ -67,6 +69,10 @@ class InvestigationService:
                     zabbix=adapters.zabbix,
                     model=model,
                     model_name=settings.rca_investigation_model,
+                ),
+                coverage_sweep=CoverageSweepNode(
+                    executor=executor,
+                    registry=registry,
                 ),
                 hypothesis_planner=HypothesisPlannerNode(
                     model=model,
@@ -249,6 +255,7 @@ class InvestigationService:
             reasoning_effort="medium",
         )
         _validate_report(report, template.output, package)
+        report = _reconcile_evidence(report, template.output, package)
         runs.append(
             AgentRun(
                 stage="rca_writer",
@@ -366,15 +373,91 @@ def _writer_sections(output: dict[str, Any], package: Any) -> list[dict[str, Any
         and item.resource_ids.event_id is not None
         for item in package.evidence
     )
-    return [
-        {
-            key: section[key]
-            for key in ("id", "heading", "instruction", "required")
-            if key in section
-        }
-        for section in output.get("sections", [])
-        if not section.get("requires_problem_event") or has_problem_event
+    uncovered = {
+        effect
+        for item in package.unknowns
+        if item.code == "declared_effect_uncovered"
+        for effect in _effects_in(item.message)
+    }
+    sections: list[dict[str, Any]] = []
+    for section in parse_sections(output):
+        if section.requires_problem_event and not has_problem_event:
+            continue
+        payload: dict[str, Any] = {"id": section.id, "required": section.required}
+        if section.heading:
+            payload["heading"] = section.heading
+        if section.instruction:
+            payload["instruction"] = section.instruction
+        missing = sorted(set(section.requires_effects) & uncovered)
+        if missing:
+            # Without this the writer sees a section it cannot fill and no
+            # reason why, and the report gets an unexplained empty heading.
+            payload["evidence_unavailable"] = missing
+        sections.append(payload)
+    return sections
+
+
+def _effects_in(message: str) -> list[str]:
+    _, _, listed = message.partition(": ")
+    return [item.strip() for item in listed.split(",") if item.strip()]
+
+
+def _reconcile_evidence(
+    report: Report,
+    output: dict[str, Any],
+    package: Any,
+) -> Report:
+    """Make sure a discrete event cannot leave the investigation unmentioned.
+
+    A `/etc/passwd has been changed` event was collected, reached the
+    phenomenon summary, and appeared in no section of the finished report: the
+    availability section counted only the outages and no other section owned
+    it. Metrics are summarized in aggregate and are not expected to be cited
+    one by one, but an event is a thing that happened, and dropping one is a
+    silent loss.
+    """
+    cited = {
+        ref
+        for section in report.sections
+        for item in section.items
+        for ref in [*item.evidence_refs, *item.counter_evidence_refs]
+    }
+    dropped = [
+        item
+        for item in package.evidence
+        if item.evidence_type == "event" and item.evidence_id not in cited
     ]
+    if not dropped:
+        return report
+    target = next(
+        (
+            item.get("id")
+            for item in output.get("sections", [])
+            if item.get("id") == "limitations"
+        ),
+        None,
+    )
+    if target is None:
+        return report
+    items = [
+        ReportItem(
+            text=f"보고서 본문에 실리지 않은 관측 이벤트: {item.summary}"[:2000],
+            label="미반영 이벤트",
+            evidence_refs=[item.evidence_id],
+            counter_evidence_refs=[],
+        )
+        for item in dropped[:20]
+    ]
+    sections = list(report.sections)
+    for index, section in enumerate(sections):
+        if section.id == target:
+            sections[index] = section.model_copy(
+                update={"items": [*section.items, *items]},
+            )
+            break
+    else:
+        sections.append(ReportSection(id=target, body=None, items=items))
+    return report.model_copy(update={"sections": sections})
 
 
 def _validate_report(report: Report, output: dict[str, Any], package: Any) -> None:

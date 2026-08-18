@@ -7,6 +7,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from aiops_rca.graph.routing import (
+    route_after_coverage_sweep,
     route_after_host_resolution,
     route_after_stop_guard,
     route_after_tool_router,
@@ -22,6 +23,7 @@ class CollectorNodes:
 
     resolve_hosts: Node
     establish_phenomenon: Node
+    coverage_sweep: Node
     hypothesis_planner: Node
     observation_planner: Node
     tool_router: Node
@@ -42,6 +44,7 @@ def build_collector_graph(
     builder = StateGraph(InvestigationState)
     builder.add_node("resolve_hosts", nodes.resolve_hosts)
     builder.add_node("establish_phenomenon", nodes.establish_phenomenon)
+    builder.add_node("coverage_sweep", nodes.coverage_sweep)
     builder.add_node("hypothesis_planner", nodes.hypothesis_planner)
     builder.add_node("observation_planner", nodes.observation_planner)
     builder.add_node("tool_router", nodes.tool_router)
@@ -60,7 +63,15 @@ def build_collector_graph(
             "evidence_package_builder": "evidence_package_builder",
         },
     )
-    builder.add_edge("establish_phenomenon", "hypothesis_planner")
+    builder.add_edge("establish_phenomenon", "coverage_sweep")
+    builder.add_conditional_edges(
+        "coverage_sweep",
+        route_after_coverage_sweep,
+        {
+            "hypothesis_planner": "hypothesis_planner",
+            "evidence_package_builder": "evidence_package_builder",
+        },
+    )
     builder.add_edge("hypothesis_planner", "observation_planner")
     builder.add_edge("observation_planner", "tool_router")
     builder.add_conditional_edges(
@@ -79,6 +90,7 @@ def build_collector_graph(
         route_after_stop_guard,
         {
             "observation_planner": "observation_planner",
+            "coverage_sweep": "coverage_sweep",
             "evidence_package_builder": "evidence_package_builder",
         },
     )

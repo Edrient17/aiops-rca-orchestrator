@@ -3,4 +3,7 @@
 사실, 관측된 장애 형태, 원인 후보와 권고를 구분한다. 각 항목의 evidence_refs와
 counter_evidence_refs에는 Package에 실제 존재하는 id만 넣는다. Package 밖 사실을
 보강하거나 메트릭을 다시 계산하지 않는다. 확인할 수 없는 내용은 단정하지 않는다.
+section에 evidence_unavailable이 있으면 그 관측을 수집하지 못한 것이다.
+비워 두지 말고 무엇이 없어서 쓸 수 없었는지 밝힌다.
+
 출력은 요청된 스키마만 따른다.

@@ -213,6 +213,13 @@ def _metric_history_evidence(
     )
 
 
+_GENERIC_SHAPE: dict[str, tuple[str, str]] = {
+    "wazuh": ("wazuh:alerts", "audit_alerts"),
+    "elasticsearch": ("log:lines", "log_lines"),
+    "zabbix": ("zbx:object", "observation"),
+}
+
+
 def _generic_evidence(
     result: ToolExecutionResult,
     planned: PlannedToolCall,
@@ -220,14 +227,13 @@ def _generic_evidence(
     host_id: str,
     host: str,
 ) -> Evidence:
-    if result.source == "wazuh":
-        prefix = "wazuh:alerts"
-        evidence_type = "audit_alerts"
-        source = "wazuh"
-    else:
-        prefix = "log:lines"
-        evidence_type = "log_lines"
-        source = "elasticsearch"
+    # Branching on two sources filed every Zabbix tool without a dedicated
+    # normalizer -- list_relevant_metrics, find_hosts, query_zabbix -- as an
+    # Elasticsearch log line, and the report then cited a `log:lines` id as the
+    # basis for a statement about Zabbix items. The result already carries the
+    # source the registry assigned it, so there is nothing here to infer.
+    prefix, evidence_type = _GENERIC_SHAPE[result.source]
+    source = result.source
     response = result.response if isinstance(result.response, Mapping) else {}
     return Evidence.model_validate(
         {

@@ -127,7 +127,7 @@ class Evidence(StrictModel):
     evidence_id: Annotated[
         str,
         Field(
-            pattern=r"^(zbx:(event|trigger|metric)|log:(summary|lines)|wazuh:alerts):.+$"
+            pattern=r"^(zbx:(event|trigger|metric|object)|log:(summary|lines)|wazuh:alerts):.+$"
         ),
     ]
     evidence_type: Literal[

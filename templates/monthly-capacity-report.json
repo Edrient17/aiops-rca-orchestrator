@@ -44,21 +44,31 @@
         "heading": "가용성",
         "instruction": "호스트별로 한 달간 발생한 문제 이벤트의 건수와 성격. 이벤트가 없었던 호스트는 무중단이었다고 적는다. 항목마다 호스트 이름을 밝힌다.",
         "required": true,
-        "requires_problem_event": false
+        "requires_problem_event": false,
+        "requires_effects": [
+          "incident_events"
+        ]
       },
       {
         "id": "capacity_trend",
         "heading": "용량 추세",
         "instruction": "호스트별 디스크·파일시스템 사용률의 월초 대비 월말 변화. 증가 폭이 큰 순으로 적고, 현재 수준과 변화율을 함께 쓴다. 남은 여유가 얼마나 되는지 알 수 있게 한다.",
         "required": true,
-        "requires_problem_event": false
+        "requires_problem_event": false,
+        "requires_effects": [
+          "metric_change"
+        ]
       },
       {
         "id": "resource_pressure",
         "heading": "자원 부담",
         "instruction": "CPU·메모리·swap·네트워크에서 지속적으로 높았거나 뚜렷이 상승한 지표. 일시적 스파이크와 추세를 구분해서 적는다. 특이사항이 없으면 비운다.",
         "required": false,
-        "requires_problem_event": false
+        "requires_problem_event": false,
+        "requires_effects": [
+          "metric_level",
+          "metric_trend"
+        ]
       },
       {
         "id": "watchlist",

@@ -358,6 +358,7 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
     assert response.trace.visited_nodes == [
         "resolve_hosts",
         "establish_phenomenon",
+        "coverage_sweep",
         "hypothesis_planner",
         "observation_planner",
         "tool_router",

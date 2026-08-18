@@ -3,7 +3,9 @@
 from datetime import UTC, datetime
 from typing import Literal
 
+from aiops_rca.graph.coverage_nodes import pending_effects
 from aiops_rca.graph.state import InvestigationState
+from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
 
 
 def hard_stop_update(
@@ -46,8 +48,31 @@ def route_after_host_resolution(
 
 def route_after_stop_guard(
     state: InvestigationState,
-) -> Literal["observation_planner", "evidence_package_builder"]:
-    return "evidence_package_builder" if state.stop_reason else "observation_planner"
+) -> Literal["observation_planner", "coverage_sweep", "evidence_package_builder"]:
+    """Reasoning continues, coverage is completed, or the report is written.
+
+    The loop ends on the reasoning question -- is there another observation
+    that discriminates -- which is not the same question as whether the report
+    can be written. A run that stops with a declared section still uncollected
+    goes to the sweep first.
+    """
+    if not state.stop_reason:
+        return "observation_planner"
+    if state.fatal_error or state.limit_reached:
+        return "evidence_package_builder"
+    if pending_effects(state, DEFAULT_TOOL_REGISTRY):
+        return "coverage_sweep"
+    return "evidence_package_builder"
+
+
+def route_after_coverage_sweep(
+    state: InvestigationState,
+) -> Literal["hypothesis_planner", "evidence_package_builder"]:
+    """Before the loop this feeds reasoning; after it, the report."""
+
+    if state.stop_reason or state.fatal_error:
+        return "evidence_package_builder"
+    return "hypothesis_planner"
 
 
 def route_after_tool_router(
