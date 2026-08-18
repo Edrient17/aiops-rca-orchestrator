@@ -204,7 +204,7 @@ class FixtureModel:
                 generic_fallback_allowed=True,
                 stop_reason=None,
             )
-        if output_type is HypothesisUpdateDecision:
+        if issubclass(output_type, HypothesisUpdateDecision):
             return HypothesisUpdateDecision(
                 updates=[],
                 new_hypotheses=[],
@@ -378,7 +378,8 @@ def test_graph_can_use_elasticsearch_after_the_initial_host_and_event_scan():
     assert [name for name, _arguments in elasticsearch.calls] == ["search"]
     # Named for the effect list it was bound to, not for the base contract.
     assert "RoutableObservationDecision" in model.output_types
-    assert "HypothesisUpdateDecision" in model.output_types
+    # Named for the ids it was bound to, not for the base contract.
+    assert "BoundHypothesisUpdateDecision" in model.output_types
     catalog = model.payloads["RoutableObservationDecision"]["tool_catalog"]
     query_zabbix = next(item for item in catalog if item["name"] == "query_zabbix")
     method_schema = query_zabbix["input_schema"]["properties"]["method"]

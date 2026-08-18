@@ -79,3 +79,32 @@ class HypothesisUpdateDecision(StrictModel):
     new_hypotheses: Annotated[list[Hypothesis], Field(max_length=10)]
     new_facts: Annotated[list[FactDecision], Field(max_length=20)]
     stop_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None
+
+
+@lru_cache(maxsize=64)
+def hypothesis_update_decision_for(
+    evidence_ids: tuple[str, ...],
+    hypothesis_ids: tuple[str, ...],
+) -> type["HypothesisUpdateDecision"]:
+    """The update contract narrowed to the ids that exist right now.
+
+    Evidence ids are generated -- prefix, host, fingerprint -- so citing one
+    means reproducing a string, and a near miss is indistinguishable from an
+    invention by the time it reaches the validator. Offering the real ids as
+    the only permitted values removes the transcription step.
+    """
+    if not evidence_ids or not hypothesis_ids:
+        return HypothesisUpdateDecision
+    evidence = Annotated[list[Literal[evidence_ids]], Field(max_length=50)]  # type: ignore[valid-type]
+    bound_update = create_model(
+        "BoundHypothesisUpdate",
+        __base__=HypothesisUpdate,
+        hypothesis_id=(Literal[hypothesis_ids], ...),  # type: ignore[valid-type]
+        supporting_evidence_ids=(evidence, ...),
+        counter_evidence_ids=(evidence, ...),
+    )
+    return create_model(
+        "BoundHypothesisUpdateDecision",
+        __base__=HypothesisUpdateDecision,
+        updates=(Annotated[list[bound_update], Field(max_length=20)], ...),
+    )

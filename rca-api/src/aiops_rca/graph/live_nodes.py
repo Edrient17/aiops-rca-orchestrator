@@ -17,8 +17,8 @@ from aiops_rca.schemas.investigation import (
 from aiops_rca.services.llm import StructuredModel
 from aiops_rca.services.model_contracts import (
     HypothesisPlan,
-    HypothesisUpdateDecision,
     PhenomenonDecision,
+    hypothesis_update_decision_for,
     observation_decision_for,
 )
 from aiops_rca.tools.adapters.base import McpAdapter
@@ -312,7 +312,10 @@ class HypothesisUpdaterNode:
         ]
         decision = await self.model.complete(
             model=self.model_name,
-            output_type=HypothesisUpdateDecision,
+            output_type=hypothesis_update_decision_for(
+                tuple(item.evidence_id for item in state.evidence),
+                tuple(item.id for item in state.hypotheses),
+            ),
             system_prompt=_prompt("hypothesis_updater.md"),
             payload={
                 "question": (
@@ -329,30 +332,71 @@ class HypothesisUpdaterNode:
             reasoning_effort="medium",
         )
 
+        unknowns = list(state.unknowns)
         known_evidence = {item.evidence_id for item in state.evidence}
         hypotheses = {item.id: item for item in state.hypotheses}
+        # These citations are now drawn from a bound list, so a mismatch means
+        # something upstream changed rather than the model inventing an id.
+        # Either way it is one update out of a whole investigation: the bad
+        # references are dropped and recorded, because raising here discards
+        # every tool call already paid for -- and the request that first hit
+        # this was a month-long report that left no audit trail at all.
         for update in decision.updates:
             current = hypotheses.get(update.hypothesis_id)
             if current is None:
-                raise ValueError("hypothesis update references an unknown hypothesis")
-            refs = set(update.supporting_evidence_ids) | set(
-                update.counter_evidence_ids
-            )
-            if refs - known_evidence:
-                raise ValueError("hypothesis update references unknown evidence")
-            if observation.status == "error" and refs:
-                raise ValueError("tool errors cannot support or contradict hypotheses")
+                unknowns.append(
+                    UnknownItem(
+                        code="hypothesis_update_unknown_hypothesis",
+                        message=(
+                            f"업데이트가 존재하지 않는 가설 {update.hypothesis_id}를 "
+                            f"가리켜 무시했다."
+                        ),
+                    )
+                )
+                continue
+            supporting = [
+                ref for ref in update.supporting_evidence_ids if ref in known_evidence
+            ]
+            countering = [
+                ref for ref in update.counter_evidence_ids if ref in known_evidence
+            ]
+            dropped = (
+                set(update.supporting_evidence_ids) | set(update.counter_evidence_ids)
+            ) - known_evidence
+            # A tool error is not an observation about the world, so nothing it
+            # produced may stand as support or contradiction.
+            if observation.status == "error":
+                dropped |= set(supporting) | set(countering)
+                supporting, countering = [], []
+            if dropped:
+                unknowns.append(
+                    UnknownItem(
+                        code="hypothesis_update_evidence_dropped",
+                        message=(
+                            f"가설 {current.id}의 근거 중 {sorted(dropped)}를 "
+                            f"확인할 수 없어 연결하지 않았다."
+                        ),
+                    )
+                )
             hypotheses[current.id] = current.model_copy(
                 update={
                     "status": update.status,
-                    "supporting_evidence_ids": update.supporting_evidence_ids,
-                    "counter_evidence_ids": update.counter_evidence_ids,
+                    "supporting_evidence_ids": supporting,
+                    "counter_evidence_ids": countering,
                     "rationale": update.rationale,
                 }
             )
         for item in decision.new_hypotheses:
             if item.id in hypotheses:
-                raise ValueError("new hypothesis reuses an existing id")
+                unknowns.append(
+                    UnknownItem(
+                        code="hypothesis_id_reused",
+                        message=(
+                            f"새 가설이 기존 id {item.id}를 다시 써서 무시했다."
+                        ),
+                    )
+                )
+                continue
             hypotheses[item.id] = item.model_copy(
                 update={
                     "status": "active",
@@ -365,7 +409,16 @@ class HypothesisUpdaterNode:
         known_fact_keys = {(item.fact, tuple(item.evidence_ids)) for item in facts}
         for item in decision.new_facts:
             if set(item.evidence_ids) - known_evidence:
-                raise ValueError("known fact references unknown evidence")
+                unknowns.append(
+                    UnknownItem(
+                        code="known_fact_evidence_missing",
+                        message=(
+                            f"사실 '{item.fact[:80]}'이 확인할 수 없는 근거를 "
+                            f"가리켜 기록하지 않았다."
+                        ),
+                    )
+                )
+                continue
             key = (item.fact, tuple(item.evidence_ids))
             if key not in known_fact_keys:
                 facts.append(KnownFact(fact=item.fact, evidence_ids=item.evidence_ids))
@@ -374,6 +427,7 @@ class HypothesisUpdaterNode:
         return {
             "hypotheses": list(hypotheses.values()),
             "known_facts": facts,
+            "unknowns": unknowns,
             "stop_reason": decision.stop_reason,
             "visited_nodes": [*state.visited_nodes, "hypothesis_updater"],
         }
