@@ -175,7 +175,7 @@ def _metric_summary_evidence(
                     "window": _window(response),
                     "resource_ids": _resource_ids(host_id, item_id=item_id),
                     "metric": metric,
-                    "data_quality": entry.get("data_quality"),
+                    "data_quality": _rounded_quality(entry.get("data_quality")),
                     "tool_call_id": result.tool_call_id,
                     "search_query": None,
                 },
@@ -206,7 +206,7 @@ def _metric_history_evidence(
             "window": _window(response),
             "resource_ids": _resource_ids(host_id, item_id=item_id),
             "metric": metric,
-            "data_quality": response.get("data_quality"),
+            "data_quality": _rounded_quality(response.get("data_quality")),
             "tool_call_id": result.tool_call_id,
             "search_query": None,
         },
@@ -260,19 +260,50 @@ def _search_query(arguments: Mapping[str, Any]) -> str | None:
     return _json(query_body) if query_body is not None else None
 
 
+# Aggregate arithmetic produces every digit a float can hold, and the report
+# printed them: a filesystem "월초 3.230541%에서 월말 3.300203%로", a buffer of
+# "377053866.666667B". The trailing digits are not measurements -- they are the
+# remainder of dividing by a sample count -- and they cost the reader the
+# comparison the sentence exists to make.
+DECIMAL_PLACES = 3
+# Above this the fraction is noise rather than detail: a byte count or a
+# packet counter has nothing meaningful after the point, and three decimals
+# there lengthen the number without telling anyone anything.
+WHOLE_NUMBER_ABOVE = 10_000
+
+
+def _rounded(value: Any) -> Any:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    if abs(value) >= WHOLE_NUMBER_ABOVE:
+        return round(value)
+    return round(value, DECIMAL_PLACES)
+
+
 def _metric(item: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "name": str(item.get("name") or "unnamed metric"),
         "unit": item.get("unit"),
-        "min": summary.get("min"),
-        "max": summary.get("max"),
-        "avg": summary.get("avg"),
-        "first": summary.get("first"),
-        "last": summary.get("last"),
-        "change_percent": summary.get("change_percent"),
+        "min": _rounded(summary.get("min")),
+        "max": _rounded(summary.get("max")),
+        "avg": _rounded(summary.get("avg")),
+        "first": _rounded(summary.get("first")),
+        "last": _rounded(summary.get("last")),
+        "change_percent": _rounded(summary.get("change_percent")),
         "trend": summary.get("trend") or "insufficient_data",
         "key": item.get("key"),
     }
+
+
+def _rounded_quality(quality: Any) -> Any:
+    """Round the ratio the report quotes, leaving counts and flags alone."""
+
+    if not isinstance(quality, Mapping):
+        return quality
+    ratio = quality.get("coverage_ratio")
+    if not isinstance(ratio, (int, float)) or isinstance(ratio, bool):
+        return quality
+    return {**quality, "coverage_ratio": round(ratio, DECIMAL_PLACES)}
 
 
 def _metric_text(metric: Mapping[str, Any]) -> str:
