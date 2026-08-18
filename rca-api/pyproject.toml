@@ -17,6 +17,11 @@ dependencies = [
   "openai>=3,<4",
   "pydantic>=2.13,<3",
   "pydantic-settings>=2.12,<3",
+  # ZoneInfo reads the operating system's tz database, which Windows does not
+  # have. Every window this service resolves is timezone-bound, so without this
+  # the calendar-month branch cannot even be exercised off Linux -- it was the
+  # one path with no test, and that is why.
+  "tzdata>=2026.1",
   "uvicorn[standard]>=0.52,<1",
 ]
 
