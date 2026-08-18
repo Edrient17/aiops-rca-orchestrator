@@ -9,7 +9,12 @@ from aiops_rca.schemas.investigation import PlannedToolCall, ResolvedHost, Unkno
 from aiops_rca.tools.adapters.base import McpAdapter
 from aiops_rca.tools.executor import ToolExecutor
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
-from aiops_rca.tools.registry import RoutingContext, ToolPolicyError, ToolRegistry
+from aiops_rca.tools.registry import (
+    RoutingContext,
+    ToolPolicyError,
+    ToolRegistry,
+    apply_window_policy,
+)
 
 
 class ResolveHostsNode:
@@ -170,7 +175,10 @@ class ToolRouterNode:
         return {
             "planned_tool_call": PlannedToolCall(
                 tool_name=policy.name,
-                arguments=dict(state.candidate_tool_arguments[policy.name]),
+                arguments=apply_window_policy(
+                    policy,
+                    state.candidate_tool_arguments[policy.name],
+                ),
                 purpose=question.question,
                 target_hypothesis_ids=question.discriminates_hypothesis_ids,
                 host_id=state.candidate_tool_hosts.get(policy.name),
@@ -214,6 +222,22 @@ class ToolExecutorNode:
                 UnknownItem(
                     code="tool_error",
                     message=result.error or f"{result.tool_name} failed",
+                    tool_call_id=result.tool_call_id,
+                ),
+            )
+        if result.status == "partial":
+            # The reply stopped at a limit rather than at the end of the data,
+            # so its count is a floor. Nothing downstream can tell that from a
+            # complete answer once the rows are normalized into evidence, and a
+            # report that reads it as the total understates the month.
+            unknowns.append(
+                UnknownItem(
+                    code="result_truncated",
+                    message=(
+                        f"{result.tool_name} reached its result limit, so the"
+                        " returned count is a lower bound and the window is only"
+                        " partly covered"
+                    ),
                     tool_call_id=result.tool_call_id,
                 ),
             )

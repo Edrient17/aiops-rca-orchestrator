@@ -1,6 +1,7 @@
 """Read-only MCP tool catalog and deterministic routing guards."""
 
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
@@ -34,6 +35,10 @@ class ToolPolicy(StrictModel):
     priority: int = 100
     blocked_reason: str | None = None
     result_list_fields: tuple[str, ...] = ()
+    # Set when the tool takes a query-policy argument that widens its window
+    # limit. Named here rather than in a list of tool names so adding a tool
+    # cannot leave the widening behind.
+    window_policy_argument: str | None = None
 
 
 class ToolRegistry:
@@ -202,6 +207,7 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
             requires=("host_id", "time_from", "time_to"),
             priority=20,
             result_list_fields=("events",),
+            window_policy_argument="policy",
         ),
         _tool(
             "get_trigger_details",
@@ -218,6 +224,7 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
             requires_any=("trigger_ids", "tags"),
             priority=25,
             result_list_fields=("events",),
+            window_policy_argument="policy",
         ),
         _tool(
             "list_relevant_metrics",
@@ -234,6 +241,7 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
             requires=("host_id", "item_ids", "time_from", "time_to", "aggregation"),
             priority=20,
             result_list_fields=("series", "metrics"),
+            window_policy_argument="policy",
         ),
         _tool(
             "get_metric_history",
@@ -327,3 +335,47 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         ),
     ],
 )
+
+
+# A window this long is refused by every standard policy the MCPs run, so
+# widening one can only turn a certain failure into an answer. Windows in the
+# hours around the real cap are left exactly as the planner wrote them, where
+# guessing wrong would change a working call.
+LONG_WINDOW = timedelta(days=2)
+LONG_WINDOW_POLICY = "long_term_capacity"
+
+
+def apply_window_policy(
+    policy: ToolPolicy,
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Ask for the long-window policy when the window needs it.
+
+    The planner writes the window; the row limits and window caps are the MCP's,
+    and it does not have them. A month-long question was reaching the Zabbix MCP
+    under the default policy and coming back capped at 26 hours, which the
+    report then read as the whole month.
+    """
+    updated = dict(arguments)
+    argument = policy.window_policy_argument
+    if not argument or _present(updated.get(argument)):
+        return updated
+    span = _window_span(updated)
+    if span is not None and span > LONG_WINDOW:
+        updated[argument] = LONG_WINDOW_POLICY
+    return updated
+
+
+def _window_span(arguments: Mapping[str, Any]) -> timedelta | None:
+    start, end = arguments.get("time_from"), arguments.get("time_to")
+    window = arguments.get("window")
+    if isinstance(window, Mapping):
+        start = start or window.get("from")
+        end = end or window.get("to")
+    if not isinstance(start, str) or not isinstance(end, str):
+        return None
+    try:
+        return datetime.fromisoformat(end) - datetime.fromisoformat(start)
+    except ValueError:
+        # Malformed timestamps are the MCP's to reject, with its own message.
+        return None
