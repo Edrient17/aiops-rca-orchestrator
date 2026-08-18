@@ -13,7 +13,6 @@ from aiops_rca.tools.registry import (
     RoutingContext,
     ToolPolicyError,
     ToolRegistry,
-    apply_window_policy,
 )
 
 
@@ -175,10 +174,7 @@ class ToolRouterNode:
         return {
             "planned_tool_call": PlannedToolCall(
                 tool_name=policy.name,
-                arguments=apply_window_policy(
-                    policy,
-                    state.candidate_tool_arguments[policy.name],
-                ),
+                arguments=dict(state.candidate_tool_arguments[policy.name]),
                 purpose=question.question,
                 target_hypothesis_ids=question.discriminates_hypothesis_ids,
                 host_id=state.candidate_tool_hosts.get(policy.name),

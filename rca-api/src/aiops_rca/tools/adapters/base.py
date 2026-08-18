@@ -12,6 +12,7 @@ from aiops_rca.tools.registry import (
     ToolPolicy,
     ToolRegistry,
     ToolSource,
+    apply_window_policy,
 )
 from aiops_rca.tools.result import ToolExecutionResult
 
@@ -61,6 +62,10 @@ class McpAdapter:
             raise ValueError(
                 f"{tool_name} belongs to {policy.source}, not adapter {self.source}",
             )
+        # Applied here rather than in the router because the router is not the
+        # only caller: the phenomenon scan builds its own arguments and reaches
+        # the adapter directly, and it is the one that asks for a whole month.
+        arguments = apply_window_policy(policy, arguments)
 
         call_id = tool_call_id or f"call-{uuid4()}"
         started_at = datetime.now(UTC)

@@ -9,9 +9,15 @@ The planner writes the window. The caps belong to the MCP and are not in the
 planner's contract, so the widening is decided here from the window itself.
 """
 
+import asyncio
+from collections.abc import Mapping
+from typing import Any
+
+from aiops_rca.tools.adapters.base import McpAdapter
 from aiops_rca.tools.registry import (
     DEFAULT_TOOL_REGISTRY,
     LONG_WINDOW_POLICY,
+    RoutingContext,
     apply_window_policy,
 )
 
@@ -75,3 +81,54 @@ def test_every_tool_that_takes_the_argument_is_a_windowed_one():
     for policy in DEFAULT_TOOL_REGISTRY.list():
         if policy.window_policy_argument:
             assert "time_from" in policy.requires, policy.name
+
+
+class RecordingTransport:
+    """Captures the arguments that actually left for the MCP."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
+        self.calls.append((tool_name, dict(arguments)))
+        return {"events": [], "result_count": 0, "partial": False}
+
+
+def _sent(arguments: dict) -> dict:
+    transport = RecordingTransport()
+    adapter = McpAdapter(
+        source="zabbix",
+        registry=DEFAULT_TOOL_REGISTRY,
+        transport=transport,
+        timeout_seconds=1,
+    )
+    asyncio.run(adapter.execute("get_incident_events", arguments, RoutingContext()))
+    return transport.calls[0][1]
+
+
+def test_the_widening_happens_below_every_caller():
+    # The router is not the only caller. The phenomenon scan builds its own
+    # arguments and reaches the adapter directly, and a fix that lived in the
+    # router left exactly that call -- the one asking for a whole month --
+    # going out under the standard policy and failing.
+    assert _sent(dict(MONTH))["policy"] == LONG_WINDOW_POLICY
+
+
+def test_a_short_scan_still_goes_out_unchanged():
+    assert "policy" not in _sent(dict(HOUR))
+
+
+def test_what_was_sent_is_what_gets_recorded():
+    transport = RecordingTransport()
+    adapter = McpAdapter(
+        source="zabbix",
+        registry=DEFAULT_TOOL_REGISTRY,
+        transport=transport,
+        timeout_seconds=1,
+    )
+    result = asyncio.run(
+        adapter.execute("get_incident_events", dict(MONTH), RoutingContext()),
+    )
+    # The recorded request is the audit trail for the call. If it showed the
+    # pre-widening arguments, the trail would disagree with what Zabbix answered.
+    assert result.request["policy"] == LONG_WINDOW_POLICY
