@@ -163,7 +163,11 @@ class ToolRouterNode:
             )
         except ToolPolicyError as error:
             return {
-                "stop_reason": f"no allowed tool can answer the next observation: {error}",
+                # The registry already says which of three things went wrong;
+                # a prefix asserting a missing tool would put back the very
+                # sentence that made an unproposed call read as a capability
+                # the platform lacks.
+                "stop_reason": f"the next observation could not be routed: {error}",
                 "planned_tool_call": None,
                 "unknowns": [
                     *state.unknowns,

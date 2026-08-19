@@ -116,18 +116,42 @@ class ToolRegistry:
         arguments_by_tool: Mapping[str, Mapping[str, Any]],
         context: RoutingContext,
     ) -> ToolPolicy:
+        """The allowlisted tool that produces an effect, given proposed arguments.
+
+        Failing here ends the investigation and the message becomes the
+        stop_reason the report is written from, so it has to distinguish three
+        different things. Naming an effect nothing produces is a capability gap.
+        Naming one whose tool was never proposed is not -- and reporting the
+        second as the first produced a report saying Zabbix could not supply
+        trigger definitions when get_trigger_details was registered, routable,
+        and simply never asked for.
+        """
+
         candidates = [policy for policy in self.list() if effect in policy.effects]
+        if not candidates:
+            raise ToolPolicyError(f"no allowed tool can produce effect {effect!r}")
+
         failures: list[str] = []
+        unproposed: list[str] = []
         for policy in candidates:
             arguments = arguments_by_tool.get(policy.name)
             if arguments is None:
+                unproposed.append(policy.name)
                 continue
             try:
                 return self.validate_call(policy.name, arguments, context)
             except ToolPolicyError as error:
                 failures.append(str(error))
-        detail = f" ({'; '.join(failures)})" if failures else ""
-        raise ToolPolicyError(f"no allowed tool can produce effect {effect!r}{detail}")
+
+        if failures:
+            raise ToolPolicyError(
+                f"effect {effect!r} could not be routed: {'; '.join(failures)}",
+            )
+        subject = "it" if len(unproposed) == 1 else "any of them"
+        raise ToolPolicyError(
+            f"effect {effect!r} is produced by {', '.join(unproposed)},"
+            f" but no arguments were proposed for {subject}",
+        )
 
 
 def _present(value: Any) -> bool:
