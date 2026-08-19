@@ -130,7 +130,22 @@ def resolve_window(
 
 
 def _window(start: datetime, end: datetime) -> dict[str, str]:
+    """Window boundaries at second precision.
+
+    isoformat() prints microseconds when the datetime carries them, and one
+    does whenever no anchor was named in the question: the fallback is the
+    request's arrival time, straight from the ingress clock. Six fractional
+    digits then reached an MCP that accepts three, and a question about the
+    present -- which never names a time -- failed at the first event scan.
+
+    Seconds are also what the query means. Zabbix stores event times as epoch
+    seconds, so the extra digits could not have selected anything.
+    """
     return {
-        "from": start.isoformat().replace("+00:00", "Z"),
-        "to": end.isoformat().replace("+00:00", "Z"),
+        "from": _instant(start),
+        "to": _instant(end),
     }
+
+
+def _instant(moment: datetime) -> str:
+    return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
