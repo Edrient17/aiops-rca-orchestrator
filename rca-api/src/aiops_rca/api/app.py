@@ -1,6 +1,7 @@
 """FastAPI application factory for the LangGraph RCA service."""
 
 import logging
+from hmac import compare_digest
 from typing import Annotated
 
 import uvicorn
@@ -29,7 +30,11 @@ def create_app(
     async def require_internal_token(
         x_aiops_internal_token: Annotated[str | None, Header()] = None,
     ) -> None:
-        if x_aiops_internal_token != expected_token:
+        # compare_digest rather than !=, which returns as soon as two bytes
+        # differ and so reports how much of the token was right through how
+        # long the answer took. This port is not published outside the Docker
+        # network, which lowers the odds without changing the shape.
+        if not compare_digest(x_aiops_internal_token or "", expected_token):
             raise HTTPException(status_code=401, detail="unauthorized")
 
     @app.get("/healthz")

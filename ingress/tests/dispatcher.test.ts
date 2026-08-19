@@ -136,3 +136,88 @@ describe("n8n dispatcher", () => {
     );
   });
 });
+
+describe("giving up on a delivery", () => {
+  /**
+   * The retry was unbounded. That sounds harmless -- the backoff tops out at
+   * five minutes -- but the harm lands on the asker: a question whose delivery
+   * can never succeed sat in the queue forever with an acknowledgement already
+   * posted, no answer coming, and nothing anywhere saying so.
+   */
+  function failingRepository(attempts: number) {
+    const calls = {
+      retryDispatch: [] as unknown[],
+      completeDispatch: [] as unknown[],
+      updateRequestStatus: [] as unknown[],
+      recordSystemError: [] as unknown[],
+    };
+    const job = {
+      id: 1,
+      requestId: "REQ-1",
+      attempts,
+      payload: { request_id: "REQ-1" },
+    };
+    let claimed = false;
+    const repository = {
+      async claimDispatch() {
+        if (claimed) return null;
+        claimed = true;
+        return job;
+      },
+      async completeDispatch(id: number) {
+        calls.completeDispatch.push(id);
+      },
+      async retryDispatch(id: number, delay: number, error: string) {
+        calls.retryDispatch.push({ id, delay, error });
+      },
+      async updateRequestStatus(requestId: string, status: string, error?: string) {
+        calls.updateRequestStatus.push({ requestId, status, error });
+        return true;
+      },
+      async recordSystemError(input: unknown) {
+        calls.recordSystemError.push(input);
+      },
+    } as unknown as RequestRepository;
+    return { repository, calls };
+  }
+
+  async function runOnce(attempts: number) {
+    const { repository, calls } = failingRepository(attempts);
+    const dispatcher = new N8nDispatcher({
+      repository,
+      webhookUrl: "http://n8n/webhook/aiops-process",
+      internalToken: "t",
+      intervalMs: 1_000,
+      timeoutMs: 5_000,
+      fetchImpl: (async () => new Response("nope", { status: 500 })) as typeof fetch,
+    });
+    await dispatcher.runOnce();
+    return calls;
+  }
+
+  it("keeps retrying while attempts remain", async () => {
+    const calls = await runOnce(0);
+    expect(calls.retryDispatch).toHaveLength(1);
+    expect(calls.updateRequestStatus).toHaveLength(0);
+  });
+
+  it("stops after the last attempt", async () => {
+    const calls = await runOnce(11);
+    expect(calls.retryDispatch).toHaveLength(0);
+    expect(calls.completeDispatch).toEqual([1]);
+  });
+
+  it("marks the request failed so it stops claiming to be in progress", async () => {
+    const calls = await runOnce(11);
+    expect(calls.updateRequestStatus).toHaveLength(1);
+    const update = calls.updateRequestStatus[0] as { status: string; error: string };
+    expect(update.status).toBe("failed");
+    expect(update.error).toContain("delivery to n8n failed");
+  });
+
+  it("records the error where the error channel reads from", async () => {
+    // Without this the asker never learns their question died.
+    const calls = await runOnce(11);
+    expect(calls.recordSystemError).toHaveLength(1);
+  });
+});

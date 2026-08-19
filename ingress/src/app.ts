@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import type { AppConfig } from "./config.js";
@@ -524,8 +525,18 @@ function askForCorrection(
 }
 
 function internalAuth(token: string) {
+  const expected = Buffer.from(token, "utf8");
   return (request: Request, response: Response, next: NextFunction): void => {
-    if (getHeader(request, "x-aiops-internal-token") !== token) {
+    // Compared in constant time, as the Slack signature already is. A plain
+    // !== leaks how much of the token was right through how long the answer
+    // took, one byte at a time. These routes sit on the Docker network rather
+    // than the internet, which lowers the odds without changing the shape of
+    // the mistake.
+    const presented = Buffer.from(getHeader(request, "x-aiops-internal-token") ?? "", "utf8");
+    if (
+      presented.length !== expected.length ||
+      !timingSafeEqual(presented, expected)
+    ) {
       response.status(401).json({ error: "unauthorized" });
       return;
     }

@@ -17,6 +17,20 @@ export interface DispatcherOptions {
 const LOCK_MARGIN_SECONDS = 15;
 
 /**
+ * How many deliveries a request gets before it is given up on.
+ *
+ * The retry was unbounded, which sounds harmless -- the backoff tops out at
+ * five minutes and the row is small. The harm is to the asker: a question whose
+ * delivery can never succeed sat in the queue forever with an acknowledgement
+ * already posted and no answer ever coming, and nothing anywhere said so.
+ *
+ * Twelve attempts with the backoff below is a little over an hour, which
+ * outlasts an n8n restart or a deploy by a wide margin. What it does not
+ * outlast is a webhook that has genuinely gone.
+ */
+const MAX_DISPATCH_ATTEMPTS = 12;
+
+/**
  * How long a claimed job stays locked. Derived from the delivery timeout rather
  * than fixed: the lock was hardcoded at 30 seconds while DISPATCH_TIMEOUT_MS
  * accepts up to 60_000, so a slow n8n could still be receiving a request whose
@@ -87,6 +101,10 @@ export class N8nDispatcher {
           await this.options.repository.completeDispatch(job.id);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          if (job.attempts + 1 >= MAX_DISPATCH_ATTEMPTS) {
+            await this.abandon(job.id, job.requestId, message);
+            continue;
+          }
           const delaySeconds = Math.min(300, 2 ** Math.min(job.attempts, 8));
           await this.options.repository.retryDispatch(job.id, delaySeconds, message);
         }
@@ -94,5 +112,26 @@ export class N8nDispatcher {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Stop trying, and make the failure visible.
+   *
+   * completeDispatch is what takes the job out of the due set -- there is no
+   * separate abandoned state, and inventing one would mean a migration for a
+   * row nobody queries. What matters is the other two writes: the request stops
+   * claiming to be in progress, and the error lands where the error channel
+   * reads from, so the asker learns their question died instead of waiting on
+   * an answer that was never coming.
+   */
+  private async abandon(jobId: number, requestId: string, message: string): Promise<void> {
+    const detail = `delivery to n8n failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
+    await this.options.repository.completeDispatch(jobId);
+    await this.options.repository.updateRequestStatus(requestId, "failed", detail);
+    await this.options.repository.recordSystemError({
+      requestId,
+      workflowName: "ingress dispatcher",
+      message: detail,
+    });
   }
 }
