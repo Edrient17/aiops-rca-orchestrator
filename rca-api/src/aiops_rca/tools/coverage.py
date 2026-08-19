@@ -24,6 +24,8 @@ from aiops_rca.tools.result import ToolExecutionResult
 # budget. get_metric_summary accepts twenty; a report reads a handful.
 METRIC_ITEMS_PER_HOST = 8
 DEFAULT_AGGREGATION = "1h"
+# Enough to characterise a host without pasting a process table into a report.
+AGENT_STATE_ROWS = 50
 
 
 def covered_effects(
@@ -209,10 +211,70 @@ class AuditRecipe:
         return calls
 
 
+class AgentStateRecipe:
+    """What a host is running and listening on, right now.
+
+    Two steps, because the Wazuh tools key on an agent id and an investigation
+    knows a Zabbix host. get_wazuh_agents resolves one from the other by name,
+    which is the same name Zabbix and Wazuh already agree on -- the alert tool
+    filters by it too.
+    """
+
+    effects = ("current_process_state", "current_port_state")
+
+    async def collect(self, context: SweepContext) -> list[SweepCall]:
+        calls: list[SweepCall] = []
+        for host in context.hosts:
+            if context.remaining() <= 2:
+                # The three calls are one observation. Two of them without the
+                # first buy nothing, because neither can run without the id.
+                break
+            lookup_arguments = {"name": host.host}
+            lookup = await context.execute(
+                "get_wazuh_agents", lookup_arguments, host.host_id
+            )
+            calls.append(
+                _call(
+                    lookup,
+                    "get_wazuh_agents",
+                    lookup_arguments,
+                    f"Find the Wazuh agent reporting for {host.host}",
+                    host,
+                ),
+            )
+            agent_id = _agent_id(lookup.response, host.host)
+            if agent_id is None:
+                continue
+            for tool_name, arguments in (
+                ("get_wazuh_agent_processes", {"agent_id": agent_id, "limit": AGENT_STATE_ROWS}),
+                (
+                    "get_wazuh_agent_ports",
+                    {
+                        "agent_id": agent_id,
+                        "protocol": "tcp",
+                        "state": "listening",
+                        "limit": AGENT_STATE_ROWS,
+                    },
+                ),
+            ):
+                result = await context.execute(tool_name, arguments, host.host_id)
+                calls.append(
+                    _call(
+                        result,
+                        tool_name,
+                        arguments,
+                        f"Read the current state of {host.host}",
+                        host,
+                    ),
+                )
+        return calls
+
+
 DEFAULT_RECIPES: tuple[CoverageRecipe, ...] = (
     EventRecipe(),
     MetricRecipe(),
     AuditRecipe(),
+    AgentStateRecipe(),
 )
 
 
@@ -244,3 +306,35 @@ def _item_ids(response: Any) -> list[str]:
         if isinstance(item, Mapping) and str(item.get("item_id") or "").isdigit()
     ]
     return ids[:METRIC_ITEMS_PER_HOST]
+
+
+def _agent_id(response: Any, host: str) -> str | None:
+    """Read the agent id out of get_wazuh_agents.
+
+    That tool answers in prose -- `Agent ID: 001
+Name: vm-java-docker-2
+...`
+    -- one block per agent, so this reads the pairing rather than a field. The
+    format comes from this deployment's own fork, and the test pins it; if the
+    tool ever returns structured agents, this is the only place that changes.
+
+    Returns None rather than guessing when the name does not appear: an id
+    belonging to a different host would read the wrong machine's processes and
+    look entirely plausible doing it.
+    """
+    text = response if isinstance(response, str) else None
+    if text is None and isinstance(response, Mapping):
+        text = response.get("text") or response.get("content")
+    if not isinstance(text, str):
+        return None
+    current: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Agent ID:"):
+            # "000 (Wazuh Manager)" for the manager itself.
+            current = stripped.removeprefix("Agent ID:").strip().split()[0] or None
+        elif stripped.startswith("Name:") and current:
+            if stripped.removeprefix("Name:").strip() == host:
+                return current
+            current = None
+    return None

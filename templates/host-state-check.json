@@ -1,0 +1,60 @@
+{
+  "template_id": "host_state_check",
+  "version": 1,
+  "title": "호스트 현재 상태 확인",
+  "description": "지금 어떤 프로세스가 실행 중인지, 어떤 포트가 열려 있는지처럼 호스트의 현재 상태를 묻는 요청. 지난 일의 원인을 묻는 것이 아니라 이 순간의 모습을 확인하려는 질문일 때 고른다. 과거 시각을 지목하거나 원인을 묻는 질문에는 고르지 않는다.",
+  "enabled": true,
+  "collection": {
+    "host_selector": {
+      "mode": "from_question"
+    },
+    "window": {
+      "policy": "standard",
+      "range": "anchor_relative"
+    },
+    "aggregation": null,
+    "metric_keywords": [],
+    "limits": {
+      "max_iterations": 4,
+      "max_tool_calls": 30
+    },
+    "guidance": "현재 상태를 묻는 요청이므로 프로세스와 열린 포트 조회가 답 그 자체다. 그 결과를 확인한 뒤에도 설명이 필요한 것이 남아 있을 때만 더 조사한다. 과거 이벤트는 지금 상태를 설명해 줄 때만 본다."
+  },
+  "output": {
+    "guidance": "관측된 상태를 그대로 전달하는 보고서다. 원인을 찾는 문서가 아니므로 이상이 없으면 없다고 적고 추측을 덧붙이지 않는다. 요약만 존댓말 서술체로 쓰고 나머지는 개조식으로 쓴다.",
+    "sections": [
+      {
+        "id": "summary",
+        "heading": "요약",
+        "instruction": "확인 시각과 대상 호스트, 그리고 무엇이 관측되었는지를 3문장 이내로. 특이사항이 없으면 없다고 분명히 쓴다. body에 쓰고 items는 비운다.",
+        "required": true
+      },
+      {
+        "id": "processes",
+        "heading": "실행 중인 프로세스",
+        "instruction": "관측된 프로세스를 호스트별로 적는다. 전부 나열하지 말고 서비스로 인식되는 것과 자원을 눈에 띄게 쓰는 것 위주로 적는다. 항목마다 프로세스 이름과 PID를 밝힌다.",
+        "required": true,
+        "requires_effects": ["current_process_state"]
+      },
+      {
+        "id": "listening_ports",
+        "heading": "열린 포트",
+        "instruction": "listening 상태로 관측된 포트를 적는다. 항목마다 포트 번호, 바인딩 주소, 그 포트를 소유한 프로세스를 함께 밝힌다. 외부에 열린 것과 loopback에만 열린 것을 구분한다.",
+        "required": true,
+        "requires_effects": ["current_port_state"]
+      },
+      {
+        "id": "notes",
+        "heading": "눈에 띄는 점",
+        "instruction": "관측된 상태에서 운영자가 알아야 할 것만. 예상 밖의 프로세스나 외부로 열린 포트 등. 판단할 근거가 없으면 비운다.",
+        "required": false
+      },
+      {
+        "id": "limitations",
+        "heading": "분석 한계",
+        "instruction": "조회가 실패했거나 결과가 잘린 대상, 에이전트가 보고하지 않는 호스트를 밝힌다. 이 관측은 조회 시점의 상태이며 그 전후를 말해 주지 않는다는 점도 필요하면 적는다.",
+        "required": true
+      }
+    ]
+  }
+}

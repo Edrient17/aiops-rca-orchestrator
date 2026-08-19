@@ -62,6 +62,7 @@ describe("shipped templates", () => {
 
     expect(files.length).toBeGreaterThan(0);
     expect(files.map((file) => file.template_id).sort()).toEqual([
+      "host_state_check",
       "incident_rca",
       "monthly_capacity_report",
     ]);
