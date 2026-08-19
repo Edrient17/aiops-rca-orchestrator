@@ -204,23 +204,21 @@ def test_kernel_threads_are_gone_from_the_evidence():
     # tested for a day before anything called it, and the reports stayed full
     # of kernel threads that whole time.
     update, _ = _sweep(["current_process_state"])
-    process_evidence = [
-        item
+    observed = next(
+        item.observed
         for item in update["evidence"]
-        if "Read the current state" in (item.summary or "")
-        and "processes" in (item.summary or "")
-    ]
-    assert process_evidence
-    summary = process_evidence[0].summary
-    assert "sshd" in summary
-    assert "java" in summary
-    assert "mm_percpu_wq" not in summary
-    assert "kswapd0" not in summary
+        if item.observed and item.observed.kind == "processes"
+    )
+    names = [row["name"] for row in observed.items]
+    assert names == ["sshd", "java"]
+    assert "mm_percpu_wq" not in names
+    assert "kswapd0" not in names
 
 
 def test_the_omitted_count_is_kept():
     # A shorter list needs the reason for being shorter, or it reads as a host
-    # with four processes.
+    # with two processes. The count rides in the summary sentence, beside
+    # whatever else the tool said about its own answer.
     update, _ = _sweep(["current_process_state"])
     summary = next(
         item.summary
@@ -228,6 +226,21 @@ def test_the_omitted_count_is_kept():
         if "kernel_threads_omitted" in (item.summary or "")
     )
     assert "kernel_threads_omitted" in summary
+
+
+def test_the_rows_travel_beside_the_sentence_not_inside_it():
+    # The whole point of the slot: the summary describes, the list carries. Both
+    # competing for three thousand characters is what cut sixty services to
+    # fifteen.
+    update, _ = _sweep(["current_process_state"])
+    evidence = next(
+        item
+        for item in update["evidence"]
+        if item.observed and item.observed.kind == "processes"
+    )
+    assert "processes" in evidence.summary
+    assert "sshd" not in evidence.summary
+    assert any(row["name"] == "sshd" for row in evidence.observed.items)
 
 
 def test_enough_rows_are_asked_for_to_reach_past_the_threads():

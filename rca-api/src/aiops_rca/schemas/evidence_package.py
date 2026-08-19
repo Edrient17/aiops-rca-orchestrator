@@ -1,6 +1,6 @@
 """Pydantic equivalent of ``schemas/evidence-package.schema.json``."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -124,6 +124,28 @@ DataQuality = Annotated[
 ]
 
 
+class ObservedList(StrictModel):
+    """Rows an observation returned, when a sentence cannot hold them.
+
+    Evidence had a typed slot for a metric and none for a list, so anything
+    returning rows -- processes, ports, alerts, raw query results -- went
+    through the 3000-character summary and was cut there. A host running sixty
+    services reported fifteen, and the reader could not tell which fifteen.
+
+    That is the container, not the tool. Trimming each tool's fields to fit a
+    prose field would be the same work again for every tool added, and
+    forgetting it degrades a report quietly.
+    """
+
+    #: Which list this is, from the tool's own reply: processes, ports, alerts.
+    kind: Annotated[str, Field(min_length=1, max_length=100)]
+    items: Annotated[list[dict[str, Any]], Field(max_length=500)]
+    #: Rows the tool returned that are not carried here, because the budget
+    #: below ran out. Distinct from the tool saying its own answer was cut,
+    #: which arrives as data_quality.partial.
+    omitted: Annotated[int, Field(ge=0)] = 0
+
+
 class Evidence(StrictModel):
     evidence_id: Annotated[
         str,
@@ -147,6 +169,10 @@ class Evidence(StrictModel):
     window: EvidenceWindow | None
     resource_ids: ResourceIds
     metric: MetricSummary | None
+    #: Set when the observation was a list. The summary then says what it holds
+    #: rather than carrying it, so the rows are not competing with prose for the
+    #: same characters.
+    observed: ObservedList | None = None
     data_quality: DataQuality | None
     tool_call_id: Annotated[str, Field(min_length=1, max_length=200)]
     search_query: Annotated[str, Field(max_length=1000)] | None = None

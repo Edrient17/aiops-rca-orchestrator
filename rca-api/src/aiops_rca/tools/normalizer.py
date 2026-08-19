@@ -8,6 +8,7 @@ from typing import Any
 from aiops_rca.schemas.evidence_package import Evidence
 from aiops_rca.schemas.investigation import PlannedToolCall, UnknownItem
 from aiops_rca.sources import SOURCES
+from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY, ToolPolicyError
 from aiops_rca.tools.result import ToolExecutionResult
 
 
@@ -275,21 +276,89 @@ def _generic_evidence(
     prefix, evidence_type = profile.generic_prefix, profile.generic_evidence_type
     source = result.source
     response = result.response if isinstance(result.response, Mapping) else {}
+    observed = _observed_list(result, response)
     return Evidence.model_validate(
         {
             "evidence_id": f"{prefix}:{host}:{_fingerprint([planned.arguments, result.response])}",
             "evidence_type": evidence_type,
             "source": source,
-            "summary": _bounded(f"{planned.purpose}: {_json(result.response)}"),
+            # When the rows travel in `observed`, the summary says what is there
+            # instead of carrying it. Both competing for the same 3000
+            # characters is what cut a list of sixty services down to fifteen.
+            "summary": _bounded(
+                f"{planned.purpose}: {_observed_text(observed, response)}"
+                if observed
+                else f"{planned.purpose}: {_json(result.response)}"
+            ),
             "observed_at": None,
             "window": _window_from_arguments(result.request),
             "resource_ids": _resource_ids(host_id),
             "metric": None,
+            "observed": observed,
             "data_quality": _rounded_quality(response.get("data_quality")),
             "tool_call_id": result.tool_call_id,
             "search_query": _search_query(planned.arguments),
         },
     )
+
+
+# How much of a list one piece of evidence carries. Four times the prose cap,
+# which holds a real host's services with room over; a machine with hundreds of
+# processes is trimmed and says by how many.
+LIST_CAPACITY_CHARS = 12_000
+
+
+def _observed_list(
+    result: ToolExecutionResult,
+    response: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """The rows this observation returned, if it returned rows.
+
+    Which field holds them is the registry's `result_list_fields`, so a tool
+    that returns a list needs no per-tool knowledge here -- the same
+    declaration the result classifier already reads.
+    """
+    try:
+        policy = DEFAULT_TOOL_REGISTRY.get(result.tool_name)
+    except ToolPolicyError:
+        return None
+    for field in policy.result_list_fields:
+        rows = response.get(field)
+        if not isinstance(rows, list) or not rows:
+            continue
+        items: list[dict[str, Any]] = []
+        budget = LIST_CAPACITY_CHARS
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            cost = len(_json(row))
+            if cost > budget and items:
+                break
+            budget -= cost
+            items.append(dict(row))
+        return {
+            "kind": field,
+            "items": items,
+            "omitted": len(rows) - len(items),
+        }
+    return None
+
+
+def _observed_text(observed: Mapping[str, Any], response: Mapping[str, Any]) -> str:
+    """A sentence about the list, not the list."""
+
+    kind = observed["kind"]
+    carried = len(observed["items"])
+    omitted = observed["omitted"]
+    parts = [f"{carried} {kind}"]
+    if omitted:
+        parts.append(f"({omitted} more not carried here)")
+    # Anything the tool said besides the rows -- counts, limits, its own
+    # partial flag -- still belongs in the sentence.
+    rest = {key: value for key, value in response.items() if key != kind}
+    if rest:
+        parts.append(_json(rest))
+    return " ".join(parts)
 
 
 def _search_query(arguments: Mapping[str, Any]) -> str | None:

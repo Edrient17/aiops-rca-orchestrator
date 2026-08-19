@@ -327,7 +327,7 @@
       "properties": {
         "evidence_id": {
           "type": "string",
-          "pattern": "^(zbx:(event|trigger|metric)|log:(summary|lines)|wazuh:alerts):.+$"
+          "pattern": "^(zbx:(event|trigger|metric|object)|log:(summary|lines)|wazuh:alerts):.+$"
         },
         "evidence_type": {
           "type": "string",
@@ -497,6 +497,38 @@
               "type": "null"
             }
           ]
+        },
+        "observed": {
+          "description": "Rows the observation returned, when a sentence cannot hold them. Absent for observations that are not a list.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "items"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "items": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "object"
+              }
+            },
+            "omitted": {
+              "description": "Rows the tool returned that are not carried here. Distinct from data_quality.partial, which is the tool saying its own answer was cut.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
         },
         "data_quality": {
           "oneOf": [
