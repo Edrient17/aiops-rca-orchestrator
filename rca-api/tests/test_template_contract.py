@@ -76,6 +76,41 @@ def test_an_incident_template_does_not_force_a_capacity_sweep():
     assert declared_effects(parse_sections(output)) == ()
 
 
+def test_a_state_report_fixes_only_the_frame():
+    """Asked about templates and triggers, the report forced process and port
+    sections because both were required. The question decides which aspects
+    get written; only the frame is fixed.
+    """
+    output = _load(TEMPLATE_DIR / "host-state-check.json")["output"]
+    by_id = {item.id: item for item in parse_sections(output)}
+
+    # The frame: what the question asked, and what could not be seen.
+    assert by_id["summary"].required
+    assert by_id["answer"].required
+    assert by_id["limitations"].required
+
+    # The aspects, written only when the question is about them.
+    for name in ("processes", "listening_ports", "notes"):
+        assert not by_id[name].required, name
+
+
+def test_the_state_aspects_still_declare_their_evidence():
+    # Optional in the report, guaranteed in the collection: the sweep gathers
+    # them whatever the question, so the section can be written when it applies.
+    output = _load(TEMPLATE_DIR / "host-state-check.json")["output"]
+    by_id = {item.id: item for item in parse_sections(output)}
+    assert by_id["processes"].requires_effects == ("current_process_state",)
+    assert by_id["listening_ports"].requires_effects == ("current_port_state",)
+
+
+def test_the_flexible_section_declares_nothing():
+    # `answer` takes whatever the question was about, including aspects with no
+    # recipe. Declaring an effect would tie it to one of them.
+    output = _load(TEMPLATE_DIR / "host-state-check.json")["output"]
+    by_id = {item.id: item for item in parse_sections(output)}
+    assert by_id["answer"].requires_effects == ()
+
+
 class TestWhatValidationCatches:
     def test_an_effect_no_tool_produces(self):
         output = {

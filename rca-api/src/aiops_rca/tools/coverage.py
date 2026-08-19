@@ -24,8 +24,13 @@ from aiops_rca.tools.result import ToolExecutionResult
 # budget. get_metric_summary accepts twenty; a report reads a handful.
 METRIC_ITEMS_PER_HOST = 8
 DEFAULT_AGGREGATION = "1h"
-# Enough to characterise a host without pasting a process table into a report.
-AGENT_STATE_ROWS = 50
+# The Wazuh tools answer in PID order, and the low PIDs are kernel threads --
+# a host with sixty services carries a hundred-odd of them. Fifty rows returned
+# forty-nine threads and one service, so the number has to clear the threads
+# before the interesting processes begin. Kernel threads are dropped from the
+# evidence afterwards; this is only about asking for enough rows to reach past
+# them.
+AGENT_STATE_ROWS = 500
 
 
 def covered_effects(
@@ -261,6 +266,8 @@ class AgentStateRecipe:
                 ),
             ):
                 result = await context.execute(tool_name, arguments, host.host_id)
+                if tool_name == "get_wazuh_agent_processes":
+                    result = _without_kernel_threads(result)
                 calls.append(
                     _call(
                         result,
@@ -342,3 +349,29 @@ def service_processes(response: Any) -> list[Mapping[str, Any]]:
         for item in response.get("processes") or []
         if isinstance(item, Mapping) and not item.get("kernel_thread")
     ]
+
+
+def _without_kernel_threads(result: ToolExecutionResult) -> ToolExecutionResult:
+    """Drop kernel threads before the response becomes evidence.
+
+    Evidence summaries are capped, so whatever is at the front of the list is
+    all a report ever sees. Kernel threads hold the low PIDs and outnumber the
+    services several times over, which is how a host running java and dockerd
+    was reported as mm_percpu_wq and kswapd0.
+
+    They are counted rather than silently discarded: the count is what makes
+    the smaller list explainable.
+    """
+    services = service_processes(result.response)
+    if not isinstance(result.response, Mapping):
+        return result
+    total = len(result.response.get("processes") or [])
+    return result.model_copy(
+        update={
+            "response": {
+                **result.response,
+                "processes": services,
+                "kernel_threads_omitted": total - len(services),
+            },
+        },
+    )

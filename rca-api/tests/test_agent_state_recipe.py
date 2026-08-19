@@ -180,6 +180,51 @@ def test_a_host_with_no_agent_is_skipped_without_guessing():
     assert "declared_effect_uncovered" in codes
 
 
+def test_kernel_threads_are_gone_from_the_evidence():
+    # Not just filtered in a helper -- filtered on the way into the evidence,
+    # which is the only place a report ever reads. The helper existed and was
+    # tested for a day before anything called it, and the reports stayed full
+    # of kernel threads that whole time.
+    update, _ = _sweep(["current_process_state"])
+    process_evidence = [
+        item
+        for item in update["evidence"]
+        if "Read the current state" in (item.summary or "")
+        and "processes" in (item.summary or "")
+    ]
+    assert process_evidence
+    summary = process_evidence[0].summary
+    assert "sshd" in summary
+    assert "java" in summary
+    assert "mm_percpu_wq" not in summary
+    assert "kswapd0" not in summary
+
+
+def test_the_omitted_count_is_kept():
+    # A shorter list needs the reason for being shorter, or it reads as a host
+    # with four processes.
+    update, _ = _sweep(["current_process_state"])
+    summary = next(
+        item.summary
+        for item in update["evidence"]
+        if "kernel_threads_omitted" in (item.summary or "")
+    )
+    assert "kernel_threads_omitted" in summary
+
+
+def test_enough_rows_are_asked_for_to_reach_past_the_threads():
+    from aiops_rca.tools.coverage import AGENT_STATE_ROWS
+
+    # Fifty returned forty-nine kernel threads on a real host. The limit has to
+    # clear them before the services begin.
+    assert AGENT_STATE_ROWS >= 300
+    _, transport = _sweep(["current_process_state"])
+    _, arguments = next(
+        c for c in transport.calls if c[0] == "get_wazuh_agent_processes"
+    )
+    assert arguments["limit"] == AGENT_STATE_ROWS
+
+
 def test_the_pair_is_not_started_without_room_to_finish():
     update, transport = _sweep(["current_process_state"], limits={"max_tool_calls": 2})
     assert transport.calls == []
