@@ -47,7 +47,11 @@ from aiops_rca.sources import SOURCES
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
 from aiops_rca.tools.adapters.streamable_http import StreamableHttpMcpTransport
 from aiops_rca.tools.executor import ToolExecutor
-from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY, ToolRegistry
+from aiops_rca.tools.registry import (
+    DEFAULT_TOOL_REGISTRY,
+    ToolPolicyError,
+    ToolRegistry,
+)
 
 
 class InvestigationService:
@@ -307,7 +311,7 @@ class InvestigationService:
                     continue
                 try:
                     policy = self.registry.get(name)
-                except ValueError:
+                except ToolPolicyError:
                     continue
                 if policy.source != source or policy.blocked_reason:
                     continue
@@ -319,11 +323,11 @@ class InvestigationService:
                         "effects": policy.effects,
                         "temporal_scope": policy.temporal_scope,
                         "description": str(item.get("description") or "")[:4000],
+                        # No output_schema: not one of these servers declares
+                        # one, so it was an empty object sent on every turn of
+                        # the loop under a name that promised a contract.
                         "input_schema": _without_examples(
                             item.get("inputSchema") or {}
-                        ),
-                        "output_schema": _without_examples(
-                            item.get("outputSchema") or {}
                         ),
                     }
                 )

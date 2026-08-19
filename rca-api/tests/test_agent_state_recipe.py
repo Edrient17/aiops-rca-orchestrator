@@ -144,19 +144,37 @@ def _sweep(effects, hosts=None, **updates):
     return update, transport
 
 
-def test_a_declared_process_section_is_collected():
+def test_only_what_was_declared_is_collected():
+    # The recipe covers two effects. Running both regardless meant a template
+    # asking only about processes still paid for a port query on every host.
     update, transport = _sweep(["current_process_state"])
+    assert [name for name, _ in transport.calls] == [
+        "get_wazuh_agents",
+        "get_wazuh_agent_processes",
+    ]
+    assert update["tool_call_count"] == 2
+
+
+def test_declaring_both_collects_both():
+    _, transport = _sweep(["current_process_state", "current_port_state"])
     assert [name for name, _ in transport.calls] == [
         "get_wazuh_agents",
         "get_wazuh_agent_processes",
         "get_wazuh_agent_ports",
     ]
-    assert update["tool_call_count"] == 3
+
+
+def test_ports_alone_skips_the_process_read():
+    _, transport = _sweep(["current_port_state"])
+    assert [name for name, _ in transport.calls] == [
+        "get_wazuh_agents",
+        "get_wazuh_agent_ports",
+    ]
 
 
 def test_the_resolved_agent_id_is_the_one_used():
     _, transport = _sweep(["current_port_state"])
-    _, arguments = next(c for c in transport.calls if c[0] == "get_wazuh_agent_processes")
+    _, arguments = next(c for c in transport.calls if c[0] == "get_wazuh_agent_ports")
     assert arguments["agent_id"] == "001"
 
 
@@ -225,7 +243,20 @@ def test_enough_rows_are_asked_for_to_reach_past_the_threads():
     assert arguments["limit"] == AGENT_STATE_ROWS
 
 
-def test_the_pair_is_not_started_without_room_to_finish():
-    update, transport = _sweep(["current_process_state"], limits={"max_tool_calls": 2})
+def test_the_lookup_is_not_made_without_room_for_what_follows():
+    # The agent lookup only earns its call if a read follows it. Asking for both
+    # reads needs three calls; two leaves the id with nothing to use it.
+    update, transport = _sweep(
+        ["current_process_state", "current_port_state"],
+        limits={"max_tool_calls": 2},
+    )
     assert transport.calls == []
     assert "declared_effect_uncovered" in [i.code for i in update["unknowns"]]
+
+
+def test_one_read_needs_only_two_calls():
+    _, transport = _sweep(["current_process_state"], limits={"max_tool_calls": 2})
+    assert [name for name, _ in transport.calls] == [
+        "get_wazuh_agents",
+        "get_wazuh_agent_processes",
+    ]

@@ -60,6 +60,15 @@ class SweepContext:
     collection: Mapping[str, Any]
     execute: Callable[[str, dict[str, Any], str], Awaitable[ToolExecutionResult]]
     remaining: Callable[[], int]
+    #: The effects still missing. A recipe covers several, and running all of
+    #: them regardless meant a template that declared only processes still paid
+    #: for a port query on every host.
+    wanted: frozenset[str] = frozenset()
+
+    def asked_for(self, *effects: str) -> bool:
+        # Empty means the caller did not say, which only happens in tests
+        # predating this field; collecting everything is the old behaviour.
+        return not self.wanted or bool(self.wanted.intersection(effects))
 
     def aggregation(self) -> str:
         value = self.collection.get("aggregation")
@@ -228,11 +237,17 @@ class AgentStateRecipe:
     effects = ("current_process_state", "current_port_state")
 
     async def collect(self, context: SweepContext) -> list[SweepCall]:
+        if not context.asked_for(*self.effects):
+            return []
+        # One lookup plus the reads that were asked for. Starting without room
+        # to finish spends a call on an id nothing will use.
+        needed = 1 + sum(
+            context.asked_for(effect)
+            for effect in ("current_process_state", "current_port_state")
+        )
         calls: list[SweepCall] = []
         for host in context.hosts:
-            if context.remaining() <= 2:
-                # The three calls are one observation. Two of them without the
-                # first buy nothing, because neither can run without the id.
+            if context.remaining() < needed:
                 break
             lookup_arguments = {"name": host.host}
             lookup = await context.execute(
@@ -250,21 +265,30 @@ class AgentStateRecipe:
             agent_id = _agent_id(lookup.response, host.host)
             if agent_id is None:
                 continue
-            for tool_name, arguments in (
-                ("get_wazuh_agent_processes", {"agent_id": agent_id, "limit": AGENT_STATE_ROWS}),
-                (
-                    "get_wazuh_agent_ports",
-                    {
-                        "agent_id": agent_id,
-                        "protocol": "tcp",
-                        # The tool's enum, which is upper case for the state and
-                        # lower for the protocol. Spelling either the other way
-                        # is refused before the call reaches Wazuh.
-                        "state": "LISTENING",
-                        "limit": AGENT_STATE_ROWS,
-                    },
-                ),
-            ):
+            planned: list[tuple[str, dict[str, Any]]] = []
+            if context.asked_for("current_process_state"):
+                planned.append(
+                    (
+                        "get_wazuh_agent_processes",
+                        {"agent_id": agent_id, "limit": AGENT_STATE_ROWS},
+                    ),
+                )
+            if context.asked_for("current_port_state"):
+                planned.append(
+                    (
+                        "get_wazuh_agent_ports",
+                        {
+                            "agent_id": agent_id,
+                            "protocol": "tcp",
+                            # The tool's enum: upper case for the state, lower
+                            # for the protocol. Either spelled the other way is
+                            # refused before the call reaches Wazuh.
+                            "state": "LISTENING",
+                            "limit": AGENT_STATE_ROWS,
+                        },
+                    ),
+                )
+            for tool_name, arguments in planned:
                 result = await context.execute(tool_name, arguments, host.host_id)
                 if tool_name == "get_wazuh_agent_processes":
                     result = _without_kernel_threads(result)

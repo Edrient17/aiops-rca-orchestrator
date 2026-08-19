@@ -122,6 +122,7 @@ class CoverageSweepNode:
             collection=state.collection or {},
             execute=execute,
             remaining=lambda: state.limits.max_tool_calls - len(results),
+            wanted=frozenset(pending),
         )
 
         for recipe in recipes_for(pending, self.recipes):
