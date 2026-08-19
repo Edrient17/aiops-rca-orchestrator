@@ -40,7 +40,6 @@ Copy-Item .env.example .env
 - `OSS_ES_MCP_URL`, `WAZUH_MCP_URL`: 공식 Elasticsearch MCP와 Wazuh MCP의
   Streamable HTTP `/mcp` URL
 - `OPENAI_API_KEY`, `RCA_*_MODEL`: LangGraph 서비스의 모델 연결
-- `RCA_EXECUTION_MODE`: `legacy`면 기존 n8n Agent, `langgraph`면 새 HTTP API 경로
 - `N8N_ENCRYPTION_KEY`: 최초 설정 후 절대 변경하지 않는 n8n credential 암호화 키
 
 ## 2. Slack App
@@ -206,10 +205,10 @@ python3 scripts/redeploy-workflow.py --force      # 손실을 감수하고 강�
 
 UI에서 직접 import해도 되지만, 그 경우 credential을 다시 지정해야 합니다.
 
-### LangGraph 경로 활성화
+### RCA API 배포
 
-새 경로를 포함한 워크플로를 먼저 재배포한 뒤 API를 올립니다. 처음에는 `.env`의
-`RCA_EXECUTION_MODE=legacy`를 유지해 기존 요청 경로를 보존합니다.
+워크플로는 접수·ACK·템플릿 조회까지만 담당하고, 조사와 보고서 작성은 전부
+`rca-api`가 합니다. API가 healthy가 된 것을 확인한 뒤 워크플로를 재배포합니다.
 
 ```bash
 docker compose up -d --build rca-api
@@ -218,15 +217,7 @@ docker compose exec rca-api python -c "import urllib.request; print(urllib.reque
 python3 scripts/redeploy-workflow.py --wait 300
 ```
 
-API가 healthy이고 재배포한 워크플로가 활성화된 것을 확인한 후 `.env`를 바꾸고
-n8n만 재생성하면 새 요청부터 LangGraph로 전달됩니다.
-
-```dotenv
-RCA_EXECUTION_MODE=langgraph
-```
-
 ```bash
-docker compose up -d n8n
 docker compose logs --tail=100 rca-api n8n
 ```
 

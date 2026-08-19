@@ -1,10 +1,9 @@
 # LangGraph migration slices
 
 The migration keeps n8n as the Slack ingress/egress and audit boundary. Each
-slice leaves the production workflow usable; the current implementation wires
-the core code paths through slice 5 and exposes slice 6 as an explicit
-environment flag, but golden replay, live quality and canary exit criteria are
-still operational work.
+slice leaves the production workflow usable; all six slices have landed, and the
+legacy branch has been removed; golden replay and canary exit criteria remain
+operational work.
 
 ## Slice 1 — contracts and deterministic graph shell (implemented)
 
@@ -62,14 +61,15 @@ Exit criteria: end-to-end API tests validate both JSON Schemas and resumability.
 Exit criteria: an agreed replay/canary set has no contract regressions, no
 write-capable tool calls, and acceptable latency/cost/error rates.
 
-## Slice 6 — controlled cutover (operator-gated)
+## Slice 6 — controlled cutover (complete)
 
-- Set `RCA_EXECUTION_MODE=langgraph` after smoke/canary validation while retaining
-  `legacy` as an operational fallback.
-- Increase traffic only after audit and quality gates pass.
-- Remove n8n reasoning nodes after the rollback window; retain n8n for Slack
-  ingress/egress and workflow-level operations unless a later decision changes
-  that boundary.
+- Traffic ran on the API behind the `RCA_EXECUTION_MODE` flag until the path had
+  proven itself on both report kinds.
+- The n8n reasoning nodes and the flag were then removed together: keeping a
+  branch nothing could reach meant carrying a second, drifting copy of the
+  prompts and schemas. Rollback is now a redeploy of the previous workflow
+  rather than an environment change.
+- n8n retains Slack ingress/egress and workflow-level operations.
 
 Exit criteria: production SLOs and RCA quality gates hold through the rollback
 window, and the legacy reasoning path can be retired explicitly.

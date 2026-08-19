@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,33 +7,15 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, "..");
 const outputDir = resolve(scriptDir, "..", "workflows");
 
+// The prompts and JSON schemas this used to read were the reasoning contract of
+// the n8n agents. Those agents are gone; the same contract now lives beside the
+// LangGraph nodes in rca-api, and schemas/ stays as the canonical definition
+// that rca-api's Pydantic models are tested against.
 async function main() {
-  const [
-    questionPrompt,
-    evidencePrompt,
-    rcaPrompt,
-    parsedSchema,
-    evidenceSchema,
-    reportSchema,
-  ] = await Promise.all([
-    readFile(resolve(rootDir, "prompts", "question-analyzer.system.md"), "utf8"),
-    readFile(resolve(rootDir, "prompts", "evidence-collector.system.md"), "utf8"),
-    readFile(resolve(rootDir, "prompts", "rca-writer.system.md"), "utf8"),
-    readJson(resolve(rootDir, "schemas", "parsed-request.schema.json")),
-    readJson(resolve(rootDir, "schemas", "evidence-package.schema.json")),
-    readJson(resolve(rootDir, "schemas", "report.schema.json")),
-  ]);
-
   const mainWorkflowId = "aiops-main-v010";
   const errorWorkflowId = "aiops-error-v010";
 
   const mainWorkflow = buildMainWorkflow({
-    questionPrompt,
-    evidencePrompt,
-    rcaPrompt,
-    parsedSchema: flattenLocalRefs(parsedSchema),
-    evidenceSchema: flattenLocalRefs(evidenceSchema),
-    reportSchema: flattenLocalRefs(reportSchema),
     mainWorkflowId,
     errorWorkflowId,
   });
@@ -47,21 +29,6 @@ async function main() {
 
   console.log(`Generated 2 workflows in ${outputDir}`);
 }
-
-// Each model id appears twice: once on the model node, once in the audit record
-// the stage writes to aiops_agent_runs. Defining them here keeps the two in step
-// -- editing only the node would leave the audit table attributing timings and
-// output to whichever model used to be there, which is exactly the data you
-// consult when deciding whether a cheaper model was good enough.
-// The investigation stage is the one that plans: it chooses tools, windows and
-// when to stop, and every failure worth chasing here has been a planning
-// failure rather than a writing one. It is the stage worth spending a larger
-// model on, and bench/ measures whether that spend shows up.
-const MODELS = {
-  question: { id: "gpt-5.4-mini", reasoningEffort: "low" },
-  investigation: { id: "gpt-5.6-terra", reasoningEffort: "medium" },
-  rca: { id: "gpt-5.4-mini", reasoningEffort: "medium" },
-};
 
 function buildMainWorkflow(input) {
   const nodes = [
@@ -131,12 +98,6 @@ function buildMainWorkflow(input) {
       [960, 0],
       "internal",
     ),
-    ifNode(
-      "Use LangGraph?",
-      "={{ ($env.RCA_EXECUTION_MODE || 'legacy').toLowerCase() }}",
-      "langgraph",
-      [1080, -420],
-    ),
     httpNode(
       "Call LangGraph RCA",
       "POST",
@@ -203,140 +164,6 @@ function buildMainWorkflow(input) {
       [3240, -360],
       "internal",
     ),
-    codeNode("Stamp Question Start", [1080, 0], stampCode),
-    agentNode(
-      "Question Analyzer",
-      [1200, 0],
-      input.questionPrompt,
-      // The catalog goes in as input rather than into the system prompt: it is
-      // per-request data read from a table, not part of this agent's role.
-      // supplies_hosts is derived here so the analyzer can tell that a kind
-      // which brings its own hosts does not need one named in the question.
-      "={{ JSON.stringify({ request_id: $('Normalize Request').first().json.request_id, question: $('Normalize Request').first().json.question, slack_received_at: $('Normalize Request').first().json.received_at, default_timezone: 'Asia/Seoul', prior_question: $('Normalize Request').first().json.prior_question, answers_clarification: Boolean($('Normalize Request').first().json.parent_request_id), report_catalog: ($('Fetch Template Catalog').first().json.templates || []).map(entry => ({ id: entry.template_id, title: entry.title, when_to_use: entry.description, supplies_hosts: entry.collection.host_selector.mode !== 'from_question', supplies_window: entry.collection.window.range !== 'anchor_relative' })) }, null, 2) }}",
-      3,
-    ),
-    modelNode("Question Model", [1120, 260], MODELS.question.id, MODELS.question.reasoningEffort),
-    // The last strict parser, until a monthly question rejected the whole
-    // output over a field that kind of report does not even use. It is the
-    // cheapest stage to retry and the earliest to fail, so a rejection here
-    // costs a question that was already acknowledged.
-    parserNode("Parsed Request Parser", [1320, 260], input.parsedSchema, true),
-    httpNode(
-      "Persist Question Result",
-      "POST",
-      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'question_analyzer', status: 'succeeded', model: '" + MODELS.question.id + "', duration_ms: Date.now() - $('Stamp Question Start').first().json.stage_started_ms, output: $('Question Analyzer').first().json.output }) }}",
-      [1440, 0],
-      "internal",
-    ),
-    codeNode("Select Template", [1560, 0], selectTemplateCode),
-    ifNode(
-      "Request Ready?",
-      "={{ $('Question Analyzer').first().json.output.parse_status }}",
-      "ready",
-      [1680, 0],
-    ),
-    codeNode("Stamp Evidence Start", [1800, -140], stampCode),
-    agentNode(
-      "Evidence Collector",
-      [1920, -140],
-      input.evidencePrompt,
-      // collection is null when no template matched, which is how this keeps
-      // behaving as it did before templates existed. Select Template settled
-      // the budget already, including the per-host scaling.
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, slack_context: $('Normalize Request').first().json, collection: $('Select Template').first().json.collection, window: $('Select Template').first().json.window, limits: $('Select Template').first().json.limits }, null, 2) }}",
-      12,
-    ),
-    modelNode("Investigation Model", [1840, 140], MODELS.investigation.id, MODELS.investigation.reasoningEffort),
-    // The only stage observed to fail schema validation in operation, so it is
-    // the only one given a retry. The other two parsers stay strict.
-    parserNode("Evidence Package Parser", [2040, 140], input.evidenceSchema, true),
-    mcpNode("Zabbix MCP Tools", [2240, 140], "ZABBIX_MCP_URL"),
-    // Elasticsearch search and ES|QL are intentionally routed through the
-    // official MCP server. It offers no authentication, so it must only be
-    // reachable from the private network.
-    mcpNode("Elasticsearch Query Tools", [2240, 500], "OSS_ES_MCP_URL", "none"),
-    // Metrics and logs both describe what the machine did. This describes what
-    // a person did to it: Wazuh reads auditd and syslog on the agent host, so
-    // an operator's `docker compose stop payment-service` arrives as a record
-    // with the actor, the timestamp and the full command line -- not as a
-    // string to be grepped out of a log window that may have been truncated.
-    mcpNode("Wazuh MCP Tools", [2240, 680], "WAZUH_MCP_URL"),
-    httpNode(
-      "Persist Evidence Result",
-      "POST",
-      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'evidence_collector', status: 'succeeded', model: '" + MODELS.investigation.id + "', duration_ms: Date.now() - $('Stamp Evidence Start').first().json.stage_started_ms, output: $('Evidence Collector').first().json.output }) }}",
-      [2160, -140],
-      "internal",
-    ),
-    codeNode("Stamp RCA Start", [2280, -140], stampCode),
-    agentNode(
-      "RCA Writer",
-      [2400, -140],
-      input.rcaPrompt,
-      // The section list is the writer's assignment: it fills the sections it
-      // is given, by id, and cannot invent or rename one. Sections gated on a
-      // problem event are withheld here as well as at render time, so the
-      // writer is never asked to produce timing that would be dropped anyway.
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, evidence_package: $('Evidence Collector').first().json.output, report_guidance: ($('Select Template').first().json.output || {}).guidance || '', sections: (($('Select Template').first().json.output || {}).sections || []).filter(section => !section.requires_problem_event || ($('Evidence Collector').first().json.output.evidence || []).some(item => /^zbx:event:\\d+$/.test(item.evidence_id || ''))).map(section => ({ id: section.id, heading: section.heading, instruction: section.instruction, required: section.required })) }, null, 2) }}",
-      3,
-    ),
-    modelNode("RCA Model", [2360, 140], MODELS.rca.id, MODELS.rca.reasoningEffort),
-    // The writer joined the list of stages observed to fail schema validation
-    // in operation: a month of evidence in, six sections out, and one item
-    // missing a field rejects the whole report after the investigation has
-    // already been paid for. autoFix hands it back to be corrected instead.
-    parserNode("Report Parser", [2560, 140], input.reportSchema, true),
-    httpNode(
-      "Persist RCA Result",
-      "POST",
-      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/agent-runs' }}",
-      "={{ JSON.stringify({ stage: 'rca_writer', status: 'succeeded', model: '" + MODELS.rca.id + "', duration_ms: Date.now() - $('Stamp RCA Start').first().json.stage_started_ms, output: $('RCA Writer').first().json.output }) }}",
-      [2640, -140],
-      "internal",
-    ),
-    codeNode("Format RCA for Slack", [2880, -140], formatRcaCode),
-    httpNode(
-      "Post RCA Report",
-      "POST",
-      "https://slack.com/api/chat.postMessage",
-      // The same anchor the status record holds, so the report lands in the
-      // thread that aiops_requests.slack_ack_ts says it is in.
-      "={{ JSON.stringify({ channel: $env.SLACK_ANSWER_CHANNEL_ID, thread_ts: $('Assert ACK Posted').first().json.thread_anchor_ts, text: $('Format RCA for Slack').first().json.slack_markdown }) }}",
-      [3120, -140],
-      "slack",
-    ),
-    codeNode("Assert RCA Posted", [3360, -140], assertSlackCode),
-    httpNode(
-      "Save Completed Report",
-      "PUT",
-      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/report' }}",
-      "={{ JSON.stringify({ parsed_request: $('Question Analyzer').first().json.output, evidence_package: $('Evidence Collector').first().json.output, rca_report: $('RCA Writer').first().json.output, slack_markdown: $('Format RCA for Slack').first().json.slack_markdown, slack_channel_id: $env.SLACK_ANSWER_CHANNEL_ID, slack_message_ts: $('Post RCA Report').first().json.ts }) }}",
-      [3600, -140],
-      "internal",
-    ),
-    codeNode("Format Clarification", [1920, 360], formatClarificationCode),
-    httpNode(
-      "Post Clarification",
-      "POST",
-      "https://slack.com/api/chat.postMessage",
-      // Asked in the thread of the user's own message in the question channel:
-      // the answer has to land somewhere ingress listens, and a reply there
-      // carries thread_ts, which is what links it back to this request.
-      "={{ JSON.stringify({ channel: $('Normalize Request').first().json.channel_id, thread_ts: $('Normalize Request').first().json.thread_ts || $('Normalize Request').first().json.message_ts, text: $('Format Clarification').first().json.text }) }}",
-      [2160, 360],
-      "slack",
-    ),
-    codeNode("Assert Clarification Posted", [2400, 360], assertSlackCode),
-    httpNode(
-      "Mark Needs Clarification",
-      "POST",
-      "={{ $env.AIOPS_CONTROL_URL + '/internal/requests/' + encodeURIComponent($('Normalize Request').first().json.request_id) + '/status' }}",
-      "={{ JSON.stringify({ status: $('Question Analyzer').first().json.output.parse_status }) }}",
-      [2640, 360],
-      "internal",
-    ),
   ];
 
   const connections = {};
@@ -347,9 +174,9 @@ function buildMainWorkflow(input) {
   connectMain(connections, "Post Business ACK", "Assert ACK Posted");
   connectMain(connections, "Assert ACK Posted", "Fetch Template Catalog");
   connectMain(connections, "Fetch Template Catalog", "Mark Analyzing");
-  connectMain(connections, "Mark Analyzing", "Use LangGraph?");
-  connectMain(connections, "Use LangGraph?", "Call LangGraph RCA", 0);
-  connectMain(connections, "Use LangGraph?", "Stamp Question Start", 1);
+  // The gate that chose between this path and the n8n agent chain went with
+  // the chain, so analysis runs straight into the API call.
+  connectMain(connections, "Mark Analyzing", "Call LangGraph RCA");
   connectMain(connections, "Call LangGraph RCA", "Prepare LangGraph Audit Runs");
   connectMain(connections, "Prepare LangGraph Audit Runs", "Persist LangGraph Audit Runs");
   connectMain(connections, "Persist LangGraph Audit Runs", "Collapse LangGraph Audit Runs");
@@ -387,40 +214,10 @@ function buildMainWorkflow(input) {
     "Assert LangGraph Clarification Posted",
     "Mark LangGraph Needs Clarification",
   );
-  connectMain(connections, "Stamp Question Start", "Question Analyzer");
-  connectMain(connections, "Question Analyzer", "Persist Question Result");
-  connectMain(connections, "Persist Question Result", "Select Template");
-  connectMain(connections, "Select Template", "Request Ready?");
-  connectMain(connections, "Request Ready?", "Stamp Evidence Start", 0);
-  connectMain(connections, "Request Ready?", "Format Clarification", 1);
-  connectMain(connections, "Stamp Evidence Start", "Evidence Collector");
-  connectMain(connections, "Evidence Collector", "Persist Evidence Result");
-  connectMain(connections, "Persist Evidence Result", "Stamp RCA Start");
-  connectMain(connections, "Stamp RCA Start", "RCA Writer");
-  connectMain(connections, "RCA Writer", "Persist RCA Result");
-  connectMain(connections, "Persist RCA Result", "Format RCA for Slack");
-  connectMain(connections, "Format RCA for Slack", "Post RCA Report");
-  connectMain(connections, "Post RCA Report", "Assert RCA Posted");
-  connectMain(connections, "Assert RCA Posted", "Save Completed Report");
-  connectMain(connections, "Format Clarification", "Post Clarification");
-  connectMain(connections, "Post Clarification", "Assert Clarification Posted");
-  connectMain(connections, "Assert Clarification Posted", "Mark Needs Clarification");
 
-  connectAi(connections, "Question Model", "Question Analyzer", "ai_languageModel");
-  connectAi(connections, "Parsed Request Parser", "Question Analyzer", "ai_outputParser");
   // autoFix on the parsed-request parser requires its own model connection.
-  connectAi(connections, "Question Model", "Parsed Request Parser", "ai_languageModel");
-  connectAi(connections, "Investigation Model", "Evidence Collector", "ai_languageModel");
-  connectAi(connections, "Evidence Package Parser", "Evidence Collector", "ai_outputParser");
   // autoFix on the evidence parser requires its own model connection.
-  connectAi(connections, "Investigation Model", "Evidence Package Parser", "ai_languageModel");
-  connectAi(connections, "Zabbix MCP Tools", "Evidence Collector", "ai_tool");
-  connectAi(connections, "Elasticsearch Query Tools", "Evidence Collector", "ai_tool");
-  connectAi(connections, "Wazuh MCP Tools", "Evidence Collector", "ai_tool");
-  connectAi(connections, "RCA Model", "RCA Writer", "ai_languageModel");
-  connectAi(connections, "Report Parser", "RCA Writer", "ai_outputParser");
   // autoFix on the report parser requires its own model connection.
-  connectAi(connections, "RCA Model", "Report Parser", "ai_languageModel");
 
   return {
     id: input.mainWorkflowId,
@@ -536,69 +333,6 @@ function codeNode(name, position, jsCode) {
   });
 }
 
-// maxIterations is the only hard ceiling n8n enforces on an agent, so it is set
-// per agent rather than left at a single default: the investigator needs room to
-// iterate over tools, while the two agents that call no tools should never loop.
-function agentNode(name, position, systemMessage, text, maxIterations) {
-  return node(name, "@n8n/n8n-nodes-langchain.agent", 3.1, position, {
-    promptType: "define",
-    text,
-    hasOutputParser: true,
-    needsFallback: false,
-    options: {
-      systemMessage,
-      maxIterations,
-      returnIntermediateSteps: false,
-    },
-  });
-}
-
-function modelNode(name, position, model, reasoningEffort) {
-  return node(name, "@n8n/n8n-nodes-langchain.lmChatOpenAi", 1.3, position, {
-    model: {
-      __rl: true,
-      mode: "id",
-      value: model,
-    },
-    responsesApiEnabled: true,
-    builtInTools: {},
-    options: {
-      reasoningEffort,
-    },
-  });
-}
-
-// autoFix lets the parser hand a rejected output back to a model to be
-// corrected instead of failing the run. Enabling it adds a *required* model
-// input to the parser node, so any caller passing true must also connect one.
-function parserNode(name, position, schema, autoFix = false) {
-  return node(
-    name,
-    "@n8n/n8n-nodes-langchain.outputParserStructured",
-    1.3,
-    position,
-    {
-      schemaType: "manual",
-      inputSchema: JSON.stringify(schema, null, 2),
-      autoFix,
-    },
-  );
-}
-
-// n8n prefixes every tool it exposes with the node name, so two MCP servers on
-// one agent cannot collide however they name their tools.
-function mcpNode(name, position, urlVariable, authentication = "bearerAuth") {
-  return node(name, "@n8n/n8n-nodes-langchain.mcpClientTool", 1.4, position, {
-    endpointUrl: "={{ $env." + urlVariable + " }}",
-    serverTransport: "httpStreamable",
-    authentication,
-    include: "all",
-    options: {
-      timeout: 120_000,
-    },
-  });
-}
-
 // `extras` carries node-level settings rather than parameters -- onError above
 // all. Main-workflow calls leave it empty: a step that fails there must abort so
 // the error workflow fires, which is the whole reporting path.
@@ -696,57 +430,12 @@ function connectMain(connections, from, to, outputIndex = 0) {
   });
 }
 
-// Appends rather than replaces: one model node feeds both an agent and that
-// agent's auto-fixing parser, so the same source can have several targets on
-// the same connection type.
-function connectAi(connections, from, to, type) {
-  connections[from] ??= {};
-  connections[from][type] ??= [[]];
-  connections[from][type][0].push({
-    node: to,
-    type,
-    index: 0,
-  });
-}
-
-function flattenLocalRefs(schema) {
-  const root = structuredClone(schema);
-
-  function visit(value) {
-    if (Array.isArray(value)) {
-      return value.map(visit);
-    }
-    if (typeof value !== "object" || value === null) {
-      return value;
-    }
-    if (typeof value.$ref === "string" && value.$ref.startsWith("#/")) {
-      const resolved = resolvePointer(root, value.$ref);
-      const siblings = Object.fromEntries(
-        Object.entries(value).filter(([key]) => key !== "$ref"),
-      );
-      return visit({ ...structuredClone(resolved), ...siblings });
-    }
-
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => !["$schema", "$id", "$defs"].includes(key))
-        .map(([key, child]) => [key, visit(child)]),
-    );
-  }
-
-  return visit(root);
-}
-
 function resolvePointer(root, pointer) {
   return pointer
     .slice(2)
     .split("/")
     .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))
     .reduce((current, part) => current[part], root);
-}
-
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
 }
 
 /**
@@ -851,13 +540,6 @@ if (!anchor) {
 return [{ json: { ...response, thread_anchor_ts: anchor } }];
 `.trim();
 
-// Records when a stage begins so the persist call after it can report how long
-// the stage took. Without this the agent_runs.duration_ms column stays empty and
-// per-stage latency can only be recovered by parsing n8n's internal run data.
-const stampCode = String.raw`
-return [{ json: { ...$input.first().json, stage_started_ms: Date.now() } }];
-`.trim();
-
 const prepareLangGraphAuditCode = String.raw`
 const response = $input.first().json;
 const runs = Array.isArray(response.agent_runs) ? response.agent_runs : [];
@@ -869,102 +551,6 @@ return runs.map((run) => ({ json: run }));
 
 const collapseItemsCode = String.raw`
 return [{ json: { persisted: $input.all().length } }];
-`.trim();
-
-// Turns the kind the analyzer named into the template that defines it, and
-// settles the investigation budget while it is at it.
-//
-// The matching lives here rather than in the output parser because n8n's parser
-// takes a static schema, so the set of valid kinds cannot be an enum that grows
-// with the table. Checking it here costs nothing and fails softer: a model that
-// names a kind nobody defined falls back to the built-in behaviour instead of
-// failing a question that has already been acknowledged.
-//
-// Merging the limits here rather than in the agent's expression is the same
-// reasoning as the anchor -- a Code node is real JavaScript, while an n8n
-// expression is one expression, and this is a lookup with defaults.
-const selectTemplateCode = String.raw`
-const catalog = $('Fetch Template Catalog').first().json.templates || [];
-const parsed = $('Question Analyzer').first().json.output;
-const requested = parsed.request_type;
-
-// Falls back to the incident RCA, which is seeded by migration for exactly this
-// reason: the report cannot be laid out without a section list, so there has to
-// be one to land on. Failing here rather than rendering something shapeless is
-// the right end if even that is gone -- it means the table was emptied, which
-// is a configuration problem and not something to paper over.
-const template = catalog.find((entry) => entry.template_id === requested)
-  || catalog.find((entry) => entry.template_id === 'incident_rca')
-  || null;
-if (!template) {
-  throw new Error(
-    'No report template matched \'' + requested + '\' and the incident_rca fallback is missing. '
-    + 'Re-run the migrations to restore it.',
-  );
-}
-const collection = template.collection;
-const limits = collection && collection.limits ? collection.limits : {};
-
-// Without a template this is exactly the budget the workflow used before there
-// were any: 30 calls for one host, scaled by the number asked about.
-const hostCount = Math.max(1, (parsed.host_queries || []).length);
-
-// Turn the template's range into real timestamps here rather than letting the
-// writer work them out. Asking a model for the bounds of last month is the same
-// kind of arithmetic this system keeps away from it everywhere else, and it is
-// the input to every query that follows -- a month off by a day is a month of
-// wrong data, reported confidently.
-//
-// KST is UTC+9 with no daylight saving, so shifting by nine hours makes the UTC
-// getters read local calendar fields, and shifting back gives the instant.
-const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-const asked = new Date($('Normalize Request').first().json.received_at);
-const local = new Date(asked.getTime() + KST_OFFSET_MS);
-const instant = (wallMs) => new Date(wallMs - KST_OFFSET_MS).toISOString();
-const daysBack = (days) => ({
-  from: new Date(asked.getTime() - days * 24 * 60 * 60 * 1000).toISOString(),
-  to: asked.toISOString(),
-});
-
-const range = (collection.window && collection.window.range) || 'anchor_relative';
-let window = null;
-if (range === 'last_calendar_month') {
-  // Date.UTC normalises month -1 into the previous December on its own.
-  window = {
-    from: instant(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() - 1, 1)),
-    to: instant(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1)),
-  };
-} else if (range === 'last_7_days') {
-  window = daysBack(7);
-} else if (range === 'last_30_days') {
-  window = daysBack(30);
-}
-// anchor_relative leaves this null: the window comes from the anchor time the
-// analyzer read out of the question, which is how an incident has always worked.
-
-return [{ json: {
-  requested_template_id: requested,
-  template_id: template.template_id,
-  template_version: template.version,
-  matched: template.template_id === requested,
-  collection,
-  window,
-  output: template.output,
-  limits: {
-    max_iterations: limits.max_iterations || 10,
-    max_tool_calls: limits.max_tool_calls || Math.min(60, 10 + 20 * hostCount),
-    // Was a flat 24 whatever the template asked for, so a monthly report was
-    // handed a month-long window and told in the same breath not to look past a
-    // day. When the range produced a window, that window is the bound; without
-    // one it follows the policy, which is what decides the ceiling the MCP will
-    // actually enforce.
-    max_window_hours: window
-      ? Math.ceil((Date.parse(window.to) - Date.parse(window.from)) / 3600000)
-      : (collection.window && collection.window.policy === 'long_term_capacity'
-          ? 24 * 31
-          : 24),
-  },
-}}];
 `.trim();
 
 // A request that answers a clarification is a continuation, not a new question.
