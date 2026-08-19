@@ -38,11 +38,11 @@ PATCHED_IN_CONTAINER = "/opt/aiops/workflows/.redeploy-with-credentials.json"
 # nothing for a node being added. Entries here are safe to leave in place: they
 # apply only when the node has no credential yet, so once a node is deployed the
 # carry-over takes over and this stops mattering.
-FIRST_TIME_CREDENTIALS = {
-    "Wazuh MCP Tools": {
-        "httpBearerAuth": {"id": "wazuhMcpBearer01", "name": "Wazuh MCP Bearer Auth"},
-    },
-}
+# Empty since the reasoning nodes were removed: the workflow no longer holds an
+# MCP client. The Wazuh entry that lived here named a node that is now gone, and
+# seeding a credential onto a node the workflow does not have fails the
+# carry-over check it was written to satisfy.
+FIRST_TIME_CREDENTIALS = {}
 
 # The error handler ships alongside the main workflow and needs none of the
 # credential carry-over below: both of its HTTP nodes authenticate from $env, so
@@ -197,6 +197,7 @@ def main():
 
     with open(os.path.join(REPO, SOURCE), encoding="utf-8") as handle:
         workflow = json.load(handle)
+    names = {node["name"] for node in workflow["nodes"]}
     # Zero is the right answer once the reasoning nodes are gone: what is left
     # authenticates with header expressions read from the environment, not with
     # n8n credentials. So the guard asks whether the version being imported
@@ -214,11 +215,13 @@ def main():
     # between two runs. Naming the credential here lets a new MCP server land in
     # one run. The credential must already exist; this only points at it.
     for name, assignment in FIRST_TIME_CREDENTIALS.items():
+        if name not in names:
+            fail("FIRST_TIME_CREDENTIALS names {!r}, which is not a node in the "
+                 "workflow being imported. Remove the stale entry.".format(name))
         if name not in credentials:
             credentials[name] = assignment
             print("  seeding first-time credential for: " + name)
 
-    names = {node["name"] for node in workflow["nodes"]}
     retired = {name.strip() for name in args.retire.split(",") if name.strip()}
     for name in sorted(retired & set(credentials)):
         del credentials[name]
