@@ -43,6 +43,7 @@ from aiops_rca.services.llm import OpenAIStructuredModel, StructuredModel
 from aiops_rca.services.template_contract import parse_sections
 from aiops_rca.services.templates import prepare_collection, select_template
 from aiops_rca.services.tracing import configure as configure_tracing
+from aiops_rca.sources import SOURCES
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
 from aiops_rca.tools.adapters.streamable_http import StreamableHttpMcpTransport
 from aiops_rca.tools.executor import ToolExecutor
@@ -281,7 +282,7 @@ class InvestigationService:
     async def _load_tool_catalog(
         self,
     ) -> tuple[list[dict[str, Any]], list[UnknownItem]]:
-        sources = ("zabbix", "elasticsearch", "wazuh")
+        sources = tuple(SOURCES)
         results = await asyncio.gather(
             *(self.adapters.for_source(source).list_tools() for source in sources),
             return_exceptions=True,
@@ -337,35 +338,27 @@ def build_live_service(settings: Settings) -> InvestigationService:
         timeout_seconds=settings.model_timeout_seconds,
         traced=traced,
     )
-    transports = {
-        "zabbix": StreamableHttpMcpTransport(
-            settings.zabbix_mcp_url,
-            bearer_token=settings.zabbix_mcp_auth_token.get_secret_value(),
-            timeout_seconds=settings.mcp_timeout_seconds,
-            retry_attempts=settings.mcp_retry_attempts,
-        ),
-        "elasticsearch": StreamableHttpMcpTransport(
-            settings.oss_es_mcp_url,
-            timeout_seconds=settings.mcp_timeout_seconds,
-            retry_attempts=settings.mcp_retry_attempts,
-        ),
-        "wazuh": StreamableHttpMcpTransport(
-            settings.wazuh_mcp_url,
-            bearer_token=settings.wazuh_mcp_auth_token.get_secret_value(),
-            timeout_seconds=settings.mcp_timeout_seconds,
-            retry_attempts=settings.mcp_retry_attempts,
-        ),
-    }
+    # Built from the source table so adding an MCP server does not mean
+    # remembering this function exists.
     adapters = AdapterSet(
-        **{
-            source: McpAdapter(
-                source=source,
+        {
+            profile.name: McpAdapter(
+                source=profile.name,
                 registry=DEFAULT_TOOL_REGISTRY,
-                transport=transport,
+                transport=StreamableHttpMcpTransport(
+                    getattr(settings, profile.url_setting),
+                    bearer_token=(
+                        getattr(settings, profile.token_setting).get_secret_value()
+                        if profile.token_setting
+                        else None
+                    ),
+                    timeout_seconds=settings.mcp_timeout_seconds,
+                    retry_attempts=settings.mcp_retry_attempts,
+                ),
                 timeout_seconds=settings.mcp_timeout_seconds,
             )
-            for source, transport in transports.items()
-        }
+            for profile in SOURCES.values()
+        },
     )
     return InvestigationService(settings=settings, model=model, adapters=adapters)
 

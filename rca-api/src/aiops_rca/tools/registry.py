@@ -7,8 +7,8 @@ from typing import Annotated, Any, Literal
 from pydantic import Field
 
 from aiops_rca.schemas.base import StrictModel
+from aiops_rca.sources import ToolSource
 
-ToolSource = Literal["zabbix", "elasticsearch", "wazuh"]
 ToolKind = Literal["structured", "generic", "inventory"]
 TemporalScope = Literal["historical", "current_only", "any"]
 

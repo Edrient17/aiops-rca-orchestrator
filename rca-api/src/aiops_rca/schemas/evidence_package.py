@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import AwareDatetime, Field, model_validator
 
 from aiops_rca.schemas.base import StrictModel, ZabbixId
+from aiops_rca.sources import ToolSource, evidence_id_pattern
 
 EvidenceRef = Annotated[str, Field(min_length=1, max_length=300)]
 RequiredEvidenceRefs = Annotated[
@@ -127,7 +128,7 @@ class Evidence(StrictModel):
     evidence_id: Annotated[
         str,
         Field(
-            pattern=r"^(zbx:(event|trigger|metric|object)|log:(summary|lines)|wazuh:alerts):.+$"
+            pattern=evidence_id_pattern()
         ),
     ]
     evidence_type: Literal[
@@ -140,7 +141,7 @@ class Evidence(StrictModel):
         "audit_alerts",
         "observation",
     ]
-    source: Literal["zabbix", "elasticsearch", "wazuh"]
+    source: ToolSource
     summary: Annotated[str, Field(min_length=1, max_length=3000)]
     observed_at: AwareDatetime | None
     window: EvidenceWindow | None

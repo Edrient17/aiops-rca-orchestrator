@@ -2,16 +2,15 @@
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
+from aiops_rca.sources import SOURCES, ToolSource
 from aiops_rca.tools.registry import (
     RoutingContext,
     ToolPolicy,
     ToolRegistry,
-    ToolSource,
     apply_window_policy,
 )
 from aiops_rca.tools.result import ToolExecutionResult
@@ -144,15 +143,26 @@ def _error_text(value: Any) -> str:
     return repr(value)[:10_000]
 
 
-@dataclass(frozen=True)
 class AdapterSet:
-    zabbix: McpAdapter
-    elasticsearch: McpAdapter
-    wazuh: McpAdapter
+    """The adapters, keyed by source rather than named one per field.
+
+    Named fields meant a new MCP server had to be added twice here -- once as a
+    field and once in the lookup -- and the second was easy to miss.
+    """
+
+    def __init__(self, adapters: Mapping[ToolSource, McpAdapter] | None = None, **named: McpAdapter) -> None:
+        merged: dict[str, McpAdapter] = dict(adapters or {})
+        merged.update(named)
+        missing = sorted(set(SOURCES) - set(merged))
+        if missing:
+            raise ValueError(f"no adapter for source(s): {', '.join(missing)}")
+        self.adapters = merged
 
     def for_source(self, source: ToolSource) -> McpAdapter:
-        return {
-            "zabbix": self.zabbix,
-            "elasticsearch": self.elasticsearch,
-            "wazuh": self.wazuh,
-        }[source]
+        return self.adapters[source]
+
+    @property
+    def zabbix(self) -> McpAdapter:
+        """Named because host resolution and the phenomenon scan are Zabbix's."""
+
+        return self.adapters["zabbix"]

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import pytest
 
 from aiops_rca.schemas.investigation import PlannedToolCall
+from aiops_rca.sources import SOURCES
 from aiops_rca.tools.normalizer import normalize_observation
 from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
 from aiops_rca.tools.result import ToolExecutionResult
@@ -52,12 +53,10 @@ def test_wazuh_and_elasticsearch_keep_their_shapes():
 
 @pytest.mark.parametrize(
     "policy",
-    [p for p in DEFAULT_TOOL_REGISTRY.list()],
+    list(DEFAULT_TOOL_REGISTRY.list()),
     ids=lambda p: p.name,
 )
-def test_every_allowlisted_tool_has_a_shape_for_its_source(policy):
+def test_every_allowlisted_tool_has_a_profile_for_its_source(policy):
     # A source with no entry would raise KeyError at normalization time, which
     # is the middle of an investigation -- the worst place to learn it.
-    from aiops_rca.tools.normalizer import _GENERIC_SHAPE
-
-    assert policy.source in _GENERIC_SHAPE
+    assert policy.source in SOURCES

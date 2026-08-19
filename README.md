@@ -327,6 +327,101 @@ curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \
 `aiops_report_template_versions`에 남으므로 템플릿을 지웠다 다시 만들어도 버전
 번호는 이어집니다.
 
+## MCP 서버 추가하기
+
+증거 출처를 하나 붙이는 일은 전부 `rca-api` 안에서 끝납니다. n8n에는 노드도
+credential도 만들지 않습니다.
+
+건드릴 곳은 네 군데이고, 나머지는 표에서 따라옵니다.
+
+### 1. 환경 변수
+
+`.env.example`과 `.env`에 URL과 토큰을 넣고, `docker-compose.yml`의 `rca-api`
+환경에 전달합니다. 인증이 없는 서버라면 URL만 넣습니다.
+
+```dotenv
+PROM_MCP_URL=http://10.0.0.9:3005/mcp
+PROM_MCP_AUTH_TOKEN=<bearer>
+```
+
+### 2. `rca-api/src/aiops_rca/config/settings.py`
+
+같은 이름의 필드를 추가합니다. 토큰이 있으면 `reject_empty_secrets`의 목록에도
+넣어 빈 값으로 기동하지 않게 합니다.
+
+```python
+prom_mcp_url: str
+prom_mcp_auth_token: SecretStr
+```
+
+### 3. `rca-api/src/aiops_rca/sources.py`
+
+**여기가 중심입니다.** 표에 항목 하나를 넣으면 transport, adapter, 도구 카탈로그
+조회, 증거 접두사, `evidence_id` 정규식이 전부 따라옵니다.
+
+```python
+"prometheus": SourceProfile(
+    name="prometheus",
+    url_setting="prom_mcp_url",
+    token_setting="prom_mcp_auth_token",   # 인증이 없으면 None
+    generic_prefix="prom:object",
+    generic_evidence_type="observation",
+    evidence_prefixes=("prom:series", "prom:object"),
+),
+```
+
+같은 파일의 `ToolSource`에도 이름을 추가합니다. 타입 검사기가 읽어야 해서 생성할
+수 없는 값인데, 표와 어긋나면 테스트가 잡습니다.
+
+`generic_prefix`는 전용 normalizer가 없는 도구의 결과가 기록될 이름입니다.
+**비워 둘 수 없습니다** — 없으면 조사 도중 `KeyError`로 죽습니다.
+
+### 4. `rca-api/src/aiops_rca/tools/registry.py`
+
+도구마다 `ToolPolicy`를 등록합니다. `effects`가 그 도구로 무엇을 알 수 있는지를
+나타내는 이름이고, 보고서 섹션의 `requires_effects`가 이 어휘를 씁니다.
+
+```python
+_tool(
+    "get_prom_range",
+    "prometheus",
+    ("metric_level", "metric_change"),
+    requires=("query", "time_from", "time_to"),
+    priority=20,
+    result_list_fields=("series",),
+),
+```
+
+- `requires` / `requires_any`: 없으면 호출 전에 거절되는 인자
+- `temporal_scope="current_only"`: 현재 상태만 답하는 도구. 과거를 묻는 관측에
+  배정되지 않습니다
+- `kind="generic"`: 정형 도구로 부족하다는 근거가 있을 때만 열리는 범용 도구
+- `window_policy_argument="policy"`: 긴 구간에 다른 정책 인자를 받는 도구
+
+### 선택: 커버리지 레시피
+
+보고서 섹션이 이 서버의 `effects`를 `requires_effects`로 선언하게 하려면
+`tools/coverage.py`에 레시피를 추가합니다. 레시피가 없는 effect는 계획 단계에서
+모델이 요청할 때만 수집되고, 섹션이 선언하면 템플릿 검증에서 거절됩니다.
+
+### 확인
+
+```powershell
+Set-Location rca-api
+.venv/Scripts/python.exe -m pytest -q
+```
+
+빠뜨린 것은 대부분 여기서 걸립니다 — 표와 `ToolSource`의 불일치, 존재하지 않는
+설정 필드 이름, 스키마가 모르는 증거 타입, 두 소스가 같은 접두사를 주장하는
+경우, 그리고 등록된 도구의 소스가 표에 없는 경우입니다.
+
+실제 서버에 붙는지는 기동 후 도구 카탈로그로 확인합니다.
+
+```bash
+docker compose up -d --build rca-api
+docker compose logs rca-api | grep -i "tool_catalog"
+```
+
 ## 데이터 확인
 
 ```powershell
