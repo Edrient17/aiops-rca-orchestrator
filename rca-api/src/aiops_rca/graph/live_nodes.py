@@ -97,7 +97,7 @@ class EstablishPhenomenonNode:
                 target_hypothesis_ids=[],
                 host_id=host.host_id,
             )
-            evidence = merge_evidence(
+            evidence, merge_unknowns = merge_evidence(
                 evidence,
                 normalize_observation(
                     result,
@@ -106,6 +106,7 @@ class EstablishPhenomenonNode:
                     host=host.host,
                 ),
             )
+            unknowns.extend(merge_unknowns)
             observations.append(
                 {
                     "host": host.host,

@@ -142,7 +142,8 @@ class CoverageSweepNode:
                         ),
                     )
                     continue
-                evidence = merge_evidence(evidence, _normalize(call))
+                evidence, merge_unknowns = merge_evidence(evidence, _normalize(call))
+                unknowns.extend(merge_unknowns)
 
         swept = [*state.swept_effects, *pending]
         still_missing = [

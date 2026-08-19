@@ -152,7 +152,7 @@ def test_metric_summary_copies_mcp_statistics_without_recalculation():
     assert evidence.data_quality.sample_count == 60
 
 
-def test_conflicting_duplicate_evidence_is_rejected(fixture_json):
+def test_a_second_reading_supersedes_the_first_and_is_recorded(fixture_json):
     now = datetime(2026, 8, 12, 3, tzinfo=UTC)
     response = fixture_json("elasticsearch/filtered_empty.json")
     result = ToolExecutionResult(
@@ -175,9 +175,10 @@ def test_conflicting_duplicate_evidence_is_rejected(fixture_json):
         result, planned, host_id="11094", host="vm-java-docker-2"
     )[0]
     changed = first.model_copy(update={"summary": "different observation"})
-    try:
-        merge_evidence([first], [changed])
-    except ValueError as error:
-        assert "conflicting evidence" in str(error)
-    else:
-        raise AssertionError("conflicting evidence was accepted")
+    merged, unknowns = merge_evidence([first], [changed])
+
+    # The later reading wins: it is the one still true. Raising here discarded
+    # a whole investigation over two readings of the same thing, which is not a
+    # programming error but an ordinary fact about time passing.
+    assert [item.summary for item in merged] == ["different observation"]
+    assert [item.code for item in unknowns] == ["evidence_superseded"]

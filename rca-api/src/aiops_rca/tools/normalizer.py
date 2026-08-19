@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from aiops_rca.schemas.evidence_package import Evidence
-from aiops_rca.schemas.investigation import PlannedToolCall
+from aiops_rca.schemas.investigation import PlannedToolCall, UnknownItem
 from aiops_rca.sources import SOURCES
 from aiops_rca.tools.result import ToolExecutionResult
 
@@ -37,18 +37,63 @@ def normalize_observation(
     return [_generic_evidence(result, planned, host_id=host_id, host=host)]
 
 
-def merge_evidence(
-    existing: list[Evidence], additions: list[Evidence]
-) -> list[Evidence]:
-    """Deduplicate byte-identical IDs and reject conflicting reuse of an ID."""
+# What the graph state will hold. Exceeding it used to be a validation error
+# raised after collection, which discarded a whole investigation over the last
+# item added; the ceiling is applied here so it ends collection instead.
+EVIDENCE_CAPACITY = 200
 
+
+def merge_evidence(
+    existing: list[Evidence],
+    additions: list[Evidence],
+    *,
+    capacity: int = EVIDENCE_CAPACITY,
+) -> tuple[list[Evidence], list[UnknownItem]]:
+    """Merge by id, keeping the run alive whatever the additions look like.
+
+    Two things used to end an investigation here, both after every tool call had
+    already been paid for.
+
+    An id is derived from the request, so the same query asked twice carries the
+    same id -- and if the answer moved in between, the mismatch was raised as a
+    programming error. It is not one: two readings of the same thing at
+    different moments are two observations. The later one is kept, because it is
+    the one still true, and the disagreement is recorded rather than thrown.
+
+    The other was the ceiling. Collection now stops at it and says so, which
+    leaves a report to write from what was gathered.
+    """
     merged = {item.evidence_id: item for item in existing}
+    unknowns: list[UnknownItem] = []
+    dropped = 0
     for item in additions:
         prior = merged.get(item.evidence_id)
-        if prior and prior != item:
-            raise ValueError(f"conflicting evidence reuses id {item.evidence_id}")
+        if prior is not None and prior != item:
+            unknowns.append(
+                UnknownItem(
+                    code="evidence_superseded",
+                    message=(
+                        f"{item.evidence_id} was observed twice with different"
+                        " content; the later reading is the one kept"
+                    ),
+                    tool_call_id=item.tool_call_id,
+                ),
+            )
+        elif prior is None and len(merged) >= capacity:
+            dropped += 1
+            continue
         merged[item.evidence_id] = item
-    return list(merged.values())
+    if dropped:
+        unknowns.append(
+            UnknownItem(
+                code="evidence_capacity_reached",
+                message=(
+                    f"collection stopped at {capacity} pieces of evidence;"
+                    f" {dropped} further observation(s) were not recorded"
+                ),
+            ),
+        )
+    return list(merged.values()), unknowns
 
 
 def _event_evidence(

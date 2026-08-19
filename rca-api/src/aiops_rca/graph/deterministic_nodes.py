@@ -270,8 +270,10 @@ class EvidenceNormalizerNode:
             host_id=host.host_id,
             host=host.host,
         )
+        evidence, merge_unknowns = merge_evidence(state.evidence, additions)
         return {
-            "evidence": merge_evidence(state.evidence, additions),
+            "evidence": evidence,
+            "unknowns": [*state.unknowns, *merge_unknowns],
             "visited_nodes": [*state.visited_nodes, "evidence_normalizer"],
         }
 
