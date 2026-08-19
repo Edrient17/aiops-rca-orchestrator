@@ -1,6 +1,7 @@
 """End-to-end orchestration used by the synchronous HTTP endpoint."""
 
 import asyncio
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from functools import lru_cache
 from importlib.resources import files
@@ -250,7 +251,9 @@ class InvestigationService:
                 "parsed_request": parsed.model_dump(mode="json"),
                 "evidence_package": package.model_dump(mode="json", by_alias=True),
                 "report_guidance": template.output.get("guidance", ""),
-                "sections": _writer_sections(template.output, package),
+                "sections": _writer_sections(
+                    template.output, package, output.get("uncovered_effects") or ()
+                ),
             },
             reasoning_effort="medium",
         )
@@ -367,18 +370,17 @@ def build_live_service(settings: Settings) -> InvestigationService:
     return InvestigationService(settings=settings, model=model, adapters=adapters)
 
 
-def _writer_sections(output: dict[str, Any], package: Any) -> list[dict[str, Any]]:
+def _writer_sections(
+    output: dict[str, Any],
+    package: Any,
+    uncovered_effects: Iterable[str] = (),
+) -> list[dict[str, Any]]:
     has_problem_event = any(
         item.evidence_id.startswith("zbx:event:")
         and item.resource_ids.event_id is not None
         for item in package.evidence
     )
-    uncovered = {
-        effect
-        for item in package.unknowns
-        if item.code == "declared_effect_uncovered"
-        for effect in _effects_in(item.message)
-    }
+    uncovered = set(uncovered_effects)
     sections: list[dict[str, Any]] = []
     for section in parse_sections(output):
         if section.requires_problem_event and not has_problem_event:
@@ -395,11 +397,6 @@ def _writer_sections(output: dict[str, Any], package: Any) -> list[dict[str, Any
             payload["evidence_unavailable"] = missing
         sections.append(payload)
     return sections
-
-
-def _effects_in(message: str) -> list[str]:
-    _, _, listed = message.partition(": ")
-    return [item.strip() for item in listed.split(",") if item.strip()]
 
 
 def _reconcile_evidence(

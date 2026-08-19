@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from importlib.resources import files
 from typing import Any
 
+from aiops_rca.graph.coverage_nodes import declared_effects
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.schemas.evidence_package import EvidencePackage
 from aiops_rca.schemas.investigation import (
@@ -22,8 +23,13 @@ from aiops_rca.services.model_contracts import (
     observation_decision_for,
 )
 from aiops_rca.tools.adapters.base import McpAdapter
+from aiops_rca.tools.coverage import covered_effects
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
-from aiops_rca.tools.registry import RoutingContext, ToolRegistry
+from aiops_rca.tools.registry import (
+    DEFAULT_TOOL_REGISTRY,
+    RoutingContext,
+    ToolRegistry,
+)
 
 
 class EstablishPhenomenonNode:
@@ -434,12 +440,23 @@ class HypothesisUpdaterNode:
 
 
 class EvidencePackageBuilderNode:
+    def __init__(self, registry: ToolRegistry = DEFAULT_TOOL_REGISTRY) -> None:
+        self.registry = registry
+
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
         if not state.hosts:
             return {
                 "evidence_package": None,
                 "visited_nodes": [*state.visited_nodes, "evidence_package_builder"],
             }
+        # Carried as data rather than recovered from the unknowns, whose codes
+        # the package drops -- it keeps only each message. The writer needs to
+        # know which sections cannot be filled, and re-reading that out of
+        # prose would make the answer depend on the wording.
+        covered = covered_effects(state.tool_results, state.evidence, self.registry)
+        uncovered = [
+            effect for effect in declared_effects(state) if effect not in covered
+        ]
         window = _resolved_window(state)
         aggregation = (state.collection or {}).get("aggregation")
         payload = {
@@ -498,6 +515,7 @@ class EvidencePackageBuilderNode:
         package = EvidencePackage.model_validate(payload)
         return {
             "evidence_package": package,
+            "uncovered_effects": uncovered,
             "visited_nodes": [*state.visited_nodes, "evidence_package_builder"],
         }
 

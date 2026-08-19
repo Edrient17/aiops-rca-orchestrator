@@ -83,6 +83,11 @@ class InvestigationState(StrictModel):
     fatal_error: Annotated[str, Field(min_length=1, max_length=10_000)] | None = None
 
     evidence_package: EvidencePackage | None = None
+    # Declared section evidence the investigation never obtained. The package
+    # cannot carry it: its unknowns are message strings with the codes dropped.
+    uncovered_effects: Annotated[list[str], Field(max_length=50)] = Field(
+        default_factory=list,
+    )
     visited_nodes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

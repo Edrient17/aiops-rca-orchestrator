@@ -45,11 +45,20 @@ def _evidence(evidence_id: str, evidence_type: str, summary: str):
 
 
 class Package:
+    """Shaped like EvidencePackage, whose unknowns are plain strings.
+
+    An earlier double held UnknownItem objects here. That let a test pass
+    against code doing `item.code`, which the real package cannot answer: the
+    builder keeps only each message. Production returned 500 on a question the
+    suite called green, so the double now refuses anything but strings.
+    """
+
     def __init__(self, evidence, unknowns=()):
         from aiops_rca.schemas.evidence_package import Evidence
 
         self.evidence = [Evidence.model_validate(item) for item in evidence]
-        self.unknowns = list(unknowns)
+        self.unknowns = [str(item) for item in unknowns]
+        assert all(isinstance(item, str) for item in self.unknowns)
 
 
 OUTAGE = _evidence("zbx:event:23835785", "event", "host is unreachable")
@@ -119,26 +128,31 @@ def test_a_template_without_a_limitations_section_is_not_given_one():
 
 class TestTheWriterIsToldWhatIsMissing:
     def test_a_section_whose_evidence_never_arrived_is_marked(self):
-        from aiops_rca.schemas.investigation import UnknownItem
-
-        package = Package(
-            [OUTAGE],
-            [
-                UnknownItem(
-                    code="declared_effect_uncovered",
-                    message=(
-                        "The report declares sections built from observations"
-                        " this investigation could not collect: metric_change"
-                    ),
-                ),
-            ],
-        )
-        sections = {item["id"]: item for item in _writer_sections(OUTPUT, package)}
+        package = Package([OUTAGE])
+        sections = {
+            item["id"]: item
+            for item in _writer_sections(OUTPUT, package, ["metric_change"])
+        }
         assert sections["capacity_trend"]["evidence_unavailable"] == ["metric_change"]
         # The section that did get its evidence carries no such marker.
         assert "evidence_unavailable" not in sections["availability"]
 
     def test_nothing_is_marked_when_everything_was_collected(self):
         package = Package([OUTAGE])
-        sections = _writer_sections(OUTPUT, package)
+        sections = _writer_sections(OUTPUT, package, [])
         assert all("evidence_unavailable" not in item for item in sections)
+
+    def test_an_effect_no_section_declared_marks_nothing(self):
+        # The sweep can leave an effect uncovered that no section asked for.
+        package = Package([OUTAGE])
+        sections = _writer_sections(OUTPUT, package, ["audit_actor"])
+        assert all("evidence_unavailable" not in item for item in sections)
+
+    def test_the_default_is_no_marking(self):
+        # Callers that never collected coverage information must not have every
+        # section reported as unfillable.
+        package = Package([OUTAGE])
+        assert all(
+            "evidence_unavailable" not in item
+            for item in _writer_sections(OUTPUT, package)
+        )
