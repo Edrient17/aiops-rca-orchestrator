@@ -143,7 +143,7 @@ def _event_evidence(
                     "evidence_id": evidence_id,
                     "evidence_type": "event",
                     "source": "zabbix",
-                    "summary": "; ".join(details)[:3000],
+                    "summary": _bounded("; ".join(details)),
                     "observed_at": event.get("started_at"),
                     "window": window,
                     "resource_ids": _resource_ids(
@@ -179,7 +179,7 @@ def _trigger_evidence(
             ),
             "evidence_type": "trigger",
             "source": "zabbix",
-            "summary": summary[:3000],
+            "summary": _bounded(summary),
             "observed_at": None,
             "window": None,
             "resource_ids": _resource_ids(host_id, trigger_id=trigger_id),
@@ -280,7 +280,7 @@ def _generic_evidence(
             "evidence_id": f"{prefix}:{host}:{_fingerprint([planned.arguments, result.response])}",
             "evidence_type": evidence_type,
             "source": source,
-            "summary": f"{planned.purpose}: {_json(result.response)}"[:3000],
+            "summary": _bounded(f"{planned.purpose}: {_json(result.response)}"),
             "observed_at": None,
             "window": _window_from_arguments(result.request),
             "resource_ids": _resource_ids(host_id),
@@ -362,11 +362,11 @@ def _rounded_quality(quality: Any) -> Any:
 
 
 def _metric_text(metric: Mapping[str, Any]) -> str:
-    return (
+    return _bounded(
         f"{metric['name']}: min={metric['min']}, max={metric['max']}, "
         f"avg={metric['avg']}, first={metric['first']}, last={metric['last']}, "
         f"change_percent={metric['change_percent']}, trend={metric['trend']}"
-    )[:3000]
+    )
 
 
 def _window(response: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -423,3 +423,19 @@ def _fingerprint(value: Any) -> str:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+# Evidence.summary is capped by the schema, and the cap used to be applied with
+# a slice. Whatever sat past it disappeared with nothing to show for it: a
+# process list arrived as its first three kilobytes, and the report described
+# what it had been given as though that were the whole of it. The notice costs
+# a few characters of the budget and buys the reader the one fact the slice
+# destroyed.
+SUMMARY_CAPACITY = 3000
+
+
+def _bounded(text: str) -> str:
+    if len(text) <= SUMMARY_CAPACITY:
+        return text
+    notice = f" …[요약 잘림: 전체 {len(text)}자]"
+    return text[: SUMMARY_CAPACITY - len(notice)] + notice
