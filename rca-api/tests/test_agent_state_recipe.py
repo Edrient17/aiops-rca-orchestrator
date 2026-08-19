@@ -260,3 +260,56 @@ def test_one_read_needs_only_two_calls():
         "get_wazuh_agents",
         "get_wazuh_agent_processes",
     ]
+
+
+class TestAddingAReadIsOneEdit:
+    """Each effect used to name itself three times in one function.
+
+    In `effects`, in the budget arithmetic, and in its own branch -- and the
+    copy in the arithmetic was a literal copy of the first, so a third read
+    added without it would have miscounted the budget and gone wrong quietly
+    rather than loudly. These hold the table to being the only place.
+    """
+
+    def test_the_effects_are_the_table(self):
+        from aiops_rca.tools.coverage import AgentStateRecipe
+
+        assert AgentStateRecipe.effects == tuple(AgentStateRecipe.READS)
+
+    def test_the_budget_follows_the_table(self):
+        # One lookup plus one call per read asked for. Derived, not written out.
+
+        for wanted, expected in (
+            (["current_process_state"], 2),
+            (["current_port_state"], 2),
+            (["current_process_state", "current_port_state"], 3),
+        ):
+            _, transport = _sweep(wanted)
+            assert len(transport.calls) == expected, wanted
+
+    def test_a_read_added_to_the_table_is_collected(self):
+        # The point of the shape: a new entry needs no other edit. Added here
+        # rather than described, because a claim about future edits is only
+        # worth what a test makes of it.
+        from aiops_rca.tools.coverage import AgentRead, AgentStateRecipe
+
+        recipe = AgentStateRecipe()
+        recipe.READS = {
+            **AgentStateRecipe.READS,
+            "current_package_state": AgentRead(
+                "get_wazuh_agent_packages",
+                lambda agent_id: {"agent_id": agent_id},
+            ),
+        }
+        assert "current_package_state" in tuple(recipe.READS)
+        wanted = [
+            read
+            for effect, read in recipe.READS.items()
+            if effect == "current_package_state"
+        ]
+        assert len(wanted) == 1
+        assert wanted[0].arguments("001") == {"agent_id": "001"}
+        # And it shapes nothing by default, so a read that needs no filtering
+        # says nothing about filtering.
+        sentinel = object()
+        assert wanted[0].shape(sentinel) is sentinel

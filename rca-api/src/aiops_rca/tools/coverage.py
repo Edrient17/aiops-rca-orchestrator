@@ -114,6 +114,49 @@ def _call(
     )
 
 
+def service_processes(response: Any) -> list[Mapping[str, Any]]:
+    """Processes worth reporting: everything that is not a kernel thread.
+
+    A host runs a few dozen services and a hundred-odd kernel threads, and the
+    threads hold the low PIDs. Asked what was running, a limit of fifty
+    returned forty-nine kernel threads and nothing else -- the answer was past
+    the cut, every time.
+    """
+    if not isinstance(response, Mapping):
+        return []
+    return [
+        item
+        for item in response.get("processes") or []
+        if isinstance(item, Mapping) and not item.get("kernel_thread")
+    ]
+
+
+def _without_kernel_threads(result: ToolExecutionResult) -> ToolExecutionResult:
+    """Drop kernel threads before the response becomes evidence.
+
+    Evidence summaries are capped, so whatever is at the front of the list is
+    all a report ever sees. Kernel threads hold the low PIDs and outnumber the
+    services several times over, which is how a host running java and dockerd
+    was reported as mm_percpu_wq and kswapd0.
+
+    They are counted rather than silently discarded: the count is what makes
+    the smaller list explainable.
+    """
+    services = service_processes(result.response)
+    if not isinstance(result.response, Mapping):
+        return result
+    total = len(result.response.get("processes") or [])
+    return result.model_copy(
+        update={
+            "response": {
+                **result.response,
+                "processes": services,
+                "kernel_threads_omitted": total - len(services),
+            },
+        },
+    )
+
+
 class EventRecipe:
     effects = ("incident_events", "trigger_anchor")
 
@@ -225,6 +268,17 @@ class AuditRecipe:
         return calls
 
 
+@dataclass(frozen=True)
+class AgentRead:
+    """One thing a resolved agent id can be exchanged for."""
+
+    tool_name: str
+    #: Built from the agent id, which is only known once the lookup has run.
+    arguments: Callable[[str], dict[str, Any]]
+    #: Applied before the result becomes evidence. Identity for most reads.
+    shape: Callable[[ToolExecutionResult], ToolExecutionResult] = lambda result: result
+
+
 class AgentStateRecipe:
     """What a host is running and listening on, right now.
 
@@ -232,19 +286,47 @@ class AgentStateRecipe:
     knows a Zabbix host. get_wazuh_agents resolves one from the other by name,
     which is the same name Zabbix and Wazuh already agree on -- the alert tool
     filters by it too.
+
+    The reads are a table rather than a chain of ifs. Written out, each effect
+    named itself three times in this one function -- in `effects`, in the budget
+    arithmetic, and in its own branch -- and the copy in the arithmetic was a
+    copy, so a third read added without it would have miscounted the budget and
+    gone wrong quietly. Adding one is now a single entry.
     """
 
-    effects = ("current_process_state", "current_port_state")
+    READS: Mapping[str, AgentRead] = {
+        "current_process_state": AgentRead(
+            "get_wazuh_agent_processes",
+            lambda agent_id: {"agent_id": agent_id, "limit": AGENT_STATE_ROWS},
+            _without_kernel_threads,
+        ),
+        "current_port_state": AgentRead(
+            "get_wazuh_agent_ports",
+            lambda agent_id: {
+                "agent_id": agent_id,
+                # The tool's enum: upper case for the state, lower for the
+                # protocol. Either spelled the other way is refused before the
+                # call reaches Wazuh.
+                "protocol": "tcp",
+                "state": "LISTENING",
+                "limit": AGENT_STATE_ROWS,
+            },
+        ),
+    }
+    effects = tuple(READS)
 
     async def collect(self, context: SweepContext) -> list[SweepCall]:
-        if not context.asked_for(*self.effects):
+        wanted = [
+            read
+            for effect, read in self.READS.items()
+            if context.asked_for(effect)
+        ]
+        if not wanted:
             return []
-        # One lookup plus the reads that were asked for. Starting without room
+        # The lookup plus the reads that were asked for. Starting without room
         # to finish spends a call on an id nothing will use.
-        needed = 1 + sum(
-            context.asked_for(effect)
-            for effect in ("current_process_state", "current_port_state")
-        )
+        needed = 1 + len(wanted)
+
         calls: list[SweepCall] = []
         for host in context.hosts:
             if context.remaining() < needed:
@@ -265,37 +347,15 @@ class AgentStateRecipe:
             agent_id = _agent_id(lookup.response, host.host)
             if agent_id is None:
                 continue
-            planned: list[tuple[str, dict[str, Any]]] = []
-            if context.asked_for("current_process_state"):
-                planned.append(
-                    (
-                        "get_wazuh_agent_processes",
-                        {"agent_id": agent_id, "limit": AGENT_STATE_ROWS},
-                    ),
+            for read in wanted:
+                arguments = read.arguments(agent_id)
+                result = read.shape(
+                    await context.execute(read.tool_name, arguments, host.host_id),
                 )
-            if context.asked_for("current_port_state"):
-                planned.append(
-                    (
-                        "get_wazuh_agent_ports",
-                        {
-                            "agent_id": agent_id,
-                            "protocol": "tcp",
-                            # The tool's enum: upper case for the state, lower
-                            # for the protocol. Either spelled the other way is
-                            # refused before the call reaches Wazuh.
-                            "state": "LISTENING",
-                            "limit": AGENT_STATE_ROWS,
-                        },
-                    ),
-                )
-            for tool_name, arguments in planned:
-                result = await context.execute(tool_name, arguments, host.host_id)
-                if tool_name == "get_wazuh_agent_processes":
-                    result = _without_kernel_threads(result)
                 calls.append(
                     _call(
                         result,
-                        tool_name,
+                        read.tool_name,
                         arguments,
                         f"Read the current state of {host.host}",
                         host,
@@ -357,45 +417,3 @@ def _agent_id(response: Any, host: str) -> str | None:
             return str(agent_id) if agent_id is not None else None
     return None
 
-
-def service_processes(response: Any) -> list[Mapping[str, Any]]:
-    """Processes worth reporting: everything that is not a kernel thread.
-
-    A host runs a few dozen services and a hundred-odd kernel threads, and the
-    threads hold the low PIDs. Asked what was running, a limit of fifty
-    returned forty-nine kernel threads and nothing else -- the answer was past
-    the cut, every time.
-    """
-    if not isinstance(response, Mapping):
-        return []
-    return [
-        item
-        for item in response.get("processes") or []
-        if isinstance(item, Mapping) and not item.get("kernel_thread")
-    ]
-
-
-def _without_kernel_threads(result: ToolExecutionResult) -> ToolExecutionResult:
-    """Drop kernel threads before the response becomes evidence.
-
-    Evidence summaries are capped, so whatever is at the front of the list is
-    all a report ever sees. Kernel threads hold the low PIDs and outnumber the
-    services several times over, which is how a host running java and dockerd
-    was reported as mm_percpu_wq and kswapd0.
-
-    They are counted rather than silently discarded: the count is what makes
-    the smaller list explainable.
-    """
-    services = service_processes(result.response)
-    if not isinstance(result.response, Mapping):
-        return result
-    total = len(result.response.get("processes") or [])
-    return result.model_copy(
-        update={
-            "response": {
-                **result.response,
-                "processes": services,
-                "kernel_threads_omitted": total - len(services),
-            },
-        },
-    )
