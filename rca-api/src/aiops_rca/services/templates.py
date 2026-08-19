@@ -96,25 +96,28 @@ def resolve_window(
 
     if range_name in {"last_7_days", "last_30_days"}:
         days = 7 if range_name == "last_7_days" else 30
-        return _window(received - timedelta(days=days), received)
+        return _window(received - timedelta(days=days), received, received)
     if range_name == "last_calendar_month":
         local = received.astimezone(ZoneInfo(parsed.timezone))
         current_start = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         previous_last = current_start - timedelta(days=1)
         previous_start = previous_last.replace(day=1)
-        return _window(previous_start.astimezone(UTC), current_start.astimezone(UTC))
+        return _window(
+            previous_start.astimezone(UTC), current_start.astimezone(UTC), received
+        )
     if range_name != "anchor_relative":
         raise ValueError(f"unsupported collection window range: {range_name}")
 
     hint = parsed.initial_window_hint
     if isinstance(hint, AbsoluteWindowHint):
-        return _window(hint.from_.astimezone(UTC), hint.to.astimezone(UTC))
+        return _window(hint.from_.astimezone(UTC), hint.to.astimezone(UTC), received)
 
     anchor = (parsed.anchor_time or received).astimezone(UTC)
     if isinstance(hint, RelativeWindowHint):
         return _window(
             anchor - timedelta(minutes=hint.before_minutes),
             anchor + timedelta(minutes=hint.after_minutes),
+            received,
         )
 
     # No hint at all. The former default was thirty minutes either side, which
@@ -126,10 +129,15 @@ def resolve_window(
     return _window(
         anchor - DEFAULT_WINDOW_UNSPECIFIED,
         anchor + DEFAULT_WINDOW_UNSPECIFIED,
+        received,
     )
 
 
-def _window(start: datetime, end: datetime) -> dict[str, str]:
+def _window(
+    start: datetime,
+    end: datetime,
+    not_after: datetime,
+) -> dict[str, str]:
     """Window boundaries at second precision.
 
     isoformat() prints microseconds when the datetime carries them, and one
@@ -140,7 +148,18 @@ def _window(start: datetime, end: datetime) -> dict[str, str]:
 
     Seconds are also what the query means. Zabbix stores event times as epoch
     seconds, so the extra digits could not have selected anything.
+
+    The end never reaches past `not_after`, the moment the question arrived. A
+    question about the present anchors on now, so a window of anchor plus or
+    minus three hours ended three hours in the future -- which the MCP refuses,
+    correctly, as a time it cannot have data for. Only the end moves; the start
+    is pulled back solely to keep a clamped window from inverting.
     """
+    if end > not_after:
+        span = end - start
+        end = not_after
+        if start >= end:
+            start = end - span
     return {
         "from": _instant(start),
         "to": _instant(end),
