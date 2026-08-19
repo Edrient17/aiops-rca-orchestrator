@@ -252,7 +252,10 @@ class AgentStateRecipe:
                     {
                         "agent_id": agent_id,
                         "protocol": "tcp",
-                        "state": "listening",
+                        # The tool's enum, which is upper case for the state and
+                        # lower for the protocol. Spelling either the other way
+                        # is refused before the call reaches Wazuh.
+                        "state": "LISTENING",
                         "limit": AGENT_STATE_ROWS,
                     },
                 ),
@@ -309,32 +312,33 @@ def _item_ids(response: Any) -> list[str]:
 
 
 def _agent_id(response: Any, host: str) -> str | None:
-    """Read the agent id out of get_wazuh_agents.
+    """The Wazuh agent id reporting for a host, or None.
 
-    That tool answers in prose -- `Agent ID: 001
-Name: vm-java-docker-2
-...`
-    -- one block per agent, so this reads the pairing rather than a field. The
-    format comes from this deployment's own fork, and the test pins it; if the
-    tool ever returns structured agents, this is the only place that changes.
-
-    Returns None rather than guessing when the name does not appear: an id
-    belonging to a different host would read the wrong machine's processes and
+    Returns None rather than guessing when the host does not appear: an id
+    belonging to a different machine would read the wrong host's processes and
     look entirely plausible doing it.
     """
-    text = response if isinstance(response, str) else None
-    if text is None and isinstance(response, Mapping):
-        text = response.get("text") or response.get("content")
-    if not isinstance(text, str):
+    if not isinstance(response, Mapping):
         return None
-    current: str | None = None
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("Agent ID:"):
-            # "000 (Wazuh Manager)" for the manager itself.
-            current = stripped.removeprefix("Agent ID:").strip().split()[0] or None
-        elif stripped.startswith("Name:") and current:
-            if stripped.removeprefix("Name:").strip() == host:
-                return current
-            current = None
+    for agent in response.get("agents") or []:
+        if isinstance(agent, Mapping) and agent.get("name") == host:
+            agent_id = agent.get("id")
+            return str(agent_id) if agent_id is not None else None
     return None
+
+
+def service_processes(response: Any) -> list[Mapping[str, Any]]:
+    """Processes worth reporting: everything that is not a kernel thread.
+
+    A host runs a few dozen services and a hundred-odd kernel threads, and the
+    threads hold the low PIDs. Asked what was running, a limit of fifty
+    returned forty-nine kernel threads and nothing else -- the answer was past
+    the cut, every time.
+    """
+    if not isinstance(response, Mapping):
+        return []
+    return [
+        item
+        for item in response.get("processes") or []
+        if isinstance(item, Mapping) and not item.get("kernel_thread")
+    ]

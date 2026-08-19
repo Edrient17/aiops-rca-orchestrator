@@ -20,19 +20,47 @@ from conftest import make_state
 from aiops_rca.graph.coverage_nodes import CoverageSweepNode
 from aiops_rca.schemas.investigation import ResolvedHost
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
-from aiops_rca.tools.coverage import _agent_id
+from aiops_rca.tools.coverage import _agent_id, service_processes
 from aiops_rca.tools.executor import ToolExecutor
 from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
 
-# Exactly what the deployment returns, from mcp-server-wazuh's own format
-# string: "Agent ID: {}\nName: {}\nStatus: {}...", one block per agent.
-AGENT_LIST = (
-    "Agent ID: 000 (Wazuh Manager)\nName: vm-wazuh-server\nStatus: 🟢 ACTIVE\n"
-    "IP: 127.0.0.1\nOS: Ubuntu 22.04.5 LTS (x86_64)\n"
-    "Agent ID: 001\nName: vm-java-docker-2\nStatus: 🟢 ACTIVE\n"
-    "IP: 192.168.20.7\nGroups: default\n"
-    "Agent ID: 002\nName: test-java-docker-vm\nStatus: 🔴 DISCONNECTED\n"
-)
+# What the deployment returns now that the tools answer with structured
+# content. They used to answer in prose, and the id was read out of
+# "Agent ID:"/"Name:" lines -- which is why the fork was changed.
+AGENT_LIST = {
+    "agents": [
+        {"id": "000", "name": "vm-wazuh-server", "status": "active", "is_manager": True},
+        {"id": "001", "name": "vm-java-docker-2", "status": "active", "is_manager": False},
+        {"id": "002", "name": "test-java-docker-vm", "status": "disconnected", "is_manager": False},
+    ],
+    "returned": 3,
+}
+
+PROCESSES = {
+    "agent_id": "001",
+    "processes": [
+        {"pid": 10, "name": "mm_percpu_wq", "ppid": "2", "kernel_thread": True},
+        {"pid": 105, "name": "kswapd0", "ppid": "2", "kernel_thread": True},
+        {"pid": 702, "name": "sshd", "ppid": "1", "kernel_thread": False},
+        {"pid": 1841, "name": "java", "ppid": "1502", "kernel_thread": False},
+    ],
+    "returned": 4,
+    "limit": 500,
+    "partial": False,
+}
+
+PORTS = {
+    "agent_id": "001",
+    "ports": [
+        {"protocol": "tcp", "local_ip": "0.0.0.0", "local_port": 22,
+         "state": "listening", "process": "sshd", "externally_bound": True},
+        {"protocol": "tcp", "local_ip": "127.0.0.53", "local_port": 53,
+         "state": "listening", "process": "systemd-resolve", "externally_bound": False},
+    ],
+    "returned": 2,
+    "limit": 500,
+    "partial": False,
+}
 
 
 class TestReadingTheAgentId:
@@ -40,7 +68,7 @@ class TestReadingTheAgentId:
         assert _agent_id(AGENT_LIST, "vm-java-docker-2") == "001"
         assert _agent_id(AGENT_LIST, "test-java-docker-vm") == "002"
 
-    def test_the_manager_suffix_is_not_part_of_the_id(self):
+    def test_the_manager_is_addressable_like_any_other(self):
         assert _agent_id(AGENT_LIST, "vm-wazuh-server") == "000"
 
     def test_an_absent_host_returns_nothing_rather_than_a_neighbour(self):
@@ -48,13 +76,30 @@ class TestReadingTheAgentId:
         # look entirely plausible doing it.
         assert _agent_id(AGENT_LIST, "vm-not-registered") is None
 
-    @pytest.mark.parametrize("response", [None, 42, {}, "", "no agents found"])
+    def test_a_name_that_is_a_prefix_of_another_does_not_match(self):
+        assert _agent_id(AGENT_LIST, "vm-java") is None
+
+    @pytest.mark.parametrize(
+        "response",
+        [None, 42, {}, "", {"agents": []}, "Agent ID: 001\nName: vm-java-docker-2"],
+    )
     def test_an_unusable_response_returns_nothing(self, response):
+        # The prose form is listed deliberately: the tools no longer answer
+        # that way, and reading it again would mean the fork had regressed.
         assert _agent_id(response, "vm-java-docker-2") is None
 
-    def test_a_name_that_is_a_prefix_of_another_does_not_match(self):
-        listing = "Agent ID: 001\nName: vm-java-docker-2\n"
-        assert _agent_id(listing, "vm-java") is None
+
+class TestChoosingWhichProcessesToReport:
+    def test_kernel_threads_are_left_out(self):
+        # A host runs a few dozen services and a hundred-odd kernel threads,
+        # and the threads hold the low PIDs. A limit of fifty returned
+        # forty-nine of them and nothing else -- the answer was past the cut.
+        assert [item["name"] for item in service_processes(PROCESSES)] == ["sshd", "java"]
+
+    @pytest.mark.parametrize("response", [None, "text", {}, {"processes": []}])
+    def test_an_unusable_response_yields_nothing(self, response):
+        assert service_processes(response) == []
+
 
 
 class ScriptedTransport:
@@ -66,9 +111,9 @@ class ScriptedTransport:
         if tool_name == "get_wazuh_agents":
             return AGENT_LIST
         if tool_name == "get_wazuh_agent_processes":
-            return "PID: 702\nName: sshd\nState: S\n"
+            return PROCESSES
         if tool_name == "get_wazuh_agent_ports":
-            return "Protocol: tcp\nLocal: 0.0.0.0:22\nState: listening\nProcess Name: sshd\n"
+            return PORTS
         return {}
 
 
@@ -118,8 +163,10 @@ def test_the_resolved_agent_id_is_the_one_used():
 def test_the_port_query_asks_for_what_is_listening():
     _, transport = _sweep(["current_port_state"])
     _, arguments = next(c for c in transport.calls if c[0] == "get_wazuh_agent_ports")
+    # The tool's enum: lower case protocol, upper case state. Either spelled
+    # the other way is refused before the call reaches Wazuh.
     assert arguments["protocol"] == "tcp"
-    assert arguments["state"] == "listening"
+    assert arguments["state"] == "LISTENING"
 
 
 def test_a_host_with_no_agent_is_skipped_without_guessing():
