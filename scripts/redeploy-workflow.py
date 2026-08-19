@@ -125,6 +125,13 @@ def main():
                         help="restart even while executions are in progress")
     parser.add_argument("--wait", type=int, default=0, metavar="SECONDS",
                         help="wait up to this long for executions to finish")
+    # The credential guard cannot tell a node that vanished by accident from one
+    # that was retired on purpose, and both look like "its credential has
+    # nowhere to go". Naming them is the operator saying which it is.
+    parser.add_argument("--retire", default="", metavar="NODE,NODE",
+                        help="node names deliberately removed from the workflow; "
+                             "their credential assignments are dropped instead "
+                             "of blocking the import")
     args = parser.parse_args()
 
     print("== pull ==")
@@ -194,6 +201,10 @@ def main():
     with open(os.path.join(REPO, SOURCE), encoding="utf-8") as handle:
         workflow = json.load(handle)
     names = {node["name"] for node in workflow["nodes"]}
+    retired = {name.strip() for name in args.retire.split(",") if name.strip()}
+    for name in sorted(retired & set(credentials)):
+        del credentials[name]
+        print("  retiring credential assignment for: " + name)
     missing = [name for name in credentials if name not in names]
     if missing:
         fail("these nodes no longer exist in the new workflow, so their "
