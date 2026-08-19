@@ -240,7 +240,7 @@ def _generic_evidence(
             "window": _window_from_arguments(result.request),
             "resource_ids": _resource_ids(host_id),
             "metric": None,
-            "data_quality": response.get("data_quality"),
+            "data_quality": _rounded_quality(response.get("data_quality")),
             "tool_call_id": result.tool_call_id,
             "search_query": _search_query(planned.arguments),
         },
@@ -290,14 +290,29 @@ def _metric(item: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[str, An
     }
 
 
-def _rounded_quality(quality: Any) -> Any:
-    """Round the ratio the report quotes, leaving counts and flags alone."""
+# The shapes Evidence.data_quality can be tagged as. A tool free to return any
+# shape it likes -- query_zabbix reports row_limit and hit_row_limit, which
+# describe a raw query and not a measurement -- would otherwise be handed to a
+# discriminated union that cannot tag it, and the whole investigation fails at
+# the point where its evidence is being written down.
+_TAGGABLE_DATA_SOURCES = frozenset({"history", "trends", "logs"})
 
+
+def _rounded_quality(quality: Any) -> Any:
+    """The quality block, if the schema can tag it, with its ratio rounded.
+
+    Anything else is dropped rather than passed on. The full response is
+    already in the evidence summary, so nothing is lost that a reader could
+    have used, and a shape the schema does not know is not worth failing an
+    investigation over.
+    """
     if not isinstance(quality, Mapping):
-        return quality
+        return None
+    if quality.get("data_source") not in _TAGGABLE_DATA_SOURCES:
+        return None
     ratio = quality.get("coverage_ratio")
     if not isinstance(ratio, (int, float)) or isinstance(ratio, bool):
-        return quality
+        return dict(quality)
     return {**quality, "coverage_ratio": round(ratio, DECIMAL_PLACES)}
 
 
