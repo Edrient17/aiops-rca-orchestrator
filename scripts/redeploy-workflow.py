@@ -119,6 +119,17 @@ def in_flight():
     return live, stale
 
 
+def _needs_credential(node):
+    """Node types that cannot work without an n8n credential assignment."""
+
+    kind = node.get("type", "")
+    if kind.endswith("lmChatOpenAi"):
+        return True
+    if "mcpClientTool" in kind:
+        return (node.get("parameters") or {}).get("authentication", "none") != "none"
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--force", action="store_true",
@@ -183,11 +194,20 @@ def main():
         if "\t" in line:
             name, blob = line.split("\t", 1)
             credentials[name] = json.loads(blob)
-    if not credentials:
-        fail("no credentials found on the deployed workflow; refusing to import "
-             "a version that would have none")
+
+    with open(os.path.join(REPO, SOURCE), encoding="utf-8") as handle:
+        workflow = json.load(handle)
+    # Zero is the right answer once the reasoning nodes are gone: what is left
+    # authenticates with header expressions read from the environment, not with
+    # n8n credentials. So the guard asks whether the version being imported
+    # needs any, rather than assuming the last one did.
+    wanting = [n["name"] for n in workflow["nodes"] if _needs_credential(n)]
+    if wanting and not credentials:
+        fail("the deployed workflow has no credentials to carry over, but the "
+             "version being imported needs them on: " + ", ".join(sorted(wanting)) +
+             "\nAssign them in the n8n UI, then run this again.")
     print("  found on {} node(s): {}".format(
-        len(credentials), ", ".join(sorted(credentials))))
+        len(credentials), ", ".join(sorted(credentials)) or "none"))
 
     # A node being deployed for the first time has nothing to carry over, so the
     # guard at the end would reject the import and ask for a visit to the n8n UI
@@ -198,8 +218,6 @@ def main():
             credentials[name] = assignment
             print("  seeding first-time credential for: " + name)
 
-    with open(os.path.join(REPO, SOURCE), encoding="utf-8") as handle:
-        workflow = json.load(handle)
     names = {node["name"] for node in workflow["nodes"]}
     retired = {name.strip() for name in args.retire.split(",") if name.strip()}
     for name in sorted(retired & set(credentials)):
@@ -297,7 +315,12 @@ def main():
         fail("MCP tool node(s) deployed without a credential: " + bare +
              "\nAssign the credential in the n8n UI, then run this again -- the "
              "carry-over will keep it from then on.")
-    print("  mcp nodes authenticated: yes")
+    total = psql(
+        "select count(*) from workflow_entity w, "
+        "jsonb_array_elements(w.nodes::jsonb) n "
+        "where w.id='{}' and n->>'type' like '%mcpClientTool%';".format(WORKFLOW_ID))
+    print("  mcp nodes authenticated: "
+          + ("yes" if total.strip() not in ("0", "") else "n/a (no MCP nodes)"))
 
 
 if __name__ == "__main__":
