@@ -19,6 +19,7 @@ from aiops_rca.services.llm import StructuredModel
 from aiops_rca.services.model_contracts import (
     HypothesisPlan,
     PhenomenonDecision,
+    ToolCandidate,
     hypothesis_update_decision_for,
     observation_decision_for,
 )
@@ -187,6 +188,49 @@ class HypothesisPlannerNode:
         }
 
 
+class _CandidateRejected(ValueError):
+    """A planner-proposed call this graph cannot use, carrying the reason."""
+
+
+def _candidate_call(
+    candidate: ToolCandidate,
+    state: InvestigationState,
+    known_hosts: set[str],
+) -> tuple[dict[str, Any], str | None]:
+    """The arguments and host a proposed candidate resolves to.
+
+    Every rejection here describes the planner's output, not this code.
+    arguments_json is a JSON object written inside a JSON string, so it is
+    escaped twice, and a regex argument whose backslashes did not survive the
+    second round is the ordinary way it arrives malformed.
+
+    These used to raise. The exception left the graph, left the request with it,
+    and returned a 500 -- discarding the report, the trace, the agent-run audit
+    rows, and every tool call already paid for, because one candidate out of
+    several was unreadable. The planner proposes alternatives precisely so that
+    one of them failing is survivable.
+    """
+    try:
+        arguments = json.loads(candidate.arguments_json)
+    except ValueError as error:
+        raise _CandidateRejected(
+            f"arguments_json is not valid JSON ({error})"
+        ) from error
+    if not isinstance(arguments, dict):
+        raise _CandidateRejected(
+            "arguments_json decoded to something other than an object"
+        )
+
+    associated = candidate.host_id
+    if associated is None and len(state.hosts) == 1:
+        associated = state.hosts[0].host_id
+    if associated is not None and associated not in known_hosts:
+        raise _CandidateRejected(
+            f"host_id {associated} was not resolved by this investigation"
+        )
+    return arguments, associated
+
+
 class ObservationPlannerNode:
     def __init__(
         self,
@@ -255,22 +299,49 @@ class ObservationPlannerNode:
             if item in known_hypotheses
         ]
         if not discriminates:
-            raise ValueError("observation does not reference a known hypothesis")
+            # Naming no hypothesis this graph holds is a planner mistake and not
+            # a programming error. Raising it took the request down with it.
+            return {
+                "next_question": None,
+                "planned_tool_call": None,
+                "stop_reason": (
+                    "the planned observation discriminates no hypothesis"
+                    " this investigation is holding"
+                ),
+                "unknowns": [
+                    *state.unknowns,
+                    UnknownItem(
+                        code="observation_unanchored",
+                        message=(
+                            "The next observation named hypotheses that do not"
+                            " exist: "
+                            + ", ".join(decision.discriminates_hypothesis_ids)
+                        ),
+                    ),
+                ],
+                "iteration_count": state.iteration_count + 1,
+                "visited_nodes": [*state.visited_nodes, "observation_planner"],
+            }
 
+        unknowns = list(state.unknowns)
         arguments_by_tool: dict[str, dict[str, Any]] = {}
         hosts_by_tool: dict[str, str] = {}
         known_hosts = {host.host_id for host in state.hosts}
         for candidate in decision.candidates:
-            arguments = json.loads(candidate.arguments_json)
-            if not isinstance(arguments, dict):
-                raise ValueError("candidate arguments_json must decode to an object")
+            try:
+                arguments, associated = _candidate_call(candidate, state, known_hosts)
+            except _CandidateRejected as rejection:
+                # One bad candidate is not a bad turn: the planner proposes
+                # several, and the router only needs one that survives.
+                unknowns.append(
+                    UnknownItem(
+                        code="candidate_unusable",
+                        message=f"{candidate.tool_name}: {rejection}",
+                    ),
+                )
+                continue
             arguments_by_tool[candidate.tool_name] = arguments
-            associated = candidate.host_id
-            if associated is None and len(state.hosts) == 1:
-                associated = state.hosts[0].host_id
             if associated is not None:
-                if associated not in known_hosts:
-                    raise ValueError("candidate references an unresolved host")
                 hosts_by_tool[candidate.tool_name] = associated
 
         generic_effects = {
@@ -300,6 +371,7 @@ class ObservationPlannerNode:
             "planned_tool_call": None,
             "candidate_tool_arguments": arguments_by_tool,
             "candidate_tool_hosts": hosts_by_tool,
+            "unknowns": unknowns,
             "generic_fallback_allowed": (
                 decision.generic_fallback_allowed
                 and decision.required_effect in generic_effects
