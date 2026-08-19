@@ -169,7 +169,14 @@ class HypothesisPlannerNode:
             for item in decision.hypotheses
         ]
         _require_unique([item.id for item in hypotheses], "hypothesis id")
-        stop_reason = decision.stop_reason
+        # A stop_reason means stop only when there is nothing to discriminate.
+        # Asked what is running on a host right now, the planner produced three
+        # competing hypotheses and a stop_reason reading "the evidence so far
+        # cannot determine the current state" -- which is the reason to make an
+        # observation, not to stop before the first one. The prompt already says
+        # stop_reason belongs to the empty-hypotheses case; this is that rule in
+        # code, where a model cannot decline to follow it.
+        stop_reason = decision.stop_reason if not hypotheses else None
         if not hypotheses and not stop_reason:
             stop_reason = "the request requires no causal hypothesis investigation"
         return {
@@ -227,11 +234,10 @@ class ObservationPlannerNode:
             },
             reasoning_effort="medium",
         )
-        if (
-            decision.stop_reason
-            or not decision.question
-            or not decision.required_effect
-        ):
+        # Same rule one stage down: a planner that names an observation and a
+        # stop_reason in the same breath has described the next step, not the
+        # end. Only the absence of a routable question ends the loop here.
+        if not decision.question or not decision.required_effect:
             return {
                 "next_question": None,
                 "planned_tool_call": None,
