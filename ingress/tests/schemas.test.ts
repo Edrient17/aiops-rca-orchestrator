@@ -71,6 +71,25 @@ describe("shipped templates", () => {
     expect(selector.mode === "host_group" && selector.group_ids).toEqual(["10"]);
   });
 
+  it("carries each section's declared evidence through to the database", async () => {
+    // zod strips what it does not declare. When requires_effects was missing
+    // from the section schema, the template files kept their declarations and
+    // the sync quietly wrote sections without them -- turning the coverage
+    // guarantee off on the next ingress restart, with nothing to see.
+    process.env.AIOPS_MONTHLY_HOST_GROUP_ID = "10";
+    const files = await readTemplateFiles(dir);
+    const monthly = files.find((f) => f.template_id === "monthly_capacity_report")!;
+    const byId = new Map(
+      monthly.output.sections.map((section) => [section.id, section.requires_effects]),
+    );
+
+    expect(byId.get("capacity_trend")).toEqual(["metric_change"]);
+    expect(byId.get("resource_pressure")).toEqual(["metric_level", "metric_trend"]);
+    expect(byId.get("availability")).toEqual(["incident_events"]);
+    // A narrative section declares nothing, and must not gain a declaration.
+    expect(byId.get("summary")).toEqual([]);
+  });
+
   it("refuses to load when a referenced variable is unset", async () => {
     delete process.env.AIOPS_MONTHLY_HOST_GROUP_ID;
 
