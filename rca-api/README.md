@@ -34,6 +34,25 @@ effects, hypothesis ids and evidence ids are all bound to the values that exist
 at that moment, so an invented one cannot be represented rather than being
 caught later.
 
+## Collector graph
+
+[docs/collector-graph.md](docs/collector-graph.md) draws the node topology and
+the conditional routes. It is generated from the compiled graph, not drawn by
+hand:
+
+```powershell
+.\.venv\Scripts\python -m aiops_rca.graph.diagram > docs/collector-graph.md
+```
+
+`tests/test_graph_diagram.py` compares it against the graph on every run, so a
+route changed without regenerating it fails the suite rather than leaving a
+diagram of last month's pipeline. Drawing needs no model, MCP session or
+credentials, which is what lets it be a test instead of a chore.
+
+For watching an actual run rather than the shape, use the LangSmith trace --
+tracing is already wired below, and the graph is owned by this service rather
+than by a `langgraph dev` server.
+
 ## Section evidence contract
 
 A report template's sections declare what they are written from, using the tool
