@@ -104,7 +104,7 @@ def evaluate(path: Path, limit: int | None) -> None:
 
     from aiops_rca.config.settings import Settings
     from aiops_rca.services.llm import OpenAIStructuredModel
-    from aiops_rca.services.tracing import configure_tracing
+    from aiops_rca.services.tracing import configure as configure_tracing
 
     _load(path)
     settings = Settings()

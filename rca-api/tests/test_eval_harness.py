@@ -217,3 +217,66 @@ class TestTheWriterTarget:
         example = load_examples(_write(tmp_path, _row())).examples[0]
         with pytest.raises(RuntimeError):
             asyncio.run(writer_target(Failing(), "stub")(example.as_inputs()))
+
+
+class TestTheEvaluateCommand:
+    """The command that spends money, exercised without spending any.
+
+    `evaluate` deferred its imports into the function body, so nothing checked
+    them: it named `configure_tracing` where the module exports `configure`, and
+    the mistake surfaced as an ImportError on the VM, after a container rebuild
+    and a dataset copy. Every other path here had a test; this one had the cost
+    of running it as an excuse not to.
+    """
+
+    def _run(self, monkeypatch, tmp_path, examples=3):
+        import aiops_rca.evals.run as run
+
+        seen: dict[str, Any] = {}
+
+        class FakeClient:
+            def list_examples(self, **kwargs: Any) -> list[Any]:
+                seen["dataset"] = kwargs.get("dataset_name")
+                return [object()] * examples
+
+            def evaluate(self, target: Any, **kwargs: Any) -> str:
+                seen["target"] = target
+                seen["evaluators"] = kwargs["evaluators"]
+                seen["data"] = kwargs["data"]
+                return "experiment"
+
+        monkeypatch.setattr("langsmith.Client", lambda *a, **k: FakeClient())
+        monkeypatch.setattr(
+            "aiops_rca.services.llm.OpenAIStructuredModel",
+            lambda **kwargs: object(),
+        )
+        monkeypatch.setattr("aiops_rca.services.tracing.configure", lambda _: False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("AIOPS_INTERNAL_TOKEN", "x" * 24)
+        # Read off the source table rather than listed here, so a fourth MCP
+        # server does not quietly break this test into a false red.
+        from aiops_rca.sources import SOURCES
+
+        for profile in SOURCES.values():
+            monkeypatch.setenv(profile.url_setting.upper(), "http://localhost:1")
+            if profile.token_setting:
+                monkeypatch.setenv(profile.token_setting.upper(), "token")
+        return run, seen
+
+    def test_it_reaches_the_experiment(self, monkeypatch, tmp_path):
+        run, seen = self._run(monkeypatch, tmp_path)
+        run.evaluate(_write(tmp_path, _row()), None)
+        assert seen["dataset"] == run.DATASET_NAME
+        assert [item.__name__ for item in seen["evaluators"]] == [
+            "evidence_refs_resolve",
+            "counts_are_grounded",
+            "omission_is_disclosed",
+            "unknowns_reach_limitations",
+        ]
+
+    def test_limit_is_honoured_before_the_model_is_called(self, monkeypatch, tmp_path):
+        # The flag exists so a first run costs five writer calls rather than
+        # seventy-eight. Applying it after the fact would defeat the point.
+        run, seen = self._run(monkeypatch, tmp_path, examples=20)
+        run.evaluate(_write(tmp_path, _row()), 5)
+        assert len(seen["data"]) == 5
