@@ -269,7 +269,15 @@ class InvestigationService:
                 # Summed across drafts: a report the checks sent back twice cost
                 # what all three passes cost, and the audit row should say so.
                 duration_ms=finished.report_duration_ms,
-                output=report.model_dump(mode="json"),
+                output={
+                    # How many drafts it took. A rewrite that succeeded used to
+                    # leave no trace at all -- neither the count nor the graph's
+                    # visited nodes are stored anywhere -- so the one question
+                    # the report loop was staged to answer, whether it ever
+                    # fires, had no answer in the data.
+                    "drafts": finished.report_attempts,
+                    "report": report.model_dump(mode="json"),
+                },
             )
         )
         return InvestigationApiResponse(

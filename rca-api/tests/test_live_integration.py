@@ -353,6 +353,12 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
         "evidence_collector",
         "rca_writer",
     ]
+    # How many drafts the report took. A rewrite that succeeded used to leave no
+    # trace anywhere -- not the count, not the graph's visited nodes -- so the
+    # question the report loop was staged to answer had no answer in the data.
+    writer = next(run for run in response.agent_runs if run.stage == "rca_writer")
+    assert writer.output["drafts"] == 1
+    assert writer.output["report"]["sections"]
     assert response.evidence_package.evidence[0].evidence_id == "zbx:event:20202"
     assert response.trace is not None
     assert response.trace.visited_nodes == [
