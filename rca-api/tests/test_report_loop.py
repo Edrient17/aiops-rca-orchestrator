@@ -203,6 +203,15 @@ class TestChecking:
         codes = [item.code for item in update["unknowns"]]
         assert codes == ["report_check_failed"]
 
+    def test_what_sent_a_draft_back_is_kept_across_drafts(self):
+        # report_findings describes only the draft in hand and the writer clears
+        # it. A rewrite that succeeded used to leave no record of what was
+        # wrong, so a check too eager to pass would cost a model call on every
+        # report with nothing naming it.
+        update = _check(BAD, report_attempts=1, report_rejections=["earlier"])
+        assert update["report_rejections"][0] == "earlier"
+        assert "counts_are_grounded" in update["report_rejections"][-1]
+
     def test_an_earlier_draft_is_not_recorded_as_a_failure(self):
         # It is about to be rewritten; recording it would report a defect the
         # published report does not have.

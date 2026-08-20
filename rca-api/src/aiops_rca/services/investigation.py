@@ -271,6 +271,10 @@ class InvestigationService:
                     # the report loop was staged to answer, whether it ever
                     # fires, had no answer in the data.
                     "drafts": finished.report_attempts,
+                    # Why each earlier draft was sent back. Without it a rewrite
+                    # is visible and unexplainable, and a check too eager to
+                    # pass costs a model call on every report under no name.
+                    "rejected": finished.report_rejections,
                     "report": report.model_dump(mode="json"),
                 },
             )

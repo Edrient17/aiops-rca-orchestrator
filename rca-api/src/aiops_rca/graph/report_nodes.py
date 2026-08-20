@@ -95,8 +95,13 @@ class ReportEvalNode:
             f"{item.check} ({item.section_id or 'report'}): {item.detail}"
             for item in findings
         ]
+        rejections = [*state.report_rejections, *detail]
         if state.report_attempts < self.max_attempts:
-            return {"report_findings": detail, "visited_nodes": visited}
+            return {
+                "report_findings": detail,
+                "report_rejections": rejections,
+                "visited_nodes": visited,
+            }
 
         # Out of drafts. The report goes out as it stands -- the writer was told
         # about these on its last pass and had the chance to say so -- but the
@@ -104,6 +109,7 @@ class ReportEvalNode:
         # says nothing about it anywhere is the thing these checks exist to stop.
         return {
             "report_findings": detail,
+            "report_rejections": rejections,
             "unknowns": [
                 *state.unknowns,
                 *(

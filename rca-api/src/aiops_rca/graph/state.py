@@ -90,6 +90,14 @@ class InvestigationState(StrictModel):
     report_findings: Annotated[list[str], Field(max_length=50)] = Field(
         default_factory=list,
     )
+    #: Every finding that ever sent a draft back, kept across drafts.
+    #: report_findings describes only the draft in hand and is cleared when it
+    #: is replaced, so a rewrite that succeeded left no record of what was wrong
+    #: -- and a check that is too eager would cost a second model call on every
+    #: report with nothing naming it.
+    report_rejections: Annotated[list[str], Field(max_length=100)] = Field(
+        default_factory=list,
+    )
     report_attempts: Annotated[int, Field(ge=0, le=10)] = 0
     #: Summed across attempts, so the audit row reports the whole cost of
     #: writing rather than the last pass.

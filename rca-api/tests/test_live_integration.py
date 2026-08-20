@@ -358,6 +358,8 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
     # question the report loop was staged to answer had no answer in the data.
     writer = next(run for run in response.agent_runs if run.stage == "rca_writer")
     assert writer.output["drafts"] == 1
+    # Nothing sent this one back, so there is nothing to explain.
+    assert writer.output["rejected"] == []
     assert writer.output["report"]["sections"]
     assert response.evidence_package.evidence[0].evidence_id == "zbx:event:20202"
     assert response.trace is not None
