@@ -239,13 +239,14 @@ class TestTheEvaluateCommand:
                 seen["dataset"] = kwargs.get("dataset_name")
                 return [object()] * examples
 
-            def evaluate(self, target: Any, **kwargs: Any) -> str:
-                seen["target"] = target
-                seen["evaluators"] = kwargs["evaluators"]
-                seen["data"] = kwargs["data"]
-                return "experiment"
+        async def fake_aevaluate(target: Any, **kwargs: Any) -> str:
+            seen["target"] = target
+            seen["evaluators"] = kwargs["evaluators"]
+            seen["data"] = kwargs["data"]
+            return "experiment"
 
         monkeypatch.setattr("langsmith.Client", lambda *a, **k: FakeClient())
+        monkeypatch.setattr("langsmith.aevaluate", fake_aevaluate)
         monkeypatch.setattr(
             "aiops_rca.services.llm.OpenAIStructuredModel",
             lambda **kwargs: object(),
@@ -267,6 +268,10 @@ class TestTheEvaluateCommand:
         run, seen = self._run(monkeypatch, tmp_path)
         run.evaluate(_write(tmp_path, _row()), None)
         assert seen["dataset"] == run.DATASET_NAME
+        # The writer is async all the way down, which is why this goes through
+        # aevaluate at all -- the synchronous entry point refuses a coroutine
+        # target, and a stub that accepted one hid that until the VM ran it.
+        assert asyncio.iscoroutinefunction(seen["target"])
         assert [item.__name__ for item in seen["evaluators"]] == [
             "evidence_refs_resolve",
             "counts_are_grounded",

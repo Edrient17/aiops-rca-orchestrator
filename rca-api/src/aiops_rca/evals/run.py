@@ -100,7 +100,9 @@ def upload(path: Path) -> None:
 
 
 def evaluate(path: Path, limit: int | None) -> None:
-    from langsmith import Client
+    import asyncio
+
+    from langsmith import Client, aevaluate
 
     from aiops_rca.config.settings import Settings
     from aiops_rca.services.llm import OpenAIStructuredModel
@@ -119,13 +121,18 @@ def evaluate(path: Path, limit: int | None) -> None:
     if limit:
         data = data[:limit]
     print(f"running the writer over {len(data)} examples with {settings.rca_writer_model}")
-    results = client.evaluate(
-        writer_target(model, settings.rca_writer_model),
-        data=data,
-        evaluators=evaluators(),
-        experiment_prefix="writer",
-        metadata={"writer_model": settings.rca_writer_model},
-        max_concurrency=4,
+    # aevaluate rather than evaluate: the writer is async all the way down --
+    # the service awaits the same call -- and the synchronous entry point
+    # refuses a coroutine target rather than running it.
+    results = asyncio.run(
+        aevaluate(
+            writer_target(model, settings.rca_writer_model),
+            data=data,
+            evaluators=evaluators(),
+            experiment_prefix="writer",
+            metadata={"writer_model": settings.rca_writer_model},
+            max_concurrency=4,
+        ),
     )
     print(results)
 
