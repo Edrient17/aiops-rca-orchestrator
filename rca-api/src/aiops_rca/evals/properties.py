@@ -83,6 +83,10 @@ _COUNT_FIELDS = frozenset(
         "iterations",
         "matched",
         "kernel_threads_omitted",
+        # The bound a query ran under is a fact about how many, and a report
+        # that states it correctly was being told the number came from nowhere.
+        "row_limit",
+        "limit",
     },
 )
 
@@ -240,26 +244,56 @@ def omission_is_disclosed(
     """A list the evidence had to shorten is not presented as the whole list.
 
     Sixty services arrived as fifteen and the report described those fifteen as
-    what the host was running. The evidence said how many it left behind; the
+    what the host was running. The evidence says how many it left behind; the
     report has to pass that on, or the reader takes a prefix for the set.
+
+    Disclosure was a list of words -- 생략, 잘림, 일부, truncated. Live, that
+    rejected a report which had said "657건 매칭 중 100건만 반환되었으므로 …
+    완전히 판별할 수 없습니다" twice, in two different sections, because neither
+    "부분" nor "만 반환" was on the list. It cost a rewrite and then shipped a
+    finding against a report that had done exactly the right thing.
+
+    Repeating the evidence's own counts *is* the disclosure, and a number is
+    decidable where a phrasing is not. Only cited evidence is judged: a
+    shortened list nobody quoted is not being presented as anything.
     """
-    omitted = sum(
-        int(item["observed"]["omitted"])
+    cited: set[str] = set()
+    for section in _sections(report):
+        for item in section.get("items") or []:
+            if isinstance(item, Mapping):
+                cited.update(item.get("evidence_refs") or [])
+
+    shortened = [
+        item
         for item in _evidence_items(package)
-        if isinstance(item.get("observed"), Mapping)
+        if item.get("evidence_id") in cited
+        and isinstance(item.get("observed"), Mapping)
         and isinstance(item["observed"].get("omitted"), int)
-    )
-    if omitted <= 0:
+        and item["observed"]["omitted"] > 0
+    ]
+    if not shortened:
         return []
+
     whole = " ".join(text for section in _sections(report) for text in _texts(section))
     if any(word in whole for word in _DISCLOSURES):
         return []
-    return [
-        Finding(
-            check="omission_is_disclosed",
-            detail=f"{omitted} rows left out of the evidence, unmentioned in the report",
-        ),
-    ]
+    stated = {int(found) for found in re.findall(r"\d{1,9}", whole)}
+
+    findings: list[Finding] = []
+    for evidence in shortened:
+        if _counted_quantities(evidence) & stated:
+            continue
+        findings.append(
+            Finding(
+                check="omission_is_disclosed",
+                detail=(
+                    f"{evidence['observed']['omitted']} rows were left out of "
+                    f"{evidence.get('evidence_id')} and the report repeats none "
+                    f"of its counts"
+                ),
+            ),
+        )
+    return findings
 
 
 def unknowns_reach_limitations(

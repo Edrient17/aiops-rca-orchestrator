@@ -101,6 +101,18 @@ class TestCountsAreGrounded:
             _package(TRIGGERS), _report("answer", _item("트리거: 25개", refs=()))
         ) == []
 
+    def test_a_query_limit_is_a_count(self):
+        # Live, a report stated the bound its query ran under -- row_limit 50 --
+        # and was told the number came from nowhere. How many a query was
+        # allowed to return is a fact about how many.
+        limited = {
+            "evidence_id": "e1",
+            "summary": '1 rows {"data_quality":{"row_limit":50,"hit_row_limit":false}}',
+        }
+        assert counts_are_grounded(
+            _package(limited), _report("limitations", _item("조회는 50건 한도였습니다"))
+        ) == []
+
     def test_only_the_cited_evidence_counts(self):
         # Pooling counts across the whole package let an unrelated list vouch
         # for a number. The citation says what the claim rests on.
@@ -125,11 +137,19 @@ class TestEvidenceRefsResolve:
 
 
 class TestOmissionIsDisclosed:
-    def _cut(self):
-        return {
+    def _cut(self, omitted=45, carried=15, extra=None):
+        evidence = {
             "evidence_id": "e1",
-            "observed": {"kind": "processes", "omitted": 45, "items": [{}] * 15},
+            "summary": '15 processes {"returned": 60}',
+            "observed": {
+                "kind": "processes",
+                "omitted": omitted,
+                "items": [{}] * carried,
+            },
         }
+        if extra:
+            evidence.update(extra)
+        return evidence
 
     def test_a_shortened_list_presented_whole_is_caught(self):
         findings = omission_is_disclosed(
@@ -138,10 +158,33 @@ class TestOmissionIsDisclosed:
         )
         assert [f.check for f in findings] == ["omission_is_disclosed"]
 
-    def test_saying_so_passes(self):
+    def test_a_disclosing_word_passes(self):
         assert omission_is_disclosed(
             _package(self._cut()),
             _report("processes", _item("일부만 표시했습니다: sshd, java")),
+        ) == []
+
+    def test_repeating_the_evidence_s_own_count_passes(self):
+        # Live, the words were the whole test and it rejected a report that had
+        # said "657건 매칭 중 100건만 반환되었으므로 … 완전히 판별할 수 없습니다"
+        # twice -- neither "부분" nor "만 반환" was on the list. Passing on the
+        # tool's own numbers is the disclosure, and a number is decidable where
+        # a phrasing is not.
+        assert omission_is_disclosed(
+            _package(self._cut()),
+            _report("processes", _item("60건 중 일부를 아래에 싣습니다")),
+        ) == []
+
+    def test_a_number_from_somewhere_else_does_not_count(self):
+        assert omission_is_disclosed(
+            _package(self._cut()),
+            _report("processes", _item("트리거는 26개입니다")),
+        )
+
+    def test_a_shortened_list_nobody_cited_is_not_being_presented(self):
+        assert omission_is_disclosed(
+            _package(self._cut()),
+            _report("processes", _item("다른 이야기", refs=())),
         ) == []
 
     def test_nothing_omitted_says_nothing(self):
