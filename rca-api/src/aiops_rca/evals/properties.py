@@ -33,7 +33,12 @@ class Finding:
     section_id: str | None = None
 
 
-Check = Callable[[Mapping[str, Any], Mapping[str, Any]], list[Finding]]
+#: A check reads three documents: the evidence, the report, and the template
+#: the report was written against. Most ignore the third; the two that judge
+#: whether a report is *complete* cannot be written without it.
+Check = Callable[
+    [Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]], list[Finding]
+]
 
 
 def _sections(report: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -129,6 +134,7 @@ def _evidence_items(package: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def evidence_refs_resolve(
     package: Mapping[str, Any],
     report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
     """Every citation names evidence that exists.
 
@@ -162,6 +168,7 @@ def evidence_refs_resolve(
 def counts_are_grounded(
     package: Mapping[str, Any],
     report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
     """A stated count appears in the evidence.
 
@@ -228,6 +235,7 @@ def counts_are_grounded(
 def omission_is_disclosed(
     package: Mapping[str, Any],
     report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
     """A list the evidence had to shorten is not presented as the whole list.
 
@@ -257,6 +265,7 @@ def omission_is_disclosed(
 def unknowns_reach_limitations(
     package: Mapping[str, Any],
     report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
     """An investigation that hit a wall does not report having hit none.
 
@@ -284,17 +293,139 @@ def unknowns_reach_limitations(
     return []
 
 
+def _limitations(report: Mapping[str, Any]) -> str:
+    for section in _sections(report):
+        if str(section.get("id")) == "limitations":
+            return " ".join(_texts(section)).strip()
+    return ""
+
+
+def _stated(text: str) -> bool:
+    return bool(text) and text not in _NO_LIMITS
+
+
+def required_sections_are_answered(
+    package: Mapping[str, Any],
+    report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
+) -> list[Finding]:
+    """A section the template insists on is filled, or its absence is explained.
+
+    This is what replaces the coverage sweep. That node read the effects each
+    section declared and collected them before the report was written, which
+    guaranteed the sections could be filled and cost a tool call on every run
+    whether the question needed one or not -- a request about templates still
+    paid for a process query.
+
+    The guarantee moves to the end. An empty required section is not forbidden;
+    going out with nothing said about the investigation's limits is.
+
+    Written strictly first -- the limitations had to name the empty section's
+    own heading -- it flagged fourteen of seventy-eight real reports, and they
+    were right. A report finding no anomaly has no candidate causes to list, and
+    the formatter already renders a required section that arrived empty as
+    "해당 없음", so nobody was misled. What it could not tell apart is a section
+    empty because there was nothing to say from one empty because the
+    investigation never looked, and only the second is a defect.
+
+    So the bar is the weaker, decidable one: leave a required section empty and
+    the report has to acknowledge some limit. The finding still names the
+    section, which is what makes it something a second draft can act on.
+    """
+    sections = template.get("sections") if isinstance(template, Mapping) else None
+    if not isinstance(sections, list):
+        return []
+    if not _sections(report):
+        # A report with no sections at all is not a report this can read. The
+        # reports written before the current writer had a different shape
+        # entirely, and measured over real history this accused every one of
+        # them of leaving every required section empty. An absence of structure
+        # is not an absence of answer.
+        return []
+
+    filled = {
+        str(section.get("id"))
+        for section in _sections(report)
+        if any(_texts(section))
+    }
+    if _stated(_limitations(report)):
+        return []
+
+    findings: list[Finding] = []
+    for declared in sections:
+        if not isinstance(declared, Mapping) or not declared.get("required"):
+            continue
+        section_id = str(declared.get("id"))
+        if section_id in filled or section_id == "limitations":
+            continue
+        heading = str(declared.get("heading") or section_id)
+        findings.append(
+            Finding(
+                check="required_sections_are_answered",
+                detail=(
+                    f"{heading!r} is required and empty, and the report states "
+                    f"no limitation"
+                ),
+                section_id=section_id,
+            ),
+        )
+    return findings
+
+
+def unsupported_cause_is_admitted(
+    package: Mapping[str, Any],
+    report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
+) -> list[Finding]:
+    """An investigation that supported no explanation says so.
+
+    The hypotheses carry their own verdict. When every one of them was rejected
+    or left unresolved, the investigation did not find a cause -- which is a
+    legitimate outcome and a useful answer. What is not legitimate is a report
+    that reads as though it had found one, with nothing under 분석 한계.
+
+    What this can decide is narrow, and worth being plain about: there is no
+    link from a sentence in the report to a hypothesis, so it cannot tell that
+    *this* claim is unbacked. It can tell that nothing was supported and the
+    report claimed no limits, which is the shape the failure takes.
+    """
+    hypotheses = package.get("hypotheses")
+    if not isinstance(hypotheses, list) or not hypotheses:
+        return []
+    if any(
+        isinstance(item, Mapping) and item.get("status") == "supported"
+        for item in hypotheses
+    ):
+        return []
+    if _stated(_limitations(report)):
+        return []
+    return [
+        Finding(
+            check="unsupported_cause_is_admitted",
+            detail=(
+                f"none of the {len(hypotheses)} hypotheses was supported and the "
+                f"report states no limitation"
+            ),
+            section_id="limitations",
+        ),
+    ]
+
+
 CHECKS: tuple[Check, ...] = (
     evidence_refs_resolve,
     counts_are_grounded,
     omission_is_disclosed,
     unknowns_reach_limitations,
+    required_sections_are_answered,
+    unsupported_cause_is_admitted,
 )
 
 
 def check_report(
     package: Mapping[str, Any],
     report: Mapping[str, Any],
+    template: Mapping[str, Any] | None = None,
     checks: tuple[Check, ...] = CHECKS,
 ) -> list[Finding]:
-    return [finding for check in checks for finding in check(package, report)]
+    spec = template or {}
+    return [finding for check in checks for finding in check(package, report, spec)]

@@ -133,7 +133,11 @@ def _as_evaluator(check: Check) -> Callable[..., dict]:
     """
 
     def evaluate(inputs: dict, outputs: dict) -> dict:
-        findings = check(inputs.get("package") or {}, (outputs or {}).get("report") or {})
+        findings = check(
+            inputs.get("package") or {},
+            (outputs or {}).get("report") or {},
+            inputs.get("template_output") or {},
+        )
         return {
             "key": check.__name__,
             "score": 0 if findings else 1,
@@ -163,5 +167,6 @@ def baseline_findings(examples: Sequence[Example]) -> Iterator[tuple[str, list]]
             check_report(
                 example.package.model_dump(mode="json", by_alias=True),
                 example.previous_report,
+                example.template_output,
             ),
         )

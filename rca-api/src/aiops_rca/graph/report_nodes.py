@@ -87,6 +87,7 @@ class ReportEvalNode:
         findings = check_report(
             state.evidence_package.model_dump(mode="json", by_alias=True),
             state.report.model_dump(mode="json"),
+            state.template_output or {},
         )
         if not findings:
             return {"report_findings": [], "visited_nodes": visited}

@@ -14,7 +14,9 @@ from aiops_rca.evals.properties import (
     counts_are_grounded,
     evidence_refs_resolve,
     omission_is_disclosed,
+    required_sections_are_answered,
     unknowns_reach_limitations,
+    unsupported_cause_is_admitted,
 )
 
 
@@ -183,3 +185,97 @@ def test_check_report_runs_them_all():
         "evidence_refs_resolve",
         "unknowns_reach_limitations",
     }
+
+
+TEMPLATE = {
+    "sections": [
+        {"id": "answer", "heading": "확인 결과", "required": True},
+        {"id": "notes", "heading": "참고", "required": False},
+        {"id": "limitations", "heading": "분석 한계", "required": True},
+    ],
+}
+
+
+def _sectioned(**bodies):
+    return {
+        "sections": [
+            {"id": name, "body": body, "items": []} for name, body in bodies.items()
+        ],
+    }
+
+
+class TestRequiredSectionsAreAnswered:
+    """What replaces the coverage sweep.
+
+    The sweep collected a section's declared evidence before the report was
+    written, which guaranteed the section could be filled and cost a tool call
+    on every run whether the question needed one or not. The guarantee moves to
+    the end: leave a required section empty and say nothing about why, and the
+    draft comes back.
+    """
+
+    def test_an_empty_required_section_with_no_stated_limit_is_caught(self):
+        report = _sectioned(answer="", limitations="해당 없음")
+        findings = required_sections_are_answered({}, report, TEMPLATE)
+        assert [f.section_id for f in findings] == ["answer"]
+        assert "확인 결과" in findings[0].detail
+
+    def test_saying_what_was_missing_passes(self):
+        report = _sectioned(answer="", limitations="Wazuh 에이전트가 응답하지 않았습니다")
+        assert required_sections_are_answered({}, report, TEMPLATE) == []
+
+    def test_a_filled_section_passes(self):
+        report = _sectioned(answer="트리거 26개", limitations="해당 없음")
+        assert required_sections_are_answered({}, report, TEMPLATE) == []
+
+    def test_an_optional_section_may_be_empty_and_unexplained(self):
+        report = _sectioned(answer="답", notes="", limitations="해당 없음")
+        assert required_sections_are_answered({}, report, TEMPLATE) == []
+
+    def test_a_report_with_no_sections_abstains(self):
+        # Reports written before the current writer had another shape entirely.
+        # Measured over real history, accusing them flagged every required
+        # section of every one -- an absence of structure is not an absence of
+        # answer.
+        assert required_sections_are_answered({}, {"impact": {}}, TEMPLATE) == []
+
+    def test_no_template_abstains(self):
+        assert required_sections_are_answered({}, _sectioned(answer=""), None) == []
+
+
+class TestUnsupportedCauseIsAdmitted:
+    """An investigation that supported no explanation says so.
+
+    Asked about templates and triggers, a report offered three hypotheses, none
+    of them supported, and wrote "해당 없음" under 분석 한계. Not finding a cause is
+    a legitimate answer; reporting no limits while holding none is not.
+    """
+
+    def _package(self, *statuses):
+        return {"hypotheses": [{"id": f"H{i}", "status": s} for i, s in enumerate(statuses)]}
+
+    def test_all_rejected_with_no_stated_limit_is_caught(self):
+        report = _sectioned(limitations="해당 없음")
+        findings = unsupported_cause_is_admitted(
+            self._package("rejected", "unresolved", "rejected"), report, TEMPLATE
+        )
+        assert len(findings) == 1
+        assert "3" in findings[0].detail
+
+    def test_one_supported_hypothesis_passes(self):
+        report = _sectioned(limitations="해당 없음")
+        assert unsupported_cause_is_admitted(
+            self._package("rejected", "supported"), report, TEMPLATE
+        ) == []
+
+    def test_stating_the_limit_passes(self):
+        report = _sectioned(limitations="원인을 특정하지 못했습니다")
+        assert unsupported_cause_is_admitted(
+            self._package("rejected", "rejected"), report, TEMPLATE
+        ) == []
+
+    def test_an_investigation_with_no_hypotheses_abstains(self):
+        # A host-state question never forms one. Demanding a limitation there
+        # would flag every report of a kind that does not reason causally.
+        report = _sectioned(limitations="해당 없음")
+        assert unsupported_cause_is_admitted({"hypotheses": []}, report, TEMPLATE) == []

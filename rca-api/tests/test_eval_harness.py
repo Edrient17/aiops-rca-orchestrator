@@ -297,11 +297,12 @@ class TestTheEvaluateCommand:
         # aevaluate at all -- the synchronous entry point refuses a coroutine
         # target, and a stub that accepted one hid that until the VM ran it.
         assert asyncio.iscoroutinefunction(seen["target"])
-        assert [item.__name__ for item in seen["evaluators"]] == [
-            "evidence_refs_resolve",
-            "counts_are_grounded",
-            "omission_is_disclosed",
-            "unknowns_reach_limitations",
+        from aiops_rca.evals.properties import CHECKS
+
+        # Named from the check table rather than listed, so a new check is
+        # covered by the experiment without this test deciding whether it is.
+        assert [item.__name__ for item in seen['evaluators']] == [
+            check.__name__ for check in CHECKS
         ]
 
     def test_it_reports_the_score_rather_than_an_object(self, monkeypatch, tmp_path, capsys):
