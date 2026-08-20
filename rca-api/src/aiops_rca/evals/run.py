@@ -124,17 +124,39 @@ def evaluate(path: Path, limit: int | None) -> None:
     # aevaluate rather than evaluate: the writer is async all the way down --
     # the service awaits the same call -- and the synchronous entry point
     # refuses a coroutine target rather than running it.
-    results = asyncio.run(
-        aevaluate(
+    async def run_experiment() -> tuple[str, Counter[tuple[str, int]], list[str]]:
+        results = await aevaluate(
             writer_target(model, settings.rca_writer_model),
             data=data,
             evaluators=evaluators(),
             experiment_prefix="writer",
             metadata={"writer_model": settings.rca_writer_model},
             max_concurrency=4,
-        ),
-    )
-    print(results)
+        )
+        tally: Counter[tuple[str, int]] = Counter()
+        failures: list[str] = []
+        async for row in results:
+            example = row["example"]
+            request_id = (example.inputs or {}).get("request_id", str(example.id))
+            for result in row["evaluation_results"]["results"]:
+                passed = int(bool(result.score))
+                tally[(result.key, passed)] += 1
+                if not passed:
+                    failures.append(f"{request_id}  {result.key}: {result.comment}")
+        return results.experiment_name, tally, failures
+
+    name, tally, failures = asyncio.run(run_experiment())
+
+    # The bare results object printed as its own repr, which told a reader
+    # nothing about whether the writer had got better or worse -- the only
+    # question the experiment exists to answer.
+    print(f"\nexperiment: {name}")
+    for check in sorted({key for key, _ in tally}):
+        passed = tally[(check, 1)]
+        total = passed + tally[(check, 0)]
+        print(f"  {check:28} {passed}/{total}")
+    for line in failures:
+        print(f"\n  {line}")
 
 
 def main() -> None:

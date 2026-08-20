@@ -9,6 +9,7 @@ whose size nobody can account for.
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import pytest
@@ -239,11 +240,35 @@ class TestTheEvaluateCommand:
                 seen["dataset"] = kwargs.get("dataset_name")
                 return [object()] * examples
 
-        async def fake_aevaluate(target: Any, **kwargs: Any) -> str:
+        class FakeResults:
+            experiment_name = "writer-test"
+
+            async def __aiter__(self):
+                for score, comment in ((1, "ok"), (0, "claims 25개")):
+                    yield {
+                        "example": type(
+                            "E", (), {"inputs": {"request_id": "REQ-1"}, "id": 1}
+                        )(),
+                        "evaluation_results": {
+                            "results": [
+                                type(
+                                    "R",
+                                    (),
+                                    {
+                                        "key": "counts_are_grounded",
+                                        "score": score,
+                                        "comment": comment,
+                                    },
+                                )(),
+                            ],
+                        },
+                    }
+
+        async def fake_aevaluate(target: Any, **kwargs: Any) -> FakeResults:
             seen["target"] = target
             seen["evaluators"] = kwargs["evaluators"]
             seen["data"] = kwargs["data"]
-            return "experiment"
+            return FakeResults()
 
         monkeypatch.setattr("langsmith.Client", lambda *a, **k: FakeClient())
         monkeypatch.setattr("langsmith.aevaluate", fake_aevaluate)
@@ -278,6 +303,19 @@ class TestTheEvaluateCommand:
             "omission_is_disclosed",
             "unknowns_reach_limitations",
         ]
+
+    def test_it_reports_the_score_rather_than_an_object(self, monkeypatch, tmp_path, capsys):
+        # The command printed the results object's repr, which answered nothing
+        # about whether the writer had got better or worse.
+        run, _ = self._run(monkeypatch, tmp_path)
+        run.evaluate(_write(tmp_path, _row()), None)
+        printed = capsys.readouterr().out
+        assert "writer-test" in printed
+        # Padding is cosmetic; the pair is not.
+        assert re.search(r"counts_are_grounded\s+1/2", printed)
+        # A failing case names itself, or the number is a dead end.
+        assert "REQ-1" in printed
+        assert "claims 25개" in printed
 
     def test_limit_is_honoured_before_the_model_is_called(self, monkeypatch, tmp_path):
         # The flag exists so a first run costs five writer calls rather than
