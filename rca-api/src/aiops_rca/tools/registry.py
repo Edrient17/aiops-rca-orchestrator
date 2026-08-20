@@ -282,6 +282,11 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
             kind="generic",
             requires=("method",),
             priority=90,
+            # Whatever object was asked for arrives under one generic name.
+            # Without this the rows had nowhere to go but the summary, and a
+            # host with twenty-six triggers was reported as twenty-two and a
+            # sentence saying the rest was cut.
+            result_list_fields=("rows",),
         ),
         _tool(
             "search",
