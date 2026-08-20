@@ -63,8 +63,7 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "host",
-              "host_id"
+              "host"
             ],
             "properties": {
               "host": {
@@ -73,8 +72,12 @@
                 "maxLength": 255
               },
               "host_id": {
-                "type": "string",
-                "pattern": "^\\d+$"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^\\d+$",
+                "description": "Zabbix's id for this host, when Zabbix is where it was found. A host discovered in a log search or a Wazuh agent list has none; the name is what the sources share."
               }
             }
           }
@@ -376,14 +379,16 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "host_id",
             "event_id",
             "trigger_id",
             "item_id"
           ],
           "properties": {
             "host_id": {
-              "type": "string",
+              "type": [
+                "string",
+                "null"
+              ],
               "pattern": "^\\d+$"
             },
             "event_id": {

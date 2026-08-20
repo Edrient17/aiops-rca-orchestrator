@@ -132,3 +132,97 @@ describe("without the frontend addresses", () => {
     expect(rendered).toContain("/zabbix");
   });
 });
+
+describe("a host Zabbix does not know", () => {
+  // Host resolution can now find a name in a log index or an agent list, and
+  // neither carries Zabbix's id. Evidence identifies its host by that id, so
+  // such a host cannot be looked up -- what matters is that it does not look up
+  // as somebody else.
+  const row = () => ({
+    request_id: "REQ-1",
+    user_id: "U000000TEST",
+    template_output: { sections: [{ id: "answer", heading: "확인", required: true }] },
+    package: {
+      evidence: [
+        {
+          evidence_id: "log:lines:ghost-host:aaaa",
+          window: { from: "2026-08-19T00:00:00Z", to: "2026-08-20T00:00:00Z" },
+          resource_ids: { host_id: null },
+          search_query: null,
+        },
+      ],
+      query_context: {
+        hosts: [
+          { host: "ghost-host", host_id: null },
+          { host: "known-host", host_id: "11094" },
+        ],
+      },
+    },
+    report: {
+      title: "확인",
+      sections: [
+        {
+          id: "answer",
+          body: null,
+          items: [
+            {
+              text: "ghost-host 로그에서 에러 확인",
+              label: null,
+              evidence_refs: ["log:lines:ghost-host:aaaa"],
+              counter_evidence_refs: [],
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  it("renders without inventing a link", () => {
+    const rendered = formatReport(
+      {
+        request: { request_id: "REQ-1", user_id: "U000000TEST" },
+        template: { output: row().template_output as never },
+        evidencePackage: row().package as never,
+        report: row().report as never,
+      },
+      CONFIG,
+    );
+    expect(rendered.slackMarkdown).toContain("ghost-host");
+    // No host_id means no "최근 데이터" link; the footnote keeps its bare id.
+    expect(rendered.slackMarkdown).not.toContain("|최근 데이터>");
+  });
+
+  it("does not borrow another host's name for the log query", () => {
+    // The map was keyed by host_id. Keying null would have made every host
+    // without one resolve to whichever was stored last, and the footnote would
+    // open a search for a machine the quote did not come from.
+    const rendered = formatReport(
+      {
+        request: { request_id: "REQ-1", user_id: "U000000TEST" },
+        template: { output: row().template_output as never },
+        evidencePackage: row().package as never,
+        report: row().report as never,
+      },
+      CONFIG,
+    );
+    const link = /_a=([^|\s>]+)/.exec(rendered.slackMarkdown);
+    expect(link).not.toBeNull();
+    const query = decodeURIComponent(link![1]!);
+    expect(query).not.toContain("known-host");
+    // No name to scope by, so the search is left open rather than wrong.
+    expect(query).toContain("query:'*'");
+  });
+
+  it("lists it in the header beside a host that has an id", () => {
+    const rendered = formatReport(
+      {
+        request: { request_id: "REQ-1", user_id: "U000000TEST" },
+        template: { output: row().template_output as never },
+        evidencePackage: row().package as never,
+        report: row().report as never,
+      },
+      CONFIG,
+    );
+    expect(rendered.slackMarkdown).toContain("ghost-host, known-host");
+  });
+});

@@ -192,7 +192,7 @@ class FixtureModel:
                 candidates=[
                     ToolCandidate(
                         tool_name="search",
-                        host_id="10101",
+                        host="node-alpha",
                         arguments_json=json.dumps(
                             {
                                 "index": "logs-*",

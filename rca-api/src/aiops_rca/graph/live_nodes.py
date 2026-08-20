@@ -219,12 +219,12 @@ def _candidate_call(
             "arguments_json decoded to something other than an object"
         )
 
-    associated = candidate.host_id
+    associated = candidate.host
     if associated is None and len(state.hosts) == 1:
-        associated = state.hosts[0].host_id
+        associated = state.hosts[0].host
     if associated is not None and associated not in known_hosts:
         raise _CandidateRejected(
-            f"host_id {associated} was not resolved by this investigation"
+            f"host {associated!r} was not resolved by this investigation"
         )
     return arguments, associated
 
@@ -324,7 +324,7 @@ class ObservationPlannerNode:
         unknowns = list(state.unknowns)
         arguments_by_tool: dict[str, dict[str, Any]] = {}
         hosts_by_tool: dict[str, str] = {}
-        known_hosts = {host.host_id for host in state.hosts}
+        known_hosts = {host.host for host in state.hosts}
         for candidate in decision.candidates:
             try:
                 arguments, associated = _candidate_call(candidate, state, known_hosts)
@@ -534,7 +534,8 @@ class EvidencePackageBuilderNode:
             },
             "query_context": {
                 "hosts": [
-                    {"host": host.host, "host_id": host.host_id} for host in state.hosts
+                    {"host": host.host, "host_id": host.host_id}
+                    for host in state.hosts
                 ],
                 "timezone": state.parsed_request.timezone,
                 "anchor_time": state.parsed_request.anchor_time

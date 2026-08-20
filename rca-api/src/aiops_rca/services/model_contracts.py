@@ -25,7 +25,9 @@ class HypothesisExpectation(StrictModel):
 
 class ToolCandidate(StrictModel):
     tool_name: Annotated[str, Field(min_length=1, max_length=100)]
-    host_id: ZabbixId | None
+    #: Which resolved host this call is about, by name. The name is what the
+    #: sources share; a host found in a log search has no Zabbix id to give.
+    host: Annotated[str, Field(min_length=1, max_length=255)] | None
     arguments_json: Annotated[str, Field(min_length=2, max_length=12_000)]
 
 
@@ -111,4 +113,42 @@ def hypothesis_update_decision_for(
         "BoundHypothesisUpdateDecision",
         __base__=HypothesisUpdateDecision,
         updates=(Annotated[list[bound_update], Field(max_length=20)], ...),
+    )
+
+
+class DiscoveredHost(StrictModel):
+    """A host the search found, named the way the source named it."""
+
+    host: Annotated[str, Field(min_length=1, max_length=255)]
+    #: Only when the search actually returned one. A log line or an agent
+    #: record does not carry Zabbix's id, and inventing one would put a string
+    #: into every later Zabbix call that Zabbix has never heard of.
+    host_id: ZabbixId | None
+    #: Which tool produced the name, so a report can say where it came from.
+    found_by: Annotated[str, Field(min_length=1, max_length=100)]
+
+
+class HostSearchDecision(StrictModel):
+    """Either the hosts found so far, or another place to look."""
+
+    hosts: Annotated[list[DiscoveredHost], Field(max_length=20)]
+    tool_name: Annotated[str, Field(min_length=1, max_length=100)] | None
+    arguments_json: Annotated[str, Field(min_length=2, max_length=4000)]
+    stop_reason: Annotated[str, Field(min_length=1, max_length=1000)] | None
+
+
+@lru_cache(maxsize=8)
+def host_search_decision_for(tools: tuple[str, ...]) -> type[HostSearchDecision]:
+    """HostSearchDecision whose tool_name must name a tool that exists.
+
+    The same binding the observation planner gets, for the same reason: a name
+    the router cannot call is indistinguishable from a capability the platform
+    lacks by the time it reaches a report.
+    """
+    if not tools:
+        return HostSearchDecision
+    return create_model(
+        "BoundHostSearchDecision",
+        __base__=HostSearchDecision,
+        tool_name=(Literal[tools] | None, ...),  # type: ignore[valid-type]
     )

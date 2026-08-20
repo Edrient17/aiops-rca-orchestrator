@@ -17,9 +17,19 @@ class RequestEnvelope(StrictModel):
 
 
 class ResolvedHost(StrictModel):
+    """A host this investigation is about.
+
+    The name is the identity: it is what Zabbix, Wazuh and the log index all
+    call the same machine. The Zabbix id is one source's handle for it, absent
+    when the host was found somewhere else -- a log search, an agent list -- and
+    required by the Zabbix tools, which say so themselves.
+    """
+
     host: Annotated[str, Field(min_length=1, max_length=255)]
-    host_id: ZabbixId
+    host_id: ZabbixId | None = None
     query: Annotated[str, Field(min_length=1, max_length=255)] | None = None
+    #: Where the name came from, for a report that has to explain itself.
+    found_by: Annotated[str, Field(max_length=100)] | None = None
 
 
 class UnknownItem(StrictModel):
@@ -65,6 +75,7 @@ class PlannedToolCall(StrictModel):
     target_hypothesis_ids: Annotated[list[str], Field(max_length=20)]
     # Association metadata for evidence normalization. It is deliberately not
     # inserted into arguments because MCP input schemas reject unknown fields.
+    host: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     host_id: ZabbixId | None = None
 
 

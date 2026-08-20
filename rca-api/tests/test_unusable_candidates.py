@@ -35,7 +35,7 @@ HYPOTHESES = [
 
 GOOD = ToolCandidate(
     tool_name="summarize_logs",
-    host_id="11094",
+    host="vm-java-docker-2",
     arguments_json='{"host": "vm-java-docker-2", "level": "error"}',
 )
 
@@ -43,7 +43,7 @@ GOOD = ToolCandidate(
 # backslashes doubled, and the planner sent them single.
 REGEX = ToolCandidate(
     tool_name="search_logs",
-    host_id="11094",
+    host="vm-java-docker-2",
     arguments_json=r'{"query": "ERROR\s+\d+"}',
 )
 
@@ -51,7 +51,7 @@ REGEX = ToolCandidate(
 # string early. This is the shape the failing run reported.
 QUOTE = ToolCandidate(
     tool_name="search_logs",
-    host_id="11094",
+    host="vm-java-docker-2",
     arguments_json='{"query": "status:"500""}',
 )
 
@@ -141,7 +141,7 @@ class TestAMisquotedArgument:
 class TestTheOtherWaysACandidateWasFatal:
     def test_arguments_that_are_not_an_object(self):
         candidate = ToolCandidate(
-            tool_name="search_logs", host_id="11094", arguments_json="[1, 2]"
+            tool_name="search_logs", host="vm-java-docker-2", arguments_json="[1, 2]"
         )
         update = _decide(candidates=[candidate, GOOD])
         message = next(
@@ -154,7 +154,7 @@ class TestTheOtherWaysACandidateWasFatal:
     def test_a_host_this_investigation_never_resolved(self):
         candidate = ToolCandidate(
             tool_name="search_logs",
-            host_id="99999",
+            host="somewhere-else",
             arguments_json='{"host": "somewhere-else"}',
         )
         update = _decide(candidates=[candidate, GOOD])
@@ -164,7 +164,7 @@ class TestTheOtherWaysACandidateWasFatal:
             for item in update["unknowns"]
             if item.code == "candidate_unusable"
         )
-        assert "99999" in message
+        assert "somewhere-else" in message
 
     def test_an_observation_anchored_to_no_known_hypothesis_stops_the_loop(self):
         # Also a 500 before. Ending the run with a stated reason is the worst it

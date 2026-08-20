@@ -97,7 +97,7 @@ class TestTheObservationPlanner:
             "candidates": [
                 ToolCandidate(
                     tool_name="get_wazuh_agent_processes",
-                    host_id="11094",
+                    host="vm-java-docker-2",
                     arguments_json='{"agent_id": "001"}',
                 ),
             ],

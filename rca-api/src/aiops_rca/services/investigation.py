@@ -71,7 +71,13 @@ class InvestigationService:
         executor = ToolExecutor(adapters, registry)
         self.graph = build_collector_graph(
             CollectorNodes(
-                resolve_hosts=ResolveHostsNode(adapters.zabbix),
+                resolve_hosts=ResolveHostsNode(
+                    adapters.zabbix,
+                    model=model,
+                    model_name=settings.rca_investigation_model,
+                    executor=executor,
+                    registry=registry,
+                ),
                 establish_phenomenon=EstablishPhenomenonNode(
                     zabbix=adapters.zabbix,
                     model=model,

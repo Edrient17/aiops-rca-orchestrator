@@ -1,24 +1,63 @@
-"""Reusable non-LLM nodes for the first collector graph implementation."""
+"""Nodes that decide by rule rather than by asking a model.
 
+One of them asks: `resolve_hosts` falls back to a model when Zabbix does not
+know a name, because which other source to look in is a judgement. Everything
+else here -- routing, execution, normalisation, the stop guard -- is policy that
+a rule can settle, and settling it in code is what keeps it from drifting.
+"""
+
+import json
 from collections.abc import Mapping
+from importlib.resources import files
 from typing import Any
 
 from aiops_rca.graph.routing import hard_stop_update
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.schemas.investigation import PlannedToolCall, ResolvedHost, UnknownItem
+from aiops_rca.services.model_contracts import host_search_decision_for
 from aiops_rca.tools.adapters.base import McpAdapter
 from aiops_rca.tools.executor import ToolExecutor
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
 from aiops_rca.tools.registry import (
+    DEFAULT_TOOL_REGISTRY,
     RoutingContext,
     ToolPolicyError,
     ToolRegistry,
 )
 
+#: Turns the search gets before it gives up. Each is a model call and a tool
+#: call, spent only on names the fast path could not resolve.
+MAX_HOST_SEARCH_TURNS = 2
+
 
 class ResolveHostsNode:
-    def __init__(self, zabbix: McpAdapter) -> None:
+    """Find the hosts this investigation is about.
+
+    Zabbix first, because that is where a monitored host almost always is and
+    asking costs no model call. A name it does not know is not the end: the
+    same machine appears in a log index and in a Wazuh agent list, and which of
+    those to try is a judgement, so a model makes it.
+
+    What comes back from elsewhere is a name without a Zabbix id, which is the
+    honest result -- a log line does not carry one. The Zabbix tools require an
+    id and say so in their own schemas, so a host found this way simply cannot
+    be passed to them, and nothing here has to know which tools those are.
+    """
+
+    def __init__(
+        self,
+        zabbix: McpAdapter,
+        *,
+        model: Any = None,
+        model_name: str = "",
+        executor: Any = None,
+        registry: ToolRegistry = DEFAULT_TOOL_REGISTRY,
+    ) -> None:
         self.zabbix = zabbix
+        self.model = model
+        self.model_name = model_name
+        self.executor = executor
+        self.registry = registry
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
         selector = (state.collection or {}).get("host_selector") or {
@@ -78,7 +117,7 @@ class ResolveHostsNode:
                 for candidate in candidates:
                     host = _resolved_host(candidate)
                     if host:
-                        resolved[host.host_id] = host
+                        resolved[host.host] = host
                 if response.get("excluded_group_ids"):
                     unknowns.append(
                         UnknownItem(
@@ -102,7 +141,7 @@ class ResolveHostsNode:
             if selected:
                 host = _resolved_host(selected, query=query)
                 if host:
-                    resolved[host.host_id] = host
+                    resolved[host.host] = host
             else:
                 unresolved.append(query)
                 code = "host_not_found" if not candidates else "host_ambiguous"
@@ -120,6 +159,20 @@ class ResolveHostsNode:
                     ),
                 )
 
+        if unresolved and self.model is not None and self.executor is not None:
+            found, search_unknowns, search_results = await self._search_elsewhere(
+                state, unresolved, results,
+            )
+            for host in found:
+                resolved.setdefault(host.host, host)
+            unresolved = [
+                query for query in unresolved if query not in {h.query for h in found}
+            ]
+            unknowns.extend(search_unknowns)
+            for result in search_results:
+                results.append(result)
+                purposes[result.tool_call_id] = "Search for the requested host"
+
         stop_reason = state.stop_reason
         if not resolved:
             stop_reason = "no host could be resolved for investigation"
@@ -135,6 +188,113 @@ class ResolveHostsNode:
             "stop_reason": stop_reason,
             "visited_nodes": [*state.visited_nodes, "resolve_hosts"],
         }
+
+
+    async def _search_elsewhere(
+        self,
+        state: InvestigationState,
+        unresolved: list[str],
+        results: list[Any],
+    ) -> tuple[list[ResolvedHost], list[UnknownItem], list[Any]]:
+        """Look for the names Zabbix did not know, wherever else they may be.
+
+        The model chooses where. It sees the catalog and what has been tried,
+        and either names a tool to look in or reports the hosts it has found.
+        Two turns, because each is a model call and a tool call spent on a name
+        the cheap path already failed to resolve.
+        """
+        found: list[ResolvedHost] = []
+        unknowns: list[UnknownItem] = []
+        produced: list[Any] = []
+        output_type = host_search_decision_for(self.registry.names())
+        seen: list[dict[str, Any]] = []
+
+        for _turn in range(MAX_HOST_SEARCH_TURNS):
+            if len(results) + len(produced) >= state.limits.max_tool_calls:
+                unknowns.append(
+                    UnknownItem(
+                        code="host_search_budget_exhausted",
+                        message=(
+                            "The tool-call budget was exhausted before "
+                            + ", ".join(unresolved)
+                            + " could be looked for outside Zabbix."
+                        ),
+                    ),
+                )
+                break
+
+            decision = await self.model.complete(
+                model=self.model_name,
+                output_type=output_type,
+                system_prompt=_prompt("host_search.md"),
+                payload={
+                    "unresolved": unresolved,
+                    "already_resolved": [host.host for host in state.hosts],
+                    "attempts": seen,
+                    "tool_catalog": state.tool_catalog,
+                },
+                reasoning_effort="low",
+            )
+            for item in decision.hosts:
+                found.append(
+                    ResolvedHost(
+                        host=item.host,
+                        host_id=item.host_id,
+                        query=_matching_query(item.host, unresolved),
+                        found_by=item.found_by,
+                    ),
+                )
+            if not decision.tool_name:
+                break
+
+            try:
+                arguments = json.loads(decision.arguments_json)
+                if not isinstance(arguments, dict):
+                    raise ValueError("arguments_json must decode to an object")
+            except ValueError as error:
+                unknowns.append(
+                    UnknownItem(
+                        code="host_search_unusable",
+                        message=f"{decision.tool_name}: {error}",
+                    ),
+                )
+                break
+
+            planned = PlannedToolCall(
+                tool_name=decision.tool_name,
+                arguments=arguments,
+                purpose="Search for the requested host",
+                target_hypothesis_ids=[],
+            )
+            result = await self.executor.execute(
+                planned,
+                RoutingContext(
+                    tool_call_count=len(results) + len(produced),
+                    max_tool_calls=state.limits.max_tool_calls,
+                    # A host search reads whatever index or agent list holds the
+                    # name, and those are the generic tools by definition.
+                    generic_fallback_allowed=True,
+                ),
+            )
+            produced.append(result)
+            seen.append(
+                {
+                    "tool_name": decision.tool_name,
+                    "arguments": arguments,
+                    "status": result.status,
+                    "response": _bounded_response(result),
+                },
+            )
+            if result.status == "error":
+                unknowns.append(
+                    UnknownItem(
+                        code="host_search_error",
+                        message=result.error or f"{decision.tool_name} failed",
+                        tool_call_id=result.tool_call_id,
+                    ),
+                )
+
+        return found, unknowns, produced
 
 
 class ToolRouterNode:
@@ -176,13 +336,21 @@ class ToolRouterNode:
                 ],
                 "visited_nodes": [*state.visited_nodes, "tool_router"],
             }
+        # The candidate names a host; its Zabbix id comes from what was
+        # resolved, and may not exist. A tool that needs one says so in its own
+        # required arguments, so nothing here has to know which tools those are.
+        host = state.candidate_tool_hosts.get(policy.name)
+        host_id = next(
+            (item.host_id for item in state.hosts if item.host == host), None
+        )
         return {
             "planned_tool_call": PlannedToolCall(
                 tool_name=policy.name,
                 arguments=dict(state.candidate_tool_arguments[policy.name]),
                 purpose=question.question,
                 target_hypothesis_ids=question.discriminates_hypothesis_ids,
-                host_id=state.candidate_tool_hosts.get(policy.name),
+                host=host,
+                host_id=host_id,
             ),
             "visited_nodes": [*state.visited_nodes, "tool_router"],
         }
@@ -321,13 +489,14 @@ def _resolved_host(candidate: Any, *, query: str | None = None) -> ResolvedHost 
 
 def _host_for_plan(state: InvestigationState) -> ResolvedHost | None:
     arguments = state.planned_tool_call.arguments if state.planned_tool_call else {}
-    planned_host_id = (
-        state.planned_tool_call.host_id if state.planned_tool_call else None
-    )
+    planned_host = state.planned_tool_call.host if state.planned_tool_call else None
     wanted_id = str(arguments.get("host_id") or "")
     wanted_name = str(arguments.get("host") or arguments.get("agent_name") or "")
     for host in state.hosts:
-        if planned_host_id and host.host_id == planned_host_id:
+        # The name first: it is the identity, and the id may not exist.
+        if planned_host and host.host == planned_host:
+            return host
+        if wanted_id and host.host_id == wanted_id:
             return host
         if wanted_id and host.host_id == wanted_id:
             return host
@@ -352,3 +521,22 @@ def _catalog_scope(catalog: list[dict[str, Any]], name: str) -> str:
             scope = item.get("temporal_scope")
             return scope if isinstance(scope, str) else "any"
     return "any"
+
+
+def _prompt(name: str) -> str:
+    return (files("aiops_rca.prompts") / name).read_text(encoding="utf-8")
+
+
+def _matching_query(host: str, unresolved: list[str]) -> str | None:
+    """Which requested name this host answers, when one of them plainly does."""
+    folded = host.casefold()
+    for query in unresolved:
+        if query.casefold() in folded or folded in query.casefold():
+            return query
+    return None
+
+
+def _bounded_response(result: Any) -> Any:
+    """Enough of the response for the model to read names out of it."""
+    text = json.dumps(result.response, ensure_ascii=False, default=str)
+    return text[:8000]

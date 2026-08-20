@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from aiops_rca.schemas.base import StrictModel, ZabbixId
+from aiops_rca.schemas.base import StrictModel
 from aiops_rca.schemas.evidence_package import Evidence, EvidencePackage
 from aiops_rca.schemas.investigation import (
     Hypothesis,
@@ -49,7 +49,9 @@ class InvestigationState(StrictModel):
     next_question: ObservationQuestion | None = None
     planned_tool_call: PlannedToolCall | None = None
     candidate_tool_arguments: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    candidate_tool_hosts: dict[str, ZabbixId] = Field(default_factory=dict)
+    #: Tool name to the host its call is about, by name. The id it may not
+    #: have is looked up from `hosts` where a tool needs it.
+    candidate_tool_hosts: dict[str, str] = Field(default_factory=dict)
     generic_fallback_allowed: bool = False
     # Discovered once per investigation and checkpointed so every planning
     # turn sees one consistent set of live MCP contracts.
@@ -107,7 +109,10 @@ class InvestigationState(StrictModel):
 
     @model_validator(mode="after")
     def validate_graph_invariants(self) -> "InvestigationState":
-        _unique([host.host_id for host in self.hosts], "host_id")
+        # Keyed on the name because that is what the sources share. A host
+        # found in a log search has no Zabbix id, and two hosts with no id
+        # are not the same host.
+        _unique([host.host for host in self.hosts], "host")
         hypothesis_ids = [hypothesis.id for hypothesis in self.hypotheses]
         _unique(hypothesis_ids, "hypothesis id")
         _unique([item.evidence_id for item in self.evidence], "evidence_id")
@@ -144,9 +149,9 @@ class InvestigationState(StrictModel):
                     f"planned_tool_call references unknown hypotheses: {sorted(missing)}"
                 )
             if (
-                self.planned_tool_call.host_id
-                and self.planned_tool_call.host_id
-                not in {host.host_id for host in self.hosts}
+                self.planned_tool_call.host
+                and self.planned_tool_call.host
+                not in {host.host for host in self.hosts}
             ):
                 raise ValueError("planned_tool_call references an unresolved host")
         if self.tool_call_count != len(self.tool_results):

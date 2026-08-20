@@ -16,7 +16,7 @@ def normalize_observation(
     result: ToolExecutionResult,
     planned: PlannedToolCall,
     *,
-    host_id: str,
+    host_id: str | None,
     host: str,
 ) -> list[Evidence]:
     """Normalize only observed fields; errors produce unknowns, never evidence."""
@@ -100,7 +100,7 @@ def merge_evidence(
 def _event_evidence(
     result: ToolExecutionResult,
     response: Mapping[str, Any],
-    host_id: str,
+    host_id: str | None,
 ) -> list[Evidence]:
     events = response.get("events")
     window = _window(response)
@@ -165,7 +165,7 @@ def _event_evidence(
 def _trigger_evidence(
     result: ToolExecutionResult,
     response: Mapping[str, Any],
-    host_id: str,
+    host_id: str | None,
 ) -> Evidence:
     trigger_id = _digits(response.get("trigger_id"))
     description = str(response.get("description") or "Zabbix trigger definition")
@@ -195,7 +195,7 @@ def _trigger_evidence(
 def _metric_summary_evidence(
     result: ToolExecutionResult,
     response: Mapping[str, Any],
-    host_id: str,
+    host_id: str | None,
 ) -> list[Evidence]:
     series = response.get("series")
     if not isinstance(series, list):
@@ -234,7 +234,7 @@ def _metric_summary_evidence(
 def _metric_history_evidence(
     result: ToolExecutionResult,
     response: Mapping[str, Any],
-    host_id: str,
+    host_id: str | None,
 ) -> Evidence:
     item = response.get("item") if isinstance(response.get("item"), Mapping) else {}
     summary = (
@@ -264,7 +264,7 @@ def _generic_evidence(
     result: ToolExecutionResult,
     planned: PlannedToolCall,
     *,
-    host_id: str,
+    host_id: str | None,
     host: str,
 ) -> Evidence:
     # Branching on two sources filed every Zabbix tool without a dedicated
@@ -462,14 +462,16 @@ def _window_from_arguments(arguments: Mapping[str, Any]) -> dict[str, Any] | Non
 
 
 def _resource_ids(
-    host_id: str,
+    host_id: str | None,
     *,
     event_id: str | None = None,
     trigger_id: str | None = None,
     item_id: str | None = None,
 ) -> dict[str, str | None]:
-    if not host_id.isdigit():
-        raise ValueError("host_id must be a decimal string")
+    if host_id is not None and not host_id.isdigit():
+        # None is a host Zabbix does not know -- found in a log search or an
+        # agent list. A non-numeric string is a programming error.
+        raise ValueError("host_id must be a decimal string or None")
     return {
         "host_id": host_id,
         "event_id": event_id,

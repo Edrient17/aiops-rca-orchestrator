@@ -35,7 +35,10 @@ class EvidenceRequest(StrictModel):
 
 class QueryHost(StrictModel):
     host: Annotated[str, Field(min_length=1, max_length=255)]
-    host_id: ZabbixId
+    #: Absent when the host was found somewhere other than Zabbix -- a log
+    #: search or a Wazuh agent list. The name is what the three sources share;
+    #: this is one source's id for it.
+    host_id: ZabbixId | None = None
 
 
 class QueryContext(StrictModel):
@@ -65,7 +68,7 @@ class InvestigationRecord(StrictModel):
 
 
 class ResourceIds(StrictModel):
-    host_id: ZabbixId
+    host_id: ZabbixId | None
     event_id: ZabbixId | None
     trigger_id: ZabbixId | None
     item_id: ZabbixId | None

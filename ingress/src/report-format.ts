@@ -56,7 +56,9 @@ export interface FormatInput {
   template: { output?: { sections?: TemplateSectionSpec[] } | null };
   evidencePackage: {
     evidence?: EvidenceLike[];
-    query_context?: { hosts?: { host?: string; host_id?: string }[] } | null;
+    query_context?:
+    | { hosts?: { host?: string; host_id?: string | null }[] }
+    | null;
   };
   report: { title?: string; sections?: ReportSectionLike[] };
 }
@@ -169,10 +171,14 @@ export function formatReport(
   // Which host each piece of evidence belongs to. resource_ids carries the
   // Zabbix id, and Kibana has never heard of that -- the name is what the log
   // index stores, and query_context is where the two were put side by side.
+  // Only hosts Zabbix knows can be found this way: evidence identifies its
+  // host by Zabbix id and a host discovered in a log search has none. Entries
+  // with no id are left out rather than keyed on null, or every such evidence
+  // would look up the same wrong name.
   const hostNameById = new Map(
-    (evidence.query_context?.hosts ?? []).map(
-      (entry) => [entry.host_id, entry.host] as const,
-    ),
+    (evidence.query_context?.hosts ?? [])
+      .filter((entry) => Boolean(entry.host_id))
+      .map((entry) => [entry.host_id, entry.host] as const),
   );
 
   // A log citation quotes a line out of a window. The link opens Discover on
