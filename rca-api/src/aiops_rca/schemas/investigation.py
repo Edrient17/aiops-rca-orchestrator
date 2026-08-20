@@ -1,4 +1,4 @@
-"""Internal models for explicit diagnostic state and the n8n API envelope."""
+"""Internal models for explicit diagnostic state and the investigation envelope."""
 
 from typing import Annotated, Any, Literal
 

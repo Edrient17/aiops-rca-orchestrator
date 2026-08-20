@@ -1,4 +1,4 @@
-"""Stable request and response envelope between n8n and the RCA service."""
+"""Stable request and response envelope between the ingress service and this one."""
 
 from typing import Annotated, Any, Literal
 

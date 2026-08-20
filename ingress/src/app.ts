@@ -50,10 +50,6 @@ const reportSchema = z.object({
   slack_message_ts: z.string().max(100).optional(),
 });
 
-const executionSchema = z.object({
-  execution_id: z.string().min(1).max(200),
-});
-
 const errorSchema = z.object({
   request_id: z.string().max(200).optional(),
   workflow_name: z.string().max(500).optional(),
@@ -301,22 +297,6 @@ export function createApp(dependencies: AppDependencies): express.Express {
         body.slack_ack_ts,
       );
       response.status(updated ? 200 : 404).json({ updated });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  // Called before the run does anything that can fail. A failure afterwards is
-  // reported by the error workflow, which knows only its execution id, and this
-  // is the mapping that turns that back into a request.
-  app.post("/internal/requests/:requestId/execution", async (request, response, next) => {
-    try {
-      const body = executionSchema.parse(request.body);
-      const linked = await dependencies.repository.setExecutionId(
-        request.params.requestId,
-        body.execution_id,
-      );
-      response.status(linked ? 200 : 404).json({ linked });
     } catch (error) {
       next(error);
     }

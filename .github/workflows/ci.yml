@@ -38,28 +38,6 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  workflows:
-    name: workflow drift check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-
-      # generate-workflows.mjs uses only Node builtins, so no install is needed.
-      - name: Regenerate n8n workflows from prompts and schemas
-        run: node scripts/generate-workflows.mjs
-
-      - name: Fail if committed workflows are stale
-        run: |
-          if [ -n "$(git status --porcelain -- workflows/)" ]; then
-            git status --porcelain -- workflows/
-            git diff -- workflows/
-            echo "::error::workflows/ does not match prompts/ and schemas/. Run 'node scripts/generate-workflows.mjs' and commit the result."
-            exit 1
-          fi
 
   docker:
     name: ingress docker build

@@ -389,18 +389,6 @@ export class PostgresRequestRepository implements RequestRepository {
     );
   }
 
-  async setExecutionId(requestId: string, executionId: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `
-        UPDATE aiops_requests
-        SET n8n_execution_id = $2, updated_at = now()
-        WHERE request_id = $1
-      `,
-      [requestId, executionId],
-    );
-    return result.rowCount === 1;
-  }
-
   async updateRequestStatus(
     requestId: string,
     status: string,

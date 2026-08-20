@@ -1,4 +1,4 @@
-"""Stable input and output contracts shared with the existing n8n workflow."""
+"""Stable input and output contracts shared with the ingress service."""
 
 from aiops_rca.schemas.evidence_package import Evidence, EvidencePackage
 from aiops_rca.schemas.investigation import (

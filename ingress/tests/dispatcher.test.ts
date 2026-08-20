@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Dispatcher, deliverToWebhook, lockSecondsFor } from "../src/dispatcher.js";
+import { Dispatcher, lockSecondsFor } from "../src/dispatcher.js";
 import type {
   AgentRunInput,
   DispatchJob,
@@ -26,7 +26,6 @@ function repositoryWithJob(job: DispatchJob): RequestRepository {
     completeDispatch: vi.fn(async () => undefined),
     retryDispatch: vi.fn(async () => undefined),
     updateRequestStatus: vi.fn(async () => true),
-    setExecutionId: vi.fn(async () => true),
     recordAgentRun: vi.fn(async (_id: string, _input: AgentRunInput) => true),
     saveReport: vi.fn(async (_id: string, _input: ReportInput) => true),
     recordSystemError: vi.fn(async (_input: SystemErrorInput) => undefined),
@@ -63,9 +62,10 @@ const job: DispatchJob = {
 };
 
 describe("dispatch lock", () => {
-  // DISPATCH_TIMEOUT_MS is configurable up to 60_000 while the lock used to be
-  // a fixed 30 seconds, so a slow delivery outlived its own claim and a second
-  // dispatcher could send the same request to n8n again.
+  // The lock used to be a fixed 30 seconds while a delivery could take longer,
+  // so a slow one outlived its own claim and a second dispatcher could run the
+  // same investigation again. Now that a delivery is the investigation, the
+  // margin this leaves is the only thing preventing that.
   it.each([1_000, 10_000, 60_000])(
     "outlives a delivery that takes the full %dms timeout",
     (timeoutMs) => {
@@ -77,16 +77,10 @@ describe("dispatch lock", () => {
     const repository = repositoryWithJob(job);
     const dispatcher = new Dispatcher({
       repository,
-      targetName: "n8n",
       internalToken: "token",
       intervalMs: 1000,
       timeoutMs: 60_000,
-      deliver: deliverToWebhook({
-        webhookUrl: "http://n8n/webhook/aiops-process",
-        internalToken: "token",
-        timeoutMs: 60_000,
-        fetchImpl: vi.fn(async () => new Response(null, { status: 202 })),
-      }),
+      deliver: vi.fn(async () => undefined),
     });
 
     await dispatcher.runOnce();
@@ -95,50 +89,34 @@ describe("dispatch lock", () => {
   });
 });
 
-describe("n8n dispatcher", () => {
-  it("marks successful webhook delivery complete", async () => {
+describe("delivering a claimed request", () => {
+  it("hands the queued payload to the deliver function and completes", async () => {
     const repository = repositoryWithJob(job);
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 202 }));
+    const deliver = vi.fn(async () => undefined);
     const dispatcher = new Dispatcher({
       repository,
-      targetName: "n8n",
       internalToken: "token",
       intervalMs: 1000,
       timeoutMs: 5000,
-      deliver: deliverToWebhook({
-        webhookUrl: "http://n8n/webhook/aiops-process",
-        internalToken: "token",
-        timeoutMs: 5000,
-        fetchImpl,
-      }),
+      deliver,
     });
 
     await dispatcher.runOnce();
 
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "http://n8n/webhook/aiops-process",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify(job.payload),
-      }),
-    );
+    expect(deliver).toHaveBeenCalledWith(job);
     expect(repository.completeDispatch).toHaveBeenCalledWith(7);
     expect(repository.retryDispatch).not.toHaveBeenCalled();
   });
 
-  it("schedules a retry when n8n is unavailable", async () => {
+  it("schedules a retry carrying the reason it failed", async () => {
     const repository = repositoryWithJob({ ...job, attempts: 3 });
     const dispatcher = new Dispatcher({
       repository,
-      targetName: "n8n",
       internalToken: "token",
       intervalMs: 1000,
       timeoutMs: 5000,
-      deliver: deliverToWebhook({
-        webhookUrl: "http://n8n/webhook/aiops-process",
-        internalToken: "token",
-        timeoutMs: 5000,
-        fetchImpl: vi.fn(async () => new Response(null, { status: 503 })),
+      deliver: vi.fn(async () => {
+        throw new Error("RCA service returned HTTP 503");
       }),
     });
 
@@ -147,7 +125,7 @@ describe("n8n dispatcher", () => {
     expect(repository.retryDispatch).toHaveBeenCalledWith(
       7,
       8,
-      "n8n webhook returned HTTP 503",
+      "RCA service returned HTTP 503",
     );
   });
 });
@@ -200,16 +178,12 @@ describe("giving up on a delivery", () => {
     const { repository, calls } = failingRepository(attempts);
     const dispatcher = new Dispatcher({
       repository,
-      targetName: "n8n",
       internalToken: "t",
       intervalMs: 1_000,
       timeoutMs: 5_000,
-      deliver: deliverToWebhook({
-        webhookUrl: "http://n8n/webhook/aiops-process",
-        internalToken: "token",
-        timeoutMs: 5_000,
-        fetchImpl: (async () => new Response("nope", { status: 500 })) as typeof fetch,
-      }),
+      deliver: async () => {
+        throw new Error("RCA service returned HTTP 500");
+      },
     });
     await dispatcher.runOnce();
     return calls;
@@ -232,7 +206,7 @@ describe("giving up on a delivery", () => {
     expect(calls.updateRequestStatus).toHaveLength(1);
     const update = calls.updateRequestStatus[0] as { status: string; error: string };
     expect(update.status).toBe("failed");
-    expect(update.error).toContain("delivery to n8n failed");
+    expect(update.error).toContain("the investigation failed 12 times");
   });
 
   it("records the error where the error channel reads from", async () => {

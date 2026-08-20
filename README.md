@@ -5,22 +5,20 @@ Slack 질문을 안전하게 접수하고, LangGraph 조사 서비스가 MCP로 
 
 ## 구성 요소
 
-- `ingress`: Slack 서명 검증, 이벤트 중복 방지, 즉시 ACK, n8n 전달 재시도,
+- `ingress`: Slack 서명 검증, 이벤트 중복 방지, 즉시 ACK, 조사 수행과 게시,
   기동 시 보고서 템플릿 동기화
-- `postgres`: n8n DB와 AIOps 요청·Agent 실행·보고서 감사 데이터
+- `postgres`: AIOps 요청·Agent 실행·보고서 감사 데이터
 - `db-migrate`: 기동마다 `database/migrations/*.sql`을 다시 적용하는 일회성 서비스
-- `n8n-import`: 워크플로가 없을 때만 최초 자동 import하는 일회성 서비스
-- `n8n`: Slack 접수·ACK·템플릿 조회·감사 저장·보고서 게시
 - `rca-api`: 질문 분석 → LangGraph 조사 → 보고서 작성. 모델 호출과 MCP 세션을
   모두 여기서 소유합니다
 - `caddy`: 선택 사항인 공개 HTTPS reverse proxy
 
 Ingress가 요청을 먼저 Postgres에 저장한 뒤 Slack에 200을 응답합니다. AI 실행은
-이 응답과 분리되며, n8n이 일시적으로 내려가 있으면 outbox가 최대 5분 간격으로
-계속 재시도합니다.
+이 응답과 분리되며, 조사가 실패하면 outbox가 최대 5분 간격으로 계속
+재시도합니다.
 
-**추론은 전부 `rca-api`에 있습니다.** n8n은 Slack 입출력과 감사 기록만 담당하며
-모델이나 MCP를 직접 호출하지 않습니다.
+**추론은 전부 `rca-api`에 있습니다.** ingress는 Slack 입출력과 감사 기록만
+담당하며 모델이나 MCP를 직접 호출하지 않습니다.
 
 ## 1. 환경 변수
 
@@ -40,14 +38,13 @@ Copy-Item .env.example .env
 중요 값:
 
 - `AIOPS_DOMAIN`, `AIOPS_PUBLIC_URL`: Orchestrator의 공개 HTTPS 주소
-- `AIOPS_INTERNAL_TOKEN`: ingress와 n8n만 공유하는 내부 토큰
+- `AIOPS_INTERNAL_TOKEN`: ingress와 rca-api만 공유하는 내부 토큰
 - `SLACK_*`: Slack App 자격 증명과 질문·답변·오류 채널 ID
 - `ZABBIX_MCP_URL`, `ZABBIX_MCP_AUTH_TOKEN`: Zabbix Investigation MCP
 - `OSS_ES_MCP_URL`: 공식 Elasticsearch MCP (인증 없음)
 - `WAZUH_MCP_URL`, `WAZUH_MCP_AUTH_TOKEN`: Wazuh MCP
 - `OPENAI_API_KEY`, `RCA_*_MODEL`: 세 스테이지의 모델 연결
 - `LANGSMITH_*`: 선택 사항인 추적. 키가 없으면 추적 없이 그대로 동작합니다
-- `N8N_ENCRYPTION_KEY`: 최초 설정 후 절대 변경하지 않는 n8n credential 암호화 키
 
 ## 2. Slack App
 
@@ -109,14 +106,12 @@ docker compose --profile proxy up -d --build
 기본 실행에서는 다음 포트가 loopback에만 바인딩됩니다.
 
 - ingress: `127.0.0.1:8080`
-- n8n: `127.0.0.1:5678`
 
 외부 reverse proxy는 `/slack/events`만 ingress 8080으로 전달하면 됩니다.
-`rca-api`의 8090 포트는 호스트에 공개하지 않고 Docker 네트워크 안에서 n8n만
-호출합니다.
+`rca-api`의 8090 포트는 호스트에 공개하지 않고 Docker 네트워크 안에서
+ingress만 호출합니다.
 
-n8n editor는 공개하지 않습니다. 포함된 Caddyfile도 `/slack/events` 외의 모든
-경로에 404를 반환합니다. editor에는 SSH 터널로 접근합니다.
+포함된 Caddyfile은 `/slack/events` 외의 모든 경로에 404를 반환합니다.
 
 ```powershell
 ssh -L 5678:127.0.0.1:5678 <orchestrator-host>
@@ -160,100 +155,36 @@ EXISTS` 후 재생성을 사용합니다. 적용된 파일 이름을 기록하�
 > FROM aiops_requests GROUP BY 1, 2 HAVING count(*) > 1;
 > ```
 
-## 4. n8n 설정
+### 배포
 
-`AIOPS_PUBLIC_URL`을 열고 owner 계정을 만든 다음 import된 두 워크플로를
-확인하고 Publish합니다.
-
-**n8n에 지정할 credential은 없습니다.** 워크플로의 HTTP 노드는 모두 `$env`에서
-읽은 헤더로 인증하며, 모델 키와 MCP 토큰은 `rca-api`가 자기 환경에서 직접
-사용합니다.
-
-워크플로 파일은 최초 1회만 import됩니다. `n8n-import`가 n8n 데이터 볼륨의
-`/home/node/.n8n/.aiops-workflows-imported` 마커를 확인해, 마커가 있으면 아무
-것도 하지 않고 종료합니다. 따라서 재시작이나 `.env` 변경으로 컨테이너가
-재생성되어도 UI에서 수정한 내용을 덮어쓰지 않습니다.
-
-### 워크플로 재배포
-
-파일의 새 버전을 반영할 때는 orchestrator 호스트에서 재배포 스크립트를
-사용합니다.
+조사와 보고서 작성은 `rca-api`가, Slack 입출력과 게시는 `ingress`가 합니다.
+둘 다 healthy가 된 것을 확인하고 로그를 봅니다.
 
 ```bash
-python3 scripts/redeploy-workflow.py
-```
-
-import는 워크플로의 노드 목록을 통째로 교체하므로 import 직후 워크플로가
-비활성화되고, 변경은 n8n 재시작 후에야 반영됩니다. 스크립트가 이를 순서대로
-처리합니다 — credential 연결을 새 파일에 옮겨 담고, import한 뒤, 재활성화하고
-재시작합니다.
-
-n8n을 재시작하면 **실행 중이던 조사가 중단됩니다.** 중단된 실행은 자신의 실패를
-보고하지도 못하므로, 해당 요청은 Slack에 아무 설명도 남기지 못한 채 방치됩니다.
-그래서 스크립트는 진행 중인 실행이 있으면 중단합니다.
-
-```bash
-python3 scripts/redeploy-workflow.py --wait 300   # 끝날 때까지 최대 5분 대기
-python3 scripts/redeploy-workflow.py --force      # 손실을 감수하고 강행
-```
-
-노드를 **의도적으로 없앨 때**는 이름을 밝힙니다. 스크립트는 credential을 들고
-있던 노드가 사라지면 import를 거부하는데, 실수로 빠진 것과 폐기한 것을 구분할
-수 없기 때문입니다.
-
-```bash
-python3 scripts/redeploy-workflow.py --retire "Old MCP Tools,Old Model"
-```
-
-### 조사 파이프라인은 어느 쪽이 도는가
-
-`AIOPS_PIPELINE`이 정합니다.
-
-| 값 | 동작 |
-| --- | --- |
-| `n8n` (기본) | 큐에서 집은 요청을 워크플로 웹훅으로 POST |
-| `ingress` | ingress가 직접 ACK·조사 호출·게시·저장까지 수행 |
-
-n8n 워크플로 21개 노드 중 추론하는 것은 하나도 없습니다. 일곱은 ingress 자신의
-`/internal/*`로 되돌아오는 HTTP 호출이고, 셋은 Slack 게시, 하나가 RCA 호출,
-나머지는 포맷과 검증입니다. `ingress` 모드에서는 그 HTTP가 전부 메서드 호출이
-됩니다.
-
-`ingress`로 두려면 `RCA_API_URL`, `SLACK_ANSWER_CHANNEL_ID`, `SLACK_BOT_TOKEN`이
-있어야 하며, 없으면 **기동 시점에** 거부합니다 — 첫 질문이 접수되고 ACK까지
-나간 뒤에 알게 되면 질문자는 이미 기다리고 있습니다.
-
-큐·재시도·포기 처리는 두 모드가 같습니다. 다른 것은 **배달 하나가 얼마나
-걸리느냐**뿐이고, 클레임 락이 거기서 유도되므로 `ingress` 모드는
-`RCA_TIMEOUT_MS`(기본 900초)로 락을 잡습니다. 웹훅의 10초를 그대로 쓰면
-조사 중에 락이 풀려 다른 디스패처가 같은 조사를 다시 시작합니다.
-
-되돌리려면 변수 하나를 `n8n`으로 되돌리고 ingress를 재시작하면 됩니다.
-
-### RCA API 배포
-
-조사와 보고서 작성은 전부 `rca-api`가 합니다. API가 healthy가 된 것을 확인한
-뒤 워크플로를 재배포합니다.
-
-```bash
-docker compose up -d --build rca-api
-docker compose ps rca-api
+docker compose up -d --build rca-api ingress
+docker compose ps rca-api ingress
 docker compose exec rca-api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8090/readyz').read().decode())"
-python3 scripts/redeploy-workflow.py --wait 300
-docker compose logs --tail=100 rca-api n8n
+docker compose logs --tail=100 rca-api ingress
+```
+
+재시작은 **진행 중인 조사를 중단시킵니다.** 중단된 조사는 큐에 남아 재시도되지만,
+먼저 확인하는 편이 낫습니다.
+
+```sql
+SELECT request_id, status FROM aiops_requests
+WHERE status NOT IN ('completed', 'failed', 'needs_clarification', 'unsupported');
 ```
 
 Agent 실행은 `aiops_agent_runs`, MCP 호출은 증거 패키지를 통해
 `aiops_tool_calls`, 최종 결과는 `aiops_reports`에 저장됩니다.
 
-## 5. 보안 경계
+## 4. 보안 경계
 
 - 공개되어야 하는 ingress 경로는 `/slack/events` 하나뿐입니다.
 - ingress의 `/internal/*`는 외부 reverse proxy에 연결하지 않습니다.
 - Postgres와 `rca-api`는 Docker 내부 네트워크에만 존재합니다.
 - Zabbix Investigation MCP는 Bearer 인증과 허용 호스트 그룹을 함께 설정합니다.
 - MCP는 읽기 전용 도구만 노출합니다. Zabbix는 `.get` 계열만 도달 가능합니다.
-- n8n editor는 owner 계정과 HTTPS로 보호합니다.
 - Slack Signing Secret, Bot Token, OpenAI key, MCP token은 저장소에 커밋하지
   않습니다.
 
@@ -354,8 +285,7 @@ curl -X PUT http://127.0.0.1:8080/internal/templates/monthly_capacity_report \
 
 ## MCP 서버 추가하기
 
-증거 출처를 하나 붙이는 일은 전부 `rca-api` 안에서 끝납니다. n8n에는 노드도
-credential도 만들지 않습니다.
+증거 출처를 하나 붙이는 일은 전부 `rca-api` 안에서 끝납니다.
 
 건드릴 곳은 네 군데이고, 나머지는 표에서 따라옵니다.
 
@@ -458,9 +388,8 @@ docker compose exec postgres psql -U aiops -d aiops
 - `aiops_requests`, `aiops_dispatch_queue`
 - `aiops_agent_runs`: 스테이지별 모델·소요 시간·출력
 - `aiops_tool_calls`, `aiops_reports`
-- `aiops_system_errors`: 실행 오류. n8n은 오류 워크플로에 실행 ID만 넘기므로,
-  메인 워크플로가 시작 직후 기록해 둔 `aiops_requests.n8n_execution_id`로
-  어느 요청이었는지 되찾습니다. 이미 `completed`인 요청은 덮어쓰지 않습니다.
+- `aiops_system_errors`: 실행 오류. 조사를 포기한 디스패처가 요청 ID와 함께
+  직접 기록합니다. 이미 `completed`인 요청은 덮어쓰지 않습니다.
 - `aiops_report_feedback`: 보고서에 달린 반응 판정
 - `aiops_report_notes`: 보고서 스레드에 적힌 실제 원인
 - `aiops_report_templates`, `aiops_report_template_versions`

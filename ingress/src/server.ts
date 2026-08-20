@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { Dispatcher, deliverToWebhook } from "./dispatcher.js";
+import { Dispatcher } from "./dispatcher.js";
 import { runInvestigation, type DispatchPayload } from "./pipeline.js";
 import { PostgresRequestRepository } from "./postgres-repository.js";
 import { syncTemplates } from "./template-sync.js";
@@ -15,45 +15,29 @@ const pool = new Pool({
 });
 const repository = new PostgresRequestRepository(pool);
 /**
- * Delivery is a whole investigation now, or still a webhook POST.
- *
- * The lock is derived from this timeout, so the two modes must declare
- * different ones: a POST returns in seconds, while running the pipeline here
- * holds the job for as long as the investigation takes. Left at the webhook's
- * ten seconds, the claim would lapse mid-investigation and a second dispatcher
- * would start the same one again.
+ * One delivery is one whole investigation, and the claim lock is derived from
+ * how long that may take. The Slack posts on either side of it are counted in
+ * because they happen while the job is still held.
  */
-const runsHere = config.pipeline === "ingress";
-const deliveryTimeoutMs = runsHere
-  ? config.rcaTimeoutMs + 2 * config.slackPostTimeoutMs
-  : config.dispatchTimeoutMs;
-
 const dispatcher = new Dispatcher({
   repository,
   internalToken: config.internalToken,
   intervalMs: config.dispatchIntervalMs,
-  timeoutMs: deliveryTimeoutMs,
-  targetName: runsHere ? "the investigation pipeline" : "n8n",
-  deliver: runsHere
-    ? (job) =>
-        runInvestigation(job.payload as DispatchPayload, { repository }, {
-          answerChannelId: config.slackAnswerChannelId!,
-          rcaApiUrl: config.rcaApiUrl!,
-          internalToken: config.internalToken,
-          botToken: config.slackBotToken!,
-          rcaTimeoutMs: config.rcaTimeoutMs,
-          slackTimeoutMs: config.slackPostTimeoutMs,
-          format: {
-            zabbixFrontendUrl: config.zabbixFrontendUrl,
-            kibanaUrl: config.kibanaUrl,
-            kibanaDataViewId: config.kibanaDataViewId,
-          },
-        })
-    : deliverToWebhook({
-        webhookUrl: config.n8nWebhookUrl,
-        internalToken: config.internalToken,
-        timeoutMs: config.dispatchTimeoutMs,
-      }),
+  timeoutMs: config.rcaTimeoutMs + 2 * config.slackPostTimeoutMs,
+  deliver: (job) =>
+    runInvestigation(job.payload as DispatchPayload, { repository }, {
+      answerChannelId: config.slackAnswerChannelId,
+      rcaApiUrl: config.rcaApiUrl,
+      internalToken: config.internalToken,
+      botToken: config.slackBotToken,
+      rcaTimeoutMs: config.rcaTimeoutMs,
+      slackTimeoutMs: config.slackPostTimeoutMs,
+      format: {
+        zabbixFrontendUrl: config.zabbixFrontendUrl,
+        kibanaUrl: config.kibanaUrl,
+        kibanaDataViewId: config.kibanaDataViewId,
+      },
+    }),
 });
 const app = createApp({
   config,

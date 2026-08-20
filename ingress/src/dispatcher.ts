@@ -10,43 +10,17 @@ export interface DispatcherOptions {
    */
   timeoutMs: number;
   /**
-   * Where a claimed request is delivered. Handing this in rather than
-   * hardcoding the n8n POST is what lets the same queue, the same retry and the
-   * same abandonment run an investigation in this process instead.
+   * Where a claimed request is delivered. Named rather than inlined so the
+   * queue, the retry and the abandonment can be tested without an
+   * investigation, and so this file has no opinion about what running one
+   * involves.
    */
   deliver: Deliver;
-  /** Named in the message when delivery is given up on. */
-  targetName?: string;
 }
 
 export type Deliver = (job: DispatchJob) => Promise<void>;
 
-/**
- * Delivery by POST to an n8n webhook, which is what this queue did for its
- * whole life before the workflow moved in here.
- */
-export function deliverToWebhook(options: {
-  webhookUrl: string;
-  internalToken: string;
-  timeoutMs: number;
-  fetchImpl?: typeof fetch;
-}): Deliver {
-  const send = options.fetchImpl ?? fetch;
-  return async (job) => {
-    const response = await send(options.webhookUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-aiops-internal-token": options.internalToken,
-      },
-      body: JSON.stringify(job.payload),
-      signal: AbortSignal.timeout(options.timeoutMs),
-    });
-    if (!response.ok) {
-      throw new Error(`n8n webhook returned HTTP ${response.status}`);
-    }
-  };
-}
+
 
 /**
  * Slack left between a claim expiring and the delivery it belongs to finishing.
@@ -64,17 +38,18 @@ const LOCK_MARGIN_SECONDS = 15;
  * already posted and no answer ever coming, and nothing anywhere said so.
  *
  * Twelve attempts with the backoff below is a little over an hour, which
- * outlasts an n8n restart or a deploy by a wide margin. What it does not
- * outlast is a webhook that has genuinely gone.
+ * outlasts a deploy by a wide margin. What it does not outlast is a dependency
+ * that has genuinely gone.
  */
 const MAX_DISPATCH_ATTEMPTS = 12;
 
 /**
  * How long a claimed job stays locked. Derived from the delivery timeout rather
- * than fixed: the lock was hardcoded at 30 seconds while DISPATCH_TIMEOUT_MS
- * accepts up to 60_000, so a slow n8n could still be receiving a request whose
- * claim had already lapsed, letting another dispatcher pick it up and run the
- * same investigation twice.
+ * than fixed, and the derivation has now earned itself twice. It was written
+ * because a 30-second hardcoded lock could lapse while a slow webhook was still
+ * receiving the request. It mattered again when delivery became the whole
+ * investigation: a lock sized for a POST would expire minutes into a run, and a
+ * second dispatcher would start the same investigation over.
  */
 export function lockSecondsFor(timeoutMs: number): number {
   return Math.ceil(timeoutMs / 1_000) + LOCK_MARGIN_SECONDS;
@@ -149,8 +124,7 @@ export class Dispatcher {
    * an answer that was never coming.
    */
   private async abandon(jobId: number, requestId: string, message: string): Promise<void> {
-    const target = this.options.targetName ?? "the investigation pipeline";
-    const detail = `delivery to ${target} failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
+    const detail = `the investigation failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
     await this.options.repository.completeDispatch(jobId);
     await this.options.repository.updateRequestStatus(requestId, "failed", detail);
     await this.options.repository.recordSystemError({

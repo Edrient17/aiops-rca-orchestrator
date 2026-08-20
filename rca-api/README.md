@@ -1,14 +1,14 @@
 # LangGraph RCA service
 
 This service owns the whole reasoning path: request analysis, the investigation
-graph, every model call and every live MCP session. n8n owns Slack ingress and
-delivery, the report-template catalog, and audit persistence — it does not call
-a model or an MCP server.
+graph, every model call and every live MCP session. The ingress service owns
+Slack ingress and delivery, the report-template catalog, and audit persistence —
+it does not call a model or an MCP server.
 
 ## Runtime flow
 
 ```text
-n8n
+ingress
   -> POST /v1/investigations
   -> Question Analyzer          (structured output, bound to the template catalog)
   -> Resolve hosts              (Zabbix find_hosts)
@@ -19,7 +19,7 @@ n8n
   -> Coverage sweep             (again, if the loop stopped with a gap)
   -> Evidence package
   -> RCA Writer                 (structured output, one section per template id)
-  -> n8n audit persistence and Slack delivery
+  -> ingress audit persistence and Slack delivery
 ```
 
 Two things in that loop are worth knowing before reading the code.
@@ -118,7 +118,7 @@ Adding a server is documented in the orchestrator README under
 
 The investigation endpoint requires `X-AIOPS-Internal-Token`. Its body carries
 the request envelope, an optional prior clarification question, and the enabled
-report-template catalog fetched by n8n. The response carries the selected
+report-template catalog the ingress service holds. The response carries the selected
 template, the three stable output contracts, agent-run audit records and the
 graph trace.
 
@@ -155,6 +155,6 @@ Run locally after setting the required environment variables:
 .\.venv\Scripts\aiops-rca-api.exe
 ```
 
-`docs/` holds two records of the migration from the n8n agent chain. That
-cutover is complete and the chain is gone; the files are kept because they are
-the only description of what it used to do.
+`docs/` holds two records of the migration from the n8n agent chain. Both that
+cutover and the removal of n8n itself are complete; the files are kept because
+they are the only description of what it used to do.

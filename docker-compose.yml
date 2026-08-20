@@ -81,14 +81,8 @@ services:
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_LABEL_REACTIONS: ${SLACK_LABEL_REACTIONS:-white_check_mark=correct,heavy_check_mark=correct,thinking_face=partial,x=incorrect}
       AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN:?AIOPS_INTERNAL_TOKEN is required}
-      N8N_INTERNAL_WEBHOOK_URL: ${N8N_INTERNAL_WEBHOOK_URL:-http://n8n:5678/webhook/aiops-process}
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
       DISPATCH_TIMEOUT_MS: ${DISPATCH_TIMEOUT_MS:-10000}
-      # Which side runs an investigation. "n8n" posts the claimed request to the
-      # workflow; "ingress" runs it in this process. The default is the one that
-      # has been in production, so cutting over is a deliberate act and coming
-      # back is one variable.
-      AIOPS_PIPELINE: ${AIOPS_PIPELINE:-n8n}
       RCA_API_URL: ${RCA_API_URL:-http://rca-api:8090}
       # Answers are published here, which is not the channel questions arrive on.
       SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:-}
@@ -115,8 +109,6 @@ services:
       # a column cannot start ingress against a database that lacks it.
       db-migrate:
         condition: service_completed_successfully
-      n8n:
-        condition: service_started
     healthcheck:
       test:
         [
@@ -131,55 +123,6 @@ services:
     networks:
       - backend
       - edge
-
-  n8n-import:
-    image: n8nio/n8n:2.32.6
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    # Guarded by a marker in the n8n data volume rather than `n8n list:workflow`.
-    # That command does not reliably exit once workflows exist, and a shell waits
-    # for every process in a pipeline, so `list | grep -q` hung here and blocked
-    # the whole stack behind depends_on: service_completed_successfully.
-    #
-    # Bounding it with a timeout would trade the hang for a worse failure: an
-    # empty result reads as "not imported yet" and the re-import would discard
-    # whatever was edited in the UI, including credential assignments. A marker
-    # cannot produce that false negative.
-    #
-    # To deliberately re-import, delete the marker:
-    #   docker compose run --rm --entrypoint sh n8n-import -c \
-    #     'rm -f /home/node/.n8n/.aiops-workflows-imported'
-    command:
-      - >-
-        set -e;
-        marker=/home/node/.n8n/.aiops-workflows-imported;
-        if [ -f "$$marker" ]; then
-          echo "workflows already bootstrapped; skipping import";
-          exit 0;
-        fi;
-        n8n import:workflow --input=/opt/aiops/workflows/99-aiops-error-handler.json;
-        n8n import:workflow --input=/opt/aiops/workflows/01-aiops-main.json;
-        touch "$$marker";
-        echo "workflows imported and marker written"
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-aiops}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-aiops}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
-      GENERIC_TIMEZONE: Asia/Seoul
-      TZ: Asia/Seoul
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./workflows:/opt/aiops/workflows:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - backend
 
   rca-api:
     build:
@@ -218,79 +161,6 @@ services:
       - backend
       - edge
 
-  n8n:
-    image: n8nio/n8n:2.32.6
-    restart: unless-stopped
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-aiops}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-aiops}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY is required}
-      N8N_HOST: ${AIOPS_DOMAIN:-localhost}
-      N8N_PROTOCOL: ${AIOPS_PROTOCOL:-http}
-      N8N_EDITOR_BASE_URL: ${AIOPS_PUBLIC_URL:-http://localhost:5678}
-      WEBHOOK_URL: ${AIOPS_PUBLIC_URL:-http://localhost:5678}
-      N8N_PROXY_HOPS: ${N8N_PROXY_HOPS:-1}
-      GENERIC_TIMEZONE: Asia/Seoul
-      TZ: Asia/Seoul
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_RUNNERS_ENABLED: "true"
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
-      N8N_DIAGNOSTICS_ENABLED: "false"
-      N8N_PERSONALIZATION_ENABLED: "false"
-      EXECUTIONS_DATA_PRUNE: "true"
-      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-168}
-      AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN}
-      AIOPS_CONTROL_URL: http://ingress:8080
-      RCA_API_URL: ${RCA_API_URL:-http://rca-api:8090}
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}
-      SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:?SLACK_ANSWER_CHANNEL_ID is required}
-      SLACK_ERROR_CHANNEL_ID: ${SLACK_ERROR_CHANNEL_ID:?SLACK_ERROR_CHANNEL_ID is required}
-      ZABBIX_MCP_URL: ${ZABBIX_MCP_URL:?ZABBIX_MCP_URL is required}
-      OSS_ES_MCP_URL: ${OSS_ES_MCP_URL:?OSS_ES_MCP_URL is required}
-      WAZUH_MCP_URL: ${WAZUH_MCP_URL:?WAZUH_MCP_URL is required}
-      ZABBIX_FRONTEND_URL: ${ZABBIX_FRONTEND_URL:-}
-      KIBANA_URL: ${KIBANA_URL:-}
-      KIBANA_DATA_VIEW_ID: ${KIBANA_DATA_VIEW_ID:-}
-    ports:
-      - "127.0.0.1:${N8N_PORT:-5678}:5678"
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./workflows:/opt/aiops/workflows:ro
-      - ./prompts:/opt/aiops/prompts:ro
-      - ./schemas:/opt/aiops/schemas:ro
-    depends_on:
-      n8n-import:
-        condition: service_completed_successfully
-      # Every write n8n makes goes through ingress, which already waits for the
-      # schema, so today this is redundant. It is stated anyway because that
-      # redundancy is an accident of the dependency graph rather than anything
-      # n8n guarantees about itself: n8n is published on 127.0.0.1:5678 and a
-      # workflow can be run by hand from the host, and the day one grows a node
-      # that reaches the database directly, the protection would vanish without
-      # a single line here changing.
-      db-migrate:
-        condition: service_completed_successfully
-      rca-api:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:5678/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    networks:
-      - backend
-      - edge
-
   caddy:
     image: caddy:2.10.2-alpine
     profiles: ["proxy"]
@@ -308,14 +178,11 @@ services:
     depends_on:
       ingress:
         condition: service_healthy
-      n8n:
-        condition: service_healthy
     networks:
       - edge
 
 volumes:
   postgres_data:
-  n8n_data:
   caddy_data:
   caddy_config:
 

@@ -186,11 +186,6 @@ export interface RequestRepository {
   claimDispatch(lockSeconds: number): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;
-  /**
-   * Records which n8n execution is running this request, so a failure that only
-   * knows its execution id can still be attributed back.
-   */
-  setExecutionId(requestId: string, executionId: string): Promise<boolean>;
   updateRequestStatus(
     requestId: string,
     status: string,

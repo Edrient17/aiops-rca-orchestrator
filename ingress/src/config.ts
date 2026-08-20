@@ -12,8 +12,7 @@ const envSchema = z.object({
   SLACK_APP_ID: z.string().optional(),
   SLACK_ALLOWED_USER_IDS: z.string().optional(),
   AIOPS_INTERNAL_TOKEN: z.string().min(24),
-  N8N_INTERNAL_WEBHOOK_URL: z.string().url(),
-  SLACK_BOT_TOKEN: z.string().optional(),
+  SLACK_BOT_TOKEN: z.string().min(1),
   SLACK_LABEL_REACTIONS: z
     .string()
     .default(
@@ -21,15 +20,9 @@ const envSchema = z.object({
     ),
   DISPATCH_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1_000),
   DISPATCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
-  /**
-   * Which side runs an investigation. "n8n" posts the claimed request to the
-   * workflow; "ingress" runs it here. Defaults to the one that has been running
-   * in production, so the cutover is a deliberate act and reverting is one
-   * variable.
-   */
-  AIOPS_PIPELINE: z.enum(["n8n", "ingress"]).default("n8n"),
-  RCA_API_URL: z.string().url().optional(),
-  SLACK_ANSWER_CHANNEL_ID: z.string().optional(),
+  RCA_API_URL: z.string().url(),
+  /** Answers are published here, which is not where questions arrive. */
+  SLACK_ANSWER_CHANNEL_ID: z.string().min(1),
   /** The investigation's own ceiling. The workflow allowed 900 seconds. */
   RCA_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(1_800_000).default(900_000),
   SLACK_POST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(30_000),
@@ -50,12 +43,10 @@ export interface AppConfig {
   slackAppId?: string;
   slackAllowedUserIds: ReadonlySet<string>;
   internalToken: string;
-  n8nWebhookUrl: string;
   dispatchIntervalMs: number;
   dispatchTimeoutMs: number;
-  pipeline: "n8n" | "ingress";
-  rcaApiUrl?: string;
-  slackAnswerChannelId?: string;
+  rcaApiUrl: string;
+  slackAnswerChannelId: string;
   rcaTimeoutMs: number;
   slackPostTimeoutMs: number;
   zabbixFrontendUrl?: string;
@@ -68,11 +59,8 @@ export interface AppConfig {
   templateDir: string;
   /** Emoji name to verdict. Reactions outside this map are ignored. */
   labelReactions: ReadonlyMap<string, FeedbackLabel>;
-  /**
-   * Only needed to ask for a written correction after a negative verdict.
-   * Without it labelling still works; the bot just stays silent.
-   */
-  slackBotToken?: string;
+  /** Posts acknowledgements, reports, and requests for a written correction. */
+  slackBotToken: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -93,17 +81,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ...(parsed.SLACK_APP_ID ? { slackAppId: parsed.SLACK_APP_ID } : {}),
     slackAllowedUserIds: allowedUsers,
     internalToken: parsed.AIOPS_INTERNAL_TOKEN,
-    n8nWebhookUrl: parsed.N8N_INTERNAL_WEBHOOK_URL,
     dispatchIntervalMs: parsed.DISPATCH_INTERVAL_MS,
     dispatchTimeoutMs: parsed.DISPATCH_TIMEOUT_MS,
     templateDir: parsed.TEMPLATE_DIR,
     labelReactions: parseLabelReactions(parsed.SLACK_LABEL_REACTIONS),
-    ...(parsed.SLACK_BOT_TOKEN ? { slackBotToken: parsed.SLACK_BOT_TOKEN } : {}),
-    pipeline: parsed.AIOPS_PIPELINE,
-    ...(parsed.RCA_API_URL ? { rcaApiUrl: parsed.RCA_API_URL } : {}),
-    ...(parsed.SLACK_ANSWER_CHANNEL_ID
-      ? { slackAnswerChannelId: parsed.SLACK_ANSWER_CHANNEL_ID }
-      : {}),
+    slackBotToken: parsed.SLACK_BOT_TOKEN,
+    rcaApiUrl: parsed.RCA_API_URL,
+    slackAnswerChannelId: parsed.SLACK_ANSWER_CHANNEL_ID,
     rcaTimeoutMs: parsed.RCA_TIMEOUT_MS,
     slackPostTimeoutMs: parsed.SLACK_POST_TIMEOUT_MS,
     ...(parsed.ZABBIX_FRONTEND_URL
@@ -114,26 +98,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       ? { kibanaDataViewId: parsed.KIBANA_DATA_VIEW_ID }
       : {}),
   };
-
-  if (config.pipeline === "ingress") {
-    // Checked at startup rather than at the first question. Missing any of
-    // these only shows itself once a request has been accepted and
-    // acknowledged, and by then the asker is already waiting.
-    const missing = (
-      [
-        ["RCA_API_URL", config.rcaApiUrl],
-        ["SLACK_ANSWER_CHANNEL_ID", config.slackAnswerChannelId],
-        ["SLACK_BOT_TOKEN", config.slackBotToken],
-      ] as const
-    )
-      .filter(([, value]) => !value)
-      .map(([name]) => name);
-    if (missing.length > 0) {
-      throw new Error(
-        `AIOPS_PIPELINE=ingress requires ${missing.join(", ")}`,
-      );
-    }
-  }
 
   return config;
 }
