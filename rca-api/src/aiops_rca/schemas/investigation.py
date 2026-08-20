@@ -55,7 +55,7 @@ class ObservationQuestion(StrictModel):
     expected_if_true: dict[str, str] = Field(default_factory=dict)
     expected_if_false: dict[str, str] = Field(default_factory=dict)
     temporal_scope: Literal["historical", "current", "timeless"] = "timeless"
-    required_effect: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    required_tool: Annotated[str, Field(min_length=1, max_length=100)] | None = None
 
 
 class PlannedToolCall(StrictModel):

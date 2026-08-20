@@ -93,7 +93,7 @@ class TestTheObservationPlanner:
             "expected_if_true": [],
             "expected_if_false": [],
             "temporal_scope": "current",
-            "required_effect": "current_process_state",
+            "required_tool": "get_wazuh_agent_processes",
             "candidates": [
                 ToolCandidate(
                     tool_name="get_wazuh_agent_processes",
@@ -110,11 +110,11 @@ class TestTheObservationPlanner:
     def test_a_named_observation_survives_a_stop_reason(self):
         update = self._decide(self._decision(stop_reason="더 볼 것이 없어 보인다"))
         assert update["next_question"] is not None
-        assert update["next_question"].required_effect == "current_process_state"
+        assert update["next_question"].required_tool == "get_wazuh_agent_processes"
         assert "stop_reason" not in update
 
     def test_no_effect_still_ends_the_loop(self):
-        update = self._decide(self._decision(required_effect=None, stop_reason="끝"))
+        update = self._decide(self._decision(required_tool=None, stop_reason="끝"))
         assert update["next_question"] is None
         assert update["stop_reason"] == "끝"
 

@@ -30,9 +30,6 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
             "visited_nodes": [*state.visited_nodes, "establish_phenomenon"],
         }
 
-    async def coverage_sweep(state):
-        return {"visited_nodes": [*state.visited_nodes, "coverage_sweep"]}
-
     async def hypothesis_planner(state):
         return {
             "hypotheses": [
@@ -48,7 +45,7 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
                 question="Was a stop command executed before the service stopped?",
                 discriminates_hypothesis_ids=["h1", "h2"],
                 temporal_scope="historical",
-                required_effect="audit_command",
+                required_tool="get_wazuh_alert_summary",
             ),
             "iteration_count": state.iteration_count + 1,
             "visited_nodes": [*state.visited_nodes, "observation_planner"],
@@ -119,7 +116,6 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
         CollectorNodes(
             resolve_hosts=resolve_hosts,
             establish_phenomenon=establish_phenomenon,
-            coverage_sweep=coverage_sweep,
             hypothesis_planner=hypothesis_planner,
             observation_planner=observation_planner,
             tool_router=tool_router,
@@ -139,7 +135,6 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
     assert output["visited_nodes"] == [
         "resolve_hosts",
         "establish_phenomenon",
-        "coverage_sweep",
         "hypothesis_planner",
         "observation_planner",
         "tool_router",
@@ -176,7 +171,6 @@ def test_no_resolved_host_skips_every_reasoning_node():
         CollectorNodes(
             resolve_hosts=resolve_hosts,
             establish_phenomenon=should_not_run,
-            coverage_sweep=should_not_run,
             hypothesis_planner=should_not_run,
             observation_planner=should_not_run,
             tool_router=should_not_run,

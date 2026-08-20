@@ -35,29 +35,33 @@ class ObservationDecision(StrictModel):
     expected_if_true: Annotated[list[HypothesisExpectation], Field(max_length=20)]
     expected_if_false: Annotated[list[HypothesisExpectation], Field(max_length=20)]
     temporal_scope: Literal["historical", "current", "timeless"]
-    required_effect: Annotated[str, Field(min_length=1, max_length=100)] | None
+    required_tool: Annotated[str, Field(min_length=1, max_length=100)] | None
     candidates: Annotated[list[ToolCandidate], Field(max_length=20)]
     generic_fallback_allowed: bool
     stop_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None
 
 
 @lru_cache(maxsize=8)
-def observation_decision_for(effects: tuple[str, ...]) -> type[ObservationDecision]:
-    """ObservationDecision whose required_effect must name a routable effect.
+def observation_decision_for(tools: tuple[str, ...]) -> type[ObservationDecision]:
+    """ObservationDecision whose required_tool must name a tool that exists.
 
-    The router matches an effect exactly. A planner that answered
-    "related_events around the target window" -- the registered effect with a
-    qualifier attached -- routed to nothing, and the run ended with a
-    stop_reason that read like a missing capability rather than a malformed
-    request. The valid names are known here, so they are offered as the only
-    ones the model can produce.
+    The planner used to name an *effect* -- "related_events", "audit_actor" --
+    and a routing table turned that into a tool. The indirection was a second
+    vocabulary to keep in step with the first: every tool had to declare what it
+    produced, every report section had to declare what it needed, and a planner
+    that wrote "related_events around the target window" routed to nothing and
+    reported it as a missing capability.
+
+    Naming the tool removes the vocabulary. The valid names are the allowlist,
+    which is known here, so they are offered as the only ones the model can
+    produce.
     """
-    if not effects:
+    if not tools:
         return ObservationDecision
     return create_model(
         "RoutableObservationDecision",
         __base__=ObservationDecision,
-        required_effect=(Literal[effects] | None, ...),  # type: ignore[valid-type]
+        required_tool=(Literal[tools] | None, ...),  # type: ignore[valid-type]
     )
 
 

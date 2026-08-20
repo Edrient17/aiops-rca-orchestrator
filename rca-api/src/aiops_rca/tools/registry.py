@@ -30,7 +30,6 @@ class ToolPolicy(StrictModel):
     kind: ToolKind = "structured"
     requires: tuple[str, ...] = ()
     requires_any: tuple[str, ...] = ()
-    effects: tuple[str, ...]
     temporal_scope: TemporalScope = "any"
     priority: int = 100
     blocked_reason: str | None = None
@@ -97,61 +96,14 @@ class ToolRegistry:
         _validate_tool_specific_arguments(name, arguments)
         return policy
 
-    def effects(self) -> tuple[str, ...]:
-        """Every effect some allowlisted tool can produce.
+    def names(self) -> tuple[str, ...]:
+        """Every tool the planner may name.
 
-        route_effect matches an effect exactly, so a planner that writes
-        "related_events around the target window" instead of "related_events"
-        routes to nothing and the investigation stops with a stop_reason that
-        reads like a missing capability. Offering this list as the only
-        permitted values turns that into an impossibility.
+        The planner used to name an effect and a table turned that into a tool.
+        Offering the tool names directly is the same guarantee with one
+        vocabulary instead of two.
         """
-        return tuple(
-            sorted({effect for policy in self._policies.values() for effect in policy.effects})
-        )
-
-    def route_effect(
-        self,
-        effect: str,
-        arguments_by_tool: Mapping[str, Mapping[str, Any]],
-        context: RoutingContext,
-    ) -> ToolPolicy:
-        """The allowlisted tool that produces an effect, given proposed arguments.
-
-        Failing here ends the investigation and the message becomes the
-        stop_reason the report is written from, so it has to distinguish three
-        different things. Naming an effect nothing produces is a capability gap.
-        Naming one whose tool was never proposed is not -- and reporting the
-        second as the first produced a report saying Zabbix could not supply
-        trigger definitions when get_trigger_details was registered, routable,
-        and simply never asked for.
-        """
-
-        candidates = [policy for policy in self.list() if effect in policy.effects]
-        if not candidates:
-            raise ToolPolicyError(f"no allowed tool can produce effect {effect!r}")
-
-        failures: list[str] = []
-        unproposed: list[str] = []
-        for policy in candidates:
-            arguments = arguments_by_tool.get(policy.name)
-            if arguments is None:
-                unproposed.append(policy.name)
-                continue
-            try:
-                return self.validate_call(policy.name, arguments, context)
-            except ToolPolicyError as error:
-                failures.append(str(error))
-
-        if failures:
-            raise ToolPolicyError(
-                f"effect {effect!r} could not be routed: {'; '.join(failures)}",
-            )
-        subject = "it" if len(unproposed) == 1 else "any of them"
-        raise ToolPolicyError(
-            f"effect {effect!r} is produced by {', '.join(unproposed)},"
-            f" but no arguments were proposed for {subject}",
-        )
+        return tuple(sorted(self._policies))
 
 
 def _present(value: Any) -> bool:
@@ -205,13 +157,8 @@ def _validate_tool_specific_arguments(name: str, arguments: Mapping[str, Any]) -
         _require_digit_id(arguments.get("host_id"), "host_id")
 
 
-def _tool(
-    name: str,
-    source: ToolSource,
-    effects: tuple[str, ...],
-    **kwargs: Any,
-) -> ToolPolicy:
-    return ToolPolicy(name=name, source=source, effects=effects, **kwargs)
+def _tool(name: str, source: ToolSource, **kwargs: Any) -> ToolPolicy:
+    return ToolPolicy(name=name, source=source, **kwargs)
 
 
 DEFAULT_TOOL_REGISTRY = ToolRegistry(
@@ -219,7 +166,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "find_hosts",
             "zabbix",
-            ("host_resolution",),
             requires_any=("query", "group_ids"),
             priority=10,
             result_list_fields=("hosts",),
@@ -227,7 +173,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_incident_events",
             "zabbix",
-            ("incident_events", "trigger_anchor"),
             requires=("host_id", "time_from", "time_to"),
             priority=20,
             result_list_fields=("events",),
@@ -236,14 +181,12 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_trigger_details",
             "zabbix",
-            ("trigger_definition", "dependency", "linked_items"),
             requires=("trigger_id",),
             priority=20,
         ),
         _tool(
             "get_related_events",
             "zabbix",
-            ("related_events",),
             requires=("host_id", "time_from", "time_to"),
             requires_any=("trigger_ids", "tags"),
             priority=25,
@@ -253,7 +196,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "list_relevant_metrics",
             "zabbix",
-            ("metric_candidates",),
             requires=("host_id", "keywords"),
             priority=20,
             result_list_fields=("metrics",),
@@ -261,7 +203,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_metric_summary",
             "zabbix",
-            ("metric_level", "metric_change", "metric_trend"),
             requires=("host_id", "item_ids", "time_from", "time_to", "aggregation"),
             priority=20,
             result_list_fields=("series", "metrics"),
@@ -270,7 +211,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_metric_history",
             "zabbix",
-            ("metric_temporal_shape",),
             requires=("host_id", "item_id", "time_from", "time_to", "aggregation"),
             priority=30,
             result_list_fields=("points",),
@@ -278,7 +218,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "query_zabbix",
             "zabbix",
-            ("generic_zabbix_object",),
             kind="generic",
             requires=("method",),
             priority=90,
@@ -291,7 +230,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "search",
             "elasticsearch",
-            ("raw_log_evidence", "generic_elasticsearch_query"),
             kind="generic",
             requires=("index", "query_body"),
             priority=80,
@@ -300,7 +238,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "esql",
             "elasticsearch",
-            ("long_term_log_baseline", "generic_elasticsearch_query"),
             kind="generic",
             requires=("query",),
             priority=80,
@@ -308,7 +245,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_mappings",
             "elasticsearch",
-            ("index_mapping",),
             kind="inventory",
             requires=("index",),
             blocked_reason="known upstream response decoding failure",
@@ -317,7 +253,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "list_indices",
             "elasticsearch",
-            ("index_inventory",),
             kind="inventory",
             requires=("index_pattern",),
             priority=200,
@@ -325,14 +260,12 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_shards",
             "elasticsearch",
-            ("shard_inventory",),
             kind="inventory",
             priority=200,
         ),
         _tool(
             "get_wazuh_alert_summary",
             "wazuh",
-            ("audit_actor", "audit_command"),
             requires=("time_from", "time_to"),
             priority=20,
             result_list_fields=("alerts",),
@@ -340,14 +273,12 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_wazuh_agents",
             "wazuh",
-            ("audit_coverage", "agent_status"),
             priority=25,
             result_list_fields=("agents",),
         ),
         _tool(
             "get_wazuh_agent_processes",
             "wazuh",
-            ("current_process_state",),
             requires=("agent_id",),
             temporal_scope="current_only",
             priority=30,
@@ -356,7 +287,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_wazuh_agent_ports",
             "wazuh",
-            ("current_port_state",),
             requires=("agent_id", "protocol", "state"),
             temporal_scope="current_only",
             priority=30,

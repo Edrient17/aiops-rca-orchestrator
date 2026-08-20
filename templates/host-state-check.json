@@ -39,15 +39,13 @@
         "id": "processes",
         "heading": "실행 중인 프로세스",
         "instruction": "질문이 실행 중인 프로세스를 물었을 때만 쓴다. 서비스로 인식되는 것과 자원을 눈에 띄게 쓰는 것 위주로, 항목마다 프로세스 이름과 PID를 밝힌다. 커널 스레드는 증거에서 이미 제외되어 있다.",
-        "required": false,
-        "requires_effects": ["current_process_state"]
+        "required": false
       },
       {
         "id": "listening_ports",
         "heading": "열린 포트",
         "instruction": "질문이 열린 포트나 노출 여부를 물었을 때만 쓴다. 항목마다 포트 번호, 바인딩 주소, 소유 프로세스를 함께 밝히고 외부 바인딩과 loopback을 구분한다.",
-        "required": false,
-        "requires_effects": ["current_port_state"]
+        "required": false
       },
       {
         "id": "notes",

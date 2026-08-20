@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from importlib.resources import files
 from typing import Any
 
-from aiops_rca.graph.coverage_nodes import declared_effects
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.schemas.evidence_package import EvidencePackage
 from aiops_rca.schemas.investigation import (
@@ -24,7 +23,6 @@ from aiops_rca.services.model_contracts import (
     observation_decision_for,
 )
 from aiops_rca.tools.adapters.base import McpAdapter
-from aiops_rca.tools.coverage import covered_effects
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
 from aiops_rca.tools.registry import (
     DEFAULT_TOOL_REGISTRY,
@@ -243,8 +241,8 @@ class ObservationPlannerNode:
         self.model_name = model_name
         self.registry = registry
         # Bound once: the registry is fixed for the lifetime of the service, so
-        # the set of routable effects is too.
-        self.output_type = observation_decision_for(registry.effects())
+        # the set of nameable tools is too.
+        self.output_type = observation_decision_for(registry.names())
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
         if state.stop_reason:
@@ -282,7 +280,7 @@ class ObservationPlannerNode:
         # Same rule one stage down: a planner that names an observation and a
         # stop_reason in the same breath has described the next step, not the
         # end. Only the absence of a routable question ends the loop here.
-        if not decision.question or not decision.required_effect:
+        if not decision.question or not decision.required_tool:
             return {
                 "next_question": None,
                 "planned_tool_call": None,
@@ -344,12 +342,6 @@ class ObservationPlannerNode:
             if associated is not None:
                 hosts_by_tool[candidate.tool_name] = associated
 
-        generic_effects = {
-            effect
-            for policy in self.registry.list()
-            if policy.kind == "generic"
-            for effect in policy.effects
-        }
         next_question = ObservationQuestion(
             question=decision.question,
             discriminates_hypothesis_ids=discriminates,
@@ -364,7 +356,7 @@ class ObservationPlannerNode:
                 if item.hypothesis_id in known_hypotheses
             },
             temporal_scope=decision.temporal_scope,
-            required_effect=decision.required_effect,
+            required_tool=decision.required_tool,
         )
         return {
             "next_question": next_question,
@@ -372,9 +364,11 @@ class ObservationPlannerNode:
             "candidate_tool_arguments": arguments_by_tool,
             "candidate_tool_hosts": hosts_by_tool,
             "unknowns": unknowns,
+            # The gate only means anything for a tool that is an escape
+            # hatch; granting it for a structured tool grants nothing.
             "generic_fallback_allowed": (
                 decision.generic_fallback_allowed
-                and decision.required_effect in generic_effects
+                and self.registry.get(decision.required_tool).kind == "generic"
             ),
             "iteration_count": state.iteration_count + 1,
             "visited_nodes": [*state.visited_nodes, "observation_planner"],
@@ -528,14 +522,6 @@ class EvidencePackageBuilderNode:
                 "evidence_package": None,
                 "visited_nodes": [*state.visited_nodes, "evidence_package_builder"],
             }
-        # Carried as data rather than recovered from the unknowns, whose codes
-        # the package drops -- it keeps only each message. The writer needs to
-        # know which sections cannot be filled, and re-reading that out of
-        # prose would make the answer depend on the wording.
-        covered = covered_effects(state.tool_results, state.evidence, self.registry)
-        uncovered = [
-            effect for effect in declared_effects(state) if effect not in covered
-        ]
         window = _resolved_window(state)
         aggregation = (state.collection or {}).get("aggregation")
         payload = {
@@ -594,7 +580,6 @@ class EvidencePackageBuilderNode:
         package = EvidencePackage.model_validate(payload)
         return {
             "evidence_package": package,
-            "uncovered_effects": uncovered,
             "visited_nodes": [*state.visited_nodes, "evidence_package_builder"],
         }
 

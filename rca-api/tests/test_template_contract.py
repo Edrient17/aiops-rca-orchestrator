@@ -1,9 +1,18 @@
-"""Every shipped template must be able to produce the report it promises.
+"""Every shipped template must describe a report that can be rendered.
 
-The failure this prevents is quiet: a section asks for an observation nothing
-in the system can make, the investigation runs, and the section comes out empty
-with no reason given. That is only visible by reading the finished report, and
-by then it has already been sent.
+This used to check more. A section declared the observations it was written
+from, and the check proved that every one of them was something an allowlisted
+tool produced and a recipe could collect -- so a template that promised a
+section nothing could fill was refused before it shipped.
+
+That guarantee moved. It cost a tool call on every run whether the question
+needed one or not, and it meant adding a report kind touched the registry and
+the recipes as well as the template file. Whether a section could be filled is
+now decided after the report is written: a required one left empty with nothing
+said about why sends the draft back to the writer.
+
+What is left here is structural, and it is what a template file can get wrong on
+its own.
 """
 
 import json
@@ -11,13 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from aiops_rca.services.template_contract import (
-    declared_effects,
-    parse_sections,
-    validate_template,
-)
-from aiops_rca.tools.coverage import obtainable_effects
-from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
+from aiops_rca.services.template_contract import parse_sections, validate_template
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates"
 TEMPLATES = sorted(TEMPLATE_DIR.glob("*.json"))
@@ -28,125 +31,55 @@ def _load(path: Path) -> dict:
 
 
 def test_the_template_directory_is_where_this_test_thinks_it_is():
-    # A moved directory would silently turn every check below into a no-op.
+    # Every case below passes vacuously against an empty glob.
     assert TEMPLATES, f"no templates found under {TEMPLATE_DIR}"
 
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.stem)
-def test_a_shipped_template_can_produce_its_own_report(path: Path):
-    problems = validate_template(
-        _load(path)["output"],
-        DEFAULT_TOOL_REGISTRY,
-        obtainable_effects=obtainable_effects(),
-    )
-    assert problems == [], f"{path.name}: " + "; ".join(problems)
+def test_a_shipped_template_is_structurally_sound(path: Path):
+    assert validate_template(_load(path)["output"]) == []
 
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.stem)
-def test_a_shipped_template_declares_at_least_one_section(path: Path):
-    assert parse_sections(_load(path)["output"])
+def test_every_section_has_an_id_and_a_heading(path: Path):
+    # The template owns the layout; a section with no heading renders as an
+    # unlabelled block, and one with no id can never be filled.
+    for section in parse_sections(_load(path)["output"]):
+        assert section.id, f"{path.stem} has a section with no id"
+        assert section.heading, f"{path.stem}:{section.id} has no heading"
 
 
-def test_the_monthly_report_declares_the_measurements_it_is_made_of():
-    output = _load(TEMPLATE_DIR / "monthly-capacity-report.json")["output"]
-    by_id = {item.id: item for item in parse_sections(output)}
-    # These are the two sections that came out empty in production: the report
-    # is a month of measurements, and nothing had said so.
-    assert by_id["capacity_trend"].requires_effects == ("metric_change",)
-    assert by_id["resource_pressure"].requires_effects == (
-        "metric_level",
-        "metric_trend",
-    )
-    assert by_id["availability"].requires_effects == ("incident_events",)
+@pytest.mark.parametrize("path", TEMPLATES, ids=lambda p: p.stem)
+def test_every_template_declares_a_limitations_section(path: Path):
+    # Three of the six report checks decide whether a report admitted what it
+    # could not do, and they read this section. A template without one gives
+    # them nowhere to look and the answer to "what did this miss" is silence.
+    ids = {section.id for section in parse_sections(_load(path)["output"])}
+    assert "limitations" in ids
 
 
-def test_a_narrative_section_declares_nothing():
-    output = _load(TEMPLATE_DIR / "monthly-capacity-report.json")["output"]
-    by_id = {item.id: item for item in parse_sections(output)}
-    # Declaring an effect here would make a summary that reads the whole
-    # investigation depend on one particular observation existing.
-    assert by_id["summary"].requires_effects == ()
-    assert by_id["limitations"].requires_effects == ()
+def test_a_template_with_no_sections_is_refused():
+    assert validate_template({"sections": []}) == ["template declares no sections"]
 
 
-def test_an_incident_template_does_not_force_a_capacity_sweep():
-    # Incident sections are conclusions, not measurements. A declaration here
-    # would buy a metric sweep on every incident whether or not it helps.
-    output = _load(TEMPLATE_DIR / "incident-rca.json")["output"]
-    assert declared_effects(parse_sections(output)) == ()
-
-
-def test_a_state_report_fixes_only_the_frame():
-    """Asked about templates and triggers, the report forced process and port
-    sections because both were required. The question decides which aspects
-    get written; only the frame is fixed.
-    """
-    output = _load(TEMPLATE_DIR / "host-state-check.json")["output"]
-    by_id = {item.id: item for item in parse_sections(output)}
-
-    # The frame: what the question asked, and what could not be seen.
-    assert by_id["summary"].required
-    assert by_id["answer"].required
-    assert by_id["limitations"].required
-
-    # The aspects, written only when the question is about them.
-    for name in ("processes", "listening_ports", "notes"):
-        assert not by_id[name].required, name
-
-
-def test_the_state_aspects_still_declare_their_evidence():
-    # Optional in the report, guaranteed in the collection: the sweep gathers
-    # them whatever the question, so the section can be written when it applies.
-    output = _load(TEMPLATE_DIR / "host-state-check.json")["output"]
-    by_id = {item.id: item for item in parse_sections(output)}
-    assert by_id["processes"].requires_effects == ("current_process_state",)
-    assert by_id["listening_ports"].requires_effects == ("current_port_state",)
-
-
-def test_the_flexible_section_declares_nothing():
-    # `answer` takes whatever the question was about, including aspects with no
-    # recipe. Declaring an effect would tie it to one of them.
-    output = _load(TEMPLATE_DIR / "host-state-check.json")["output"]
-    by_id = {item.id: item for item in parse_sections(output)}
-    assert by_id["answer"].requires_effects == ()
-
-
-class TestWhatValidationCatches:
-    def test_an_effect_no_tool_produces(self):
-        output = {
+def test_duplicate_section_ids_are_refused():
+    # The writer answers by section id, so two sections sharing one means the
+    # second silently replaces the first.
+    problems = validate_template(
+        {
             "sections": [
-                {"id": "topology", "requires_effects": ["network_topology"]},
+                {"id": "summary", "heading": "요약"},
+                {"id": "summary", "heading": "다시 요약"},
             ],
-        }
-        problems = validate_template(output, DEFAULT_TOOL_REGISTRY)
-        assert any("no allowlisted tool produces" in item for item in problems)
+        },
+    )
+    assert problems == ["duplicate section id: summary"]
 
-    def test_an_effect_no_recipe_can_collect(self):
-        # `raw_log_evidence` is real and reachable when a planner asks for it,
-        # but a section built on it would depend on that happening.
-        output = {
-            "sections": [{"id": "logs", "requires_effects": ["raw_log_evidence"]}],
-        }
-        problems = validate_template(
-            output,
-            DEFAULT_TOOL_REGISTRY,
-            obtainable_effects=obtainable_effects(),
-        )
-        assert any("no coverage recipe" in item for item in problems)
 
-    def test_a_duplicate_section_id(self):
-        output = {"sections": [{"id": "summary"}, {"id": "summary"}]}
-        assert "duplicate section id: summary" in validate_template(
-            output, DEFAULT_TOOL_REGISTRY
-        )
-
-    def test_a_template_with_no_sections(self):
-        assert validate_template({}, DEFAULT_TOOL_REGISTRY) == [
-            "template declares no sections",
-        ]
-
-    def test_a_section_predating_the_contract_still_loads(self):
-        # Templates are rows an operator edits. Absent means "no declared
-        # evidence", not "invalid", or an upgrade would break every stored row.
-        output = {"sections": [{"id": "summary", "instruction": "요약을 쓴다"}]}
-        assert validate_template(output, DEFAULT_TOOL_REGISTRY) == []
+def test_a_section_missing_everything_optional_still_parses():
+    # Templates are rows an operator edits. A missing optional field means the
+    # default, not a broken template.
+    sections = parse_sections({"sections": [{"id": "answer"}]})
+    assert len(sections) == 1
+    assert sections[0].required is False
+    assert sections[0].requires_problem_event is False

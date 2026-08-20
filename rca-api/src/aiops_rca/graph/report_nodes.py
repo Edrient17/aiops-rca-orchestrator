@@ -51,7 +51,6 @@ class ReportWriterNode:
             parsed=state.parsed_request,
             package=package,
             template_output=state.template_output,
-            uncovered_effects=state.uncovered_effects,
             findings=state.report_findings,
         )
         elapsed = int((perf_counter() - started) * 1000)

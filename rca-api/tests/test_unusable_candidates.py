@@ -72,7 +72,7 @@ def _decide(*, candidates, unknowns=(), hypothesis_ids=("H1", "H2")):
             "expected_if_true": [],
             "expected_if_false": [],
             "temporal_scope": "historical",
-            "required_effect": "log_volume",
+            "required_tool": "search_logs",
             "candidates": list(candidates),
             "generic_fallback_allowed": False,
             "stop_reason": None,

@@ -20,8 +20,8 @@ from aiops_rca.tools.result import ToolExecutionResult
 
 OUTPUT = {
     "sections": [
-        {"id": "availability", "required": True, "requires_effects": ["incident_events"]},
-        {"id": "capacity_trend", "required": True, "requires_effects": ["metric_change"]},
+        {"id": "availability", "required": True},
+        {"id": "capacity_trend", "required": True},
         {"id": "limitations", "required": True},
     ],
 }
@@ -48,7 +48,6 @@ def _built_package():
                 "from": "2026-07-01T00:00:00Z",
                 "to": "2026-08-01T00:00:00Z",
             },
-            "required_effects": ["incident_events", "metric_change"],
         },
         tool_results=[scan],
         tool_call_count=1,
@@ -78,8 +77,8 @@ def _built_package():
         ],
         unknowns=[
             UnknownItem(
-                code="declared_effect_uncovered",
-                message="could not collect: metric_change",
+                code="coverage_collection_error",
+                message="get_metric_summary failed",
             ),
         ],
     )
@@ -96,21 +95,16 @@ def test_the_builder_keeps_unknowns_as_plain_strings():
     assert all(isinstance(item, str) for item in package.unknowns)
 
 
-def test_the_builder_reports_uncovered_effects_separately():
-    # metric_change was declared and never observed; incident_events was.
-    update, _ = _built_package()
-    assert update["uncovered_effects"] == ["metric_change"]
-
-
 def test_the_writer_path_runs_against_the_real_package():
+    # The reason this file exists: _writer_sections read package.unknowns as
+    # UnknownItem objects while the builder keeps only their messages, and every
+    # test passed because the double held the richer type.
     update, _ = _built_package()
-    package = update["evidence_package"]
     sections = {
-        item["id"]: item
-        for item in _writer_sections(OUTPUT, package, update["uncovered_effects"])
+        item["id"]: item for item in _writer_sections(OUTPUT, update["evidence_package"])
     }
-    assert sections["capacity_trend"]["evidence_unavailable"] == ["metric_change"]
-    assert "evidence_unavailable" not in sections["availability"]
+    assert set(sections) == {"availability", "capacity_trend", "limitations"}
+    assert sections["capacity_trend"]["required"] is True
 
 
 def test_reconciliation_runs_against_the_real_package():

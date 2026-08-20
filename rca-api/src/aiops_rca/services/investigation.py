@@ -21,7 +21,6 @@ from aiops_rca.api.models import (
 )
 from aiops_rca.config.settings import Settings
 from aiops_rca.graph.builder import CollectorNodes, build_collector_graph
-from aiops_rca.graph.coverage_nodes import CoverageSweepNode
 from aiops_rca.graph.deterministic_nodes import (
     EvidenceNormalizerNode,
     ResolveHostsNode,
@@ -77,10 +76,6 @@ class InvestigationService:
                     zabbix=adapters.zabbix,
                     model=model,
                     model_name=settings.rca_investigation_model,
-                ),
-                coverage_sweep=CoverageSweepNode(
-                    executor=executor,
-                    registry=registry,
                 ),
                 hypothesis_planner=HypothesisPlannerNode(
                     model=model,
@@ -328,7 +323,6 @@ class InvestigationService:
                         "name": name,
                         "source": source,
                         "kind": policy.kind,
-                        "effects": policy.effects,
                         "temporal_scope": policy.temporal_scope,
                         "description": str(item.get("description") or "")[:4000],
                         # No output_schema: not one of these servers declares
@@ -382,7 +376,6 @@ async def write_report(
     parsed: ParsedRequest,
     package: Any,
     template_output: dict[str, Any],
-    uncovered_effects: Iterable[str] = (),
     findings: Iterable[str] = (),
 ) -> Report:
     """Turn a finished evidence package into a report.
@@ -402,7 +395,7 @@ async def write_report(
             "parsed_request": parsed.model_dump(mode="json"),
             "evidence_package": package.model_dump(mode="json", by_alias=True),
             "report_guidance": template_output.get("guidance", ""),
-            "sections": _writer_sections(template_output, package, uncovered_effects),
+            "sections": _writer_sections(template_output, package),
             # What the checks rejected about the previous draft, in their own
             # words. Absent on the first pass; on a second it is the only way
             # the writer learns its own count or citation did not hold.
@@ -417,14 +410,12 @@ async def write_report(
 def _writer_sections(
     output: dict[str, Any],
     package: Any,
-    uncovered_effects: Iterable[str] = (),
 ) -> list[dict[str, Any]]:
     has_problem_event = any(
         item.evidence_id.startswith("zbx:event:")
         and item.resource_ids.event_id is not None
         for item in package.evidence
     )
-    uncovered = set(uncovered_effects)
     sections: list[dict[str, Any]] = []
     for section in parse_sections(output):
         if section.requires_problem_event and not has_problem_event:
@@ -434,11 +425,6 @@ def _writer_sections(
             payload["heading"] = section.heading
         if section.instruction:
             payload["instruction"] = section.instruction
-        missing = sorted(set(section.requires_effects) & uncovered)
-        if missing:
-            # Without this the writer sees a section it cannot fill and no
-            # reason why, and the report gets an unexplained empty heading.
-            payload["evidence_unavailable"] = missing
         sections.append(payload)
     return sections
 

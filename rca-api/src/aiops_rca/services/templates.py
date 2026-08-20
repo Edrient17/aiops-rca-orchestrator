@@ -14,7 +14,6 @@ from aiops_rca.schemas.parsed_request import (
     ParsedRequest,
     RelativeWindowHint,
 )
-from aiops_rca.services.template_contract import declared_effects, parse_sections
 
 # Used when the analyzer names no range at all.
 DEFAULT_WINDOW_UNSPECIFIED = timedelta(hours=3)
@@ -62,14 +61,6 @@ def prepare_collection(
 ) -> tuple[dict[str, object], InvestigationLimits]:
     collection = dict(template.collection)
     collection["resolved_window"] = resolve_window(collection, parsed, request)
-    # The two halves of a template used to be independent: `output` said what
-    # to write and `collection` said what to gather, with nothing checking that
-    # the second could supply the first. Carrying the sections' declaration
-    # into the collection block is what lets the sweep and the stop guard see
-    # it.
-    collection["required_effects"] = list(
-        declared_effects(parse_sections(template.output)),
-    )
     limits = collection.get("limits")
     limits = limits if isinstance(limits, dict) else {}
     host_count = max(1, len(parsed.host_queries))

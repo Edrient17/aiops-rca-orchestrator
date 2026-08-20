@@ -188,7 +188,7 @@ class FixtureModel:
                 expected_if_true=[],
                 expected_if_false=[],
                 temporal_scope="historical",
-                required_effect="raw_log_evidence",
+                required_tool="search",
                 candidates=[
                     ToolCandidate(
                         tool_name="search",
@@ -364,7 +364,6 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
     assert response.trace.visited_nodes == [
         "resolve_hosts",
         "establish_phenomenon",
-        "coverage_sweep",
         "hypothesis_planner",
         "observation_planner",
         "tool_router",

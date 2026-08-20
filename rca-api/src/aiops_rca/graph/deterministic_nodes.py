@@ -143,7 +143,7 @@ class ToolRouterNode:
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
         question = state.next_question
-        if not question or not question.required_effect:
+        if not question or not question.required_tool:
             return {
                 "stop_reason": "no routable observation question remains",
                 "planned_tool_call": None,
@@ -156,9 +156,9 @@ class ToolRouterNode:
             max_tool_calls=state.limits.max_tool_calls,
         )
         try:
-            policy = self.registry.route_effect(
-                question.required_effect,
-                state.candidate_tool_arguments,
+            policy = self.registry.validate_call(
+                question.required_tool,
+                state.candidate_tool_arguments.get(question.required_tool) or {},
                 context,
             )
         except ToolPolicyError as error:

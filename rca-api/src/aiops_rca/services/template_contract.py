@@ -1,23 +1,26 @@
-"""What a report section needs, in a form the machine can check.
+"""What a report section is, in a form the machine can read.
 
-A template used to be two free-form JSON blobs: `collection` said what to
-gather, `output` said what to write, and nothing connected them. A section
-could ask for month-over-month disk usage while the investigation never ran a
-metric query, and the only way to find out was to read the finished report.
+A template is two JSON blobs: `collection` says what to gather, `output` says
+what to write. Sections used to also declare the observations they were written
+from, in the tool registry's own vocabulary, and a sweep collected against that
+declaration before the report was written.
 
-Sections therefore declare the effects they are built from, using the tool
-registry's own vocabulary rather than a second one invented here. That single
-declaration is what the coverage sweep collects against, what the stop guard
-refuses to finish without, and what template validation checks at load time.
+That guarantee was real and expensive. The declaration drove collection whether
+the question needed it or not, and adding a report kind meant touching the
+registry and the collection recipes as well as writing the template. Whether a
+section could be filled is judged after the report is written now: a required
+one left empty with nothing said about why sends the draft back to the writer.
+
+What is left here describes the document -- ids, headings, which sections are
+required, which need a real problem event behind them.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Annotated, Any
 
 from pydantic import Field
 
 from aiops_rca.schemas.base import StrictModel, TemplateId
-from aiops_rca.tools.registry import ToolRegistry
 
 
 class SectionContract(StrictModel):
@@ -25,10 +28,6 @@ class SectionContract(StrictModel):
     heading: Annotated[str, Field(max_length=200)] | None = None
     instruction: Annotated[str, Field(max_length=4000)] | None = None
     required: bool = False
-    # Empty means the section is written from whatever the investigation found,
-    # which is the right answer for a narrative summary and the wrong one for a
-    # section that reports specific measurements.
-    requires_effects: tuple[str, ...] = ()
     requires_problem_event: bool = False
 
 
@@ -36,8 +35,7 @@ def parse_sections(output: Mapping[str, Any]) -> list[SectionContract]:
     """Read the section contracts out of a template's output block.
 
     Tolerant by design: templates are rows an operator edits, and a section
-    that predates `requires_effects` still has to render. Absent means "no
-    declared evidence", not "invalid".
+    that omits everything optional still has to render.
     """
     sections = output.get("sections")
     if not isinstance(sections, list):
@@ -46,37 +44,28 @@ def parse_sections(output: Mapping[str, Any]) -> list[SectionContract]:
     for section in sections:
         if not isinstance(section, Mapping):
             continue
-        effects = section.get("requires_effects")
         parsed.append(
             SectionContract(
                 id=str(section.get("id") or ""),
                 heading=_text(section.get("heading")),
                 instruction=_text(section.get("instruction")),
                 required=bool(section.get("required")),
-                requires_effects=tuple(
-                    str(item) for item in effects if isinstance(item, str)
-                )
-                if isinstance(effects, list)
-                else (),
                 requires_problem_event=bool(section.get("requires_problem_event")),
             ),
         )
     return parsed
 
 
-def declared_effects(sections: Iterable[SectionContract]) -> tuple[str, ...]:
-    """Every effect the report will be written from, in a stable order."""
-
-    return tuple(sorted({effect for item in sections for effect in item.requires_effects}))
-
-
-def validate_template(
-    output: Mapping[str, Any],
-    registry: ToolRegistry,
-    *,
-    obtainable_effects: Iterable[str] = (),
-) -> list[str]:
+def validate_template(output: Mapping[str, Any]) -> list[str]:
     """Reasons this template cannot produce the report it promises.
+
+    Structural only now. It used to also check that every effect a section
+    declared was one some allowlisted tool produced and some recipe could
+    collect -- a real guarantee, and the reason adding a report kind meant
+    touching the registry and the recipes as well as writing the template.
+
+    What a section needs is decided after the report is written: leave a
+    required one empty and say nothing about why, and the draft comes back.
 
     Returning a list rather than raising lets a caller report every problem in
     one pass, which is what an operator adding a template wants to see.
@@ -91,23 +80,6 @@ def validate_template(
         if section.id in seen:
             problems.append(f"duplicate section id: {section.id}")
         seen.add(section.id)
-
-    known = set(registry.effects())
-    obtainable = set(obtainable_effects)
-    for section in sections:
-        for effect in section.requires_effects:
-            if effect not in known:
-                problems.append(
-                    f"section {section.id} requires effect {effect!r}, which no"
-                    " allowlisted tool produces",
-                )
-            elif obtainable and effect not in obtainable:
-                # Producible on request but not reachable on its own: a section
-                # built from it would depend on the planner happening to ask.
-                problems.append(
-                    f"section {section.id} requires effect {effect!r}, which no"
-                    " coverage recipe can collect deterministically",
-                )
     return problems
 
 

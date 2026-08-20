@@ -17,7 +17,6 @@ graph TD;
 	__start__([<p>__start__</p>]):::first
 	resolve_hosts(resolve_hosts)
 	establish_phenomenon(establish_phenomenon)
-	coverage_sweep(coverage_sweep)
 	hypothesis_planner(hypothesis_planner)
 	observation_planner(observation_planner)
 	tool_router(tool_router)
@@ -30,9 +29,7 @@ graph TD;
 	report_eval(report_eval)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> resolve_hosts;
-	coverage_sweep -.-> evidence_package_builder;
-	coverage_sweep -.-> hypothesis_planner;
-	establish_phenomenon --> coverage_sweep;
+	establish_phenomenon --> hypothesis_planner;
 	evidence_normalizer --> hypothesis_updater;
 	evidence_package_builder --> report_writer;
 	hypothesis_planner --> observation_planner;
@@ -43,7 +40,6 @@ graph TD;
 	report_writer --> report_eval;
 	resolve_hosts -.-> establish_phenomenon;
 	resolve_hosts -.-> evidence_package_builder;
-	stop_guard -.-> coverage_sweep;
 	stop_guard -.-> evidence_package_builder;
 	stop_guard -.-> observation_planner;
 	tool_executor --> evidence_normalizer;

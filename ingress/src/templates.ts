@@ -96,22 +96,6 @@ const outputSchema = z.object({
          * section when nothing backs it does.
          */
         requires_problem_event: z.boolean().default(false),
-        /**
-         * Observations this section is written from, named with the RCA
-         * service's tool-registry effects.
-         *
-         * Not validated against that registry here: ingress does not own it,
-         * and a value it cannot resolve is not ingress's to reject. It is
-         * checked where the vocabulary lives, in rca-api's template tests.
-         * What matters here is that the field survives the round trip --
-         * zod strips what it does not declare, so leaving it out silently
-         * erased the declaration from the database on the next sync and
-         * turned the coverage guarantee off without a word.
-         */
-        requires_effects: z
-          .array(z.string().min(1).max(100))
-          .max(20)
-          .default([]),
       }),
     )
     .min(1)

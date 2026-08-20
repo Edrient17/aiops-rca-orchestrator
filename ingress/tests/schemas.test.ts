@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { readTemplateFiles } from "../src/template-sync.js";
@@ -72,23 +73,29 @@ describe("shipped templates", () => {
     expect(selector.mode === "host_group" && selector.group_ids).toEqual(["10"]);
   });
 
-  it("carries each section's declared evidence through to the database", async () => {
-    // zod strips what it does not declare. When requires_effects was missing
-    // from the section schema, the template files kept their declarations and
-    // the sync quietly wrote sections without them -- turning the coverage
-    // guarantee off on the next ingress restart, with nothing to see.
+  it("carries every field a template file declares through to the database", async () => {
+    // zod strips what it does not declare. `requires_effects` was missing from
+    // the section schema once: the template files kept their declarations and
+    // the sync quietly wrote sections without them, turning a guarantee off on
+    // the next ingress restart with nothing to see. That field is gone, the
+    // hazard is not -- so this compares the parsed sections against the files
+    // rather than naming any field.
     process.env.AIOPS_MONTHLY_HOST_GROUP_ID = "10";
     const files = await readTemplateFiles(dir);
-    const monthly = files.find((f) => f.template_id === "monthly_capacity_report")!;
-    const byId = new Map(
-      monthly.output.sections.map((section) => [section.id, section.requires_effects]),
-    );
 
-    expect(byId.get("capacity_trend")).toEqual(["metric_change"]);
-    expect(byId.get("resource_pressure")).toEqual(["metric_level", "metric_trend"]);
-    expect(byId.get("availability")).toEqual(["incident_events"]);
-    // A narrative section declares nothing, and must not gain a declaration.
-    expect(byId.get("summary")).toEqual([]);
+    for (const file of files) {
+      const raw = JSON.parse(
+        await readFile(join(dir, `${file.template_id.replace(/_/g, "-")}.json`), "utf8"),
+      );
+      const rawSections: Record<string, unknown>[] = raw.output.sections;
+      for (const [index, section] of rawSections.entries()) {
+        const parsed = file.output.sections[index] as Record<string, unknown>;
+        expect(parsed.id).toBe(section.id);
+        for (const key of Object.keys(section)) {
+          expect(Object.keys(parsed)).toContain(key);
+        }
+      }
+    }
   });
 
   it("refuses to load when a referenced variable is unset", async () => {

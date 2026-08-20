@@ -10,7 +10,7 @@ event simply fell between them.
 from datetime import UTC, datetime
 
 from aiops_rca.schemas.report import Report, ReportItem, ReportSection
-from aiops_rca.services.investigation import _reconcile_evidence, _writer_sections
+from aiops_rca.services.investigation import _reconcile_evidence
 
 OUTPUT = {
     "sections": [
@@ -124,35 +124,3 @@ def test_a_template_without_a_limitations_section_is_not_given_one():
     report = _reconcile_evidence(_report(["zbx:event:23835785"]), output, package)
     limitations = next(s for s in report.sections if s.id == "limitations")
     assert limitations.items == []
-
-
-class TestTheWriterIsToldWhatIsMissing:
-    def test_a_section_whose_evidence_never_arrived_is_marked(self):
-        package = Package([OUTAGE])
-        sections = {
-            item["id"]: item
-            for item in _writer_sections(OUTPUT, package, ["metric_change"])
-        }
-        assert sections["capacity_trend"]["evidence_unavailable"] == ["metric_change"]
-        # The section that did get its evidence carries no such marker.
-        assert "evidence_unavailable" not in sections["availability"]
-
-    def test_nothing_is_marked_when_everything_was_collected(self):
-        package = Package([OUTAGE])
-        sections = _writer_sections(OUTPUT, package, [])
-        assert all("evidence_unavailable" not in item for item in sections)
-
-    def test_an_effect_no_section_declared_marks_nothing(self):
-        # The sweep can leave an effect uncovered that no section asked for.
-        package = Package([OUTAGE])
-        sections = _writer_sections(OUTPUT, package, ["audit_actor"])
-        assert all("evidence_unavailable" not in item for item in sections)
-
-    def test_the_default_is_no_marking(self):
-        # Callers that never collected coverage information must not have every
-        # section reported as unfillable.
-        package = Package([OUTAGE])
-        assert all(
-            "evidence_unavailable" not in item
-            for item in _writer_sections(OUTPUT, package)
-        )

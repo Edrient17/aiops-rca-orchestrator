@@ -71,12 +71,12 @@ def test_metric_summary_enforces_twenty_item_limit():
         )
 
 
-def test_log_evidence_routes_to_official_elasticsearch_search():
-    policy = DEFAULT_TOOL_REGISTRY.route_effect(
-        "raw_log_evidence",
-        {
-            "search": {"index": "vm-logs-*", "query_body": {"size": 10}},
-        },
+def test_the_official_elasticsearch_search_is_callable_with_the_gate_open():
+    # A raw query is an escape hatch, so it only runs once the planner has said
+    # the structured tools cannot answer.
+    policy = DEFAULT_TOOL_REGISTRY.validate_call(
+        "search",
+        {"index": "vm-logs-*", "query_body": {"size": 10}},
         RoutingContext(temporal_scope="historical", generic_fallback_allowed=True),
     )
     assert policy.name == "search"
