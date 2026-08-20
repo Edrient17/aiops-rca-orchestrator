@@ -5,6 +5,7 @@ from conftest import make_state
 from langgraph.checkpoint.memory import InMemorySaver
 
 from aiops_rca.graph.builder import CollectorNodes, build_collector_graph
+from aiops_rca.graph.report_nodes import ReportEvalNode, ReportWriterNode
 from aiops_rca.schemas.investigation import (
     Hypothesis,
     ObservationQuestion,
@@ -105,6 +106,14 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
     async def evidence_package_builder(state):
         return {"visited_nodes": [*state.visited_nodes, "evidence_package_builder"]}
 
+    async def report_writer(state):
+        return {"visited_nodes": [*state.visited_nodes, "report_writer"]}
+
+    async def report_eval(state):
+        # No findings, so the report goes out on its first draft. The loop back
+        # to the writer has its own tests.
+        return {"visited_nodes": [*state.visited_nodes, "report_eval"]}
+
     saver = InMemorySaver()
     graph = build_collector_graph(
         CollectorNodes(
@@ -119,6 +128,8 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
             hypothesis_updater=hypothesis_updater,
             stop_guard=stop_guard,
             evidence_package_builder=evidence_package_builder,
+            report_writer=report_writer,
+            report_eval=report_eval,
         ),
         checkpointer=saver,
     )
@@ -137,9 +148,15 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
         "hypothesis_updater",
         "stop_guard",
         "evidence_package_builder",
+        "report_writer",
+        "report_eval",
     ]
     assert output["stop_reason"].startswith("one explanation")
     assert len(list(graph.get_state_history(config))) >= 10
+
+
+async def _writer_that_must_not_run(**_kwargs):
+    raise AssertionError("the writer was called with no evidence package")
 
 
 def test_no_resolved_host_skips_every_reasoning_node():
@@ -168,7 +185,18 @@ def test_no_resolved_host_skips_every_reasoning_node():
             hypothesis_updater=should_not_run,
             stop_guard=should_not_run,
             evidence_package_builder=package,
+            # The real nodes, so this also proves the writer does not reach for
+            # a model when there is no package to write from -- the path a
+            # question with no resolvable host takes every time.
+            report_writer=ReportWriterNode(_writer_that_must_not_run, "stub"),
+            report_eval=ReportEvalNode(),
         ),
     )
     output = asyncio.run(graph.ainvoke(make_state()))
-    assert output["visited_nodes"] == ["resolve_hosts", "evidence_package_builder"]
+    assert output["visited_nodes"] == [
+        "resolve_hosts",
+        "evidence_package_builder",
+        "report_writer",
+        "report_eval",
+    ]
+    assert output.get("report") is None

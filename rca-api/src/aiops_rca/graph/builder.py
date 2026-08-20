@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from aiops_rca.graph.routing import (
     route_after_coverage_sweep,
     route_after_host_resolution,
+    route_after_report_eval,
     route_after_stop_guard,
     route_after_tool_router,
 )
@@ -32,6 +33,8 @@ class CollectorNodes:
     hypothesis_updater: Node
     stop_guard: Node
     evidence_package_builder: Node
+    report_writer: Node
+    report_eval: Node
 
 
 def build_collector_graph(
@@ -53,6 +56,8 @@ def build_collector_graph(
     builder.add_node("hypothesis_updater", nodes.hypothesis_updater)
     builder.add_node("stop_guard", nodes.stop_guard)
     builder.add_node("evidence_package_builder", nodes.evidence_package_builder)
+    builder.add_node("report_writer", nodes.report_writer)
+    builder.add_node("report_eval", nodes.report_eval)
 
     builder.add_edge(START, "resolve_hosts")
     builder.add_conditional_edges(
@@ -94,5 +99,11 @@ def build_collector_graph(
             "evidence_package_builder": "evidence_package_builder",
         },
     )
-    builder.add_edge("evidence_package_builder", END)
+    builder.add_edge("evidence_package_builder", "report_writer")
+    builder.add_edge("report_writer", "report_eval")
+    builder.add_conditional_edges(
+        "report_eval",
+        route_after_report_eval,
+        {"report_writer": "report_writer", "__end__": END},
+    )
     return builder.compile(checkpointer=checkpointer)

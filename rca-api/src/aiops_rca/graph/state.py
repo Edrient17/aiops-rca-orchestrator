@@ -18,6 +18,7 @@ from aiops_rca.schemas.investigation import (
     UnknownItem,
 )
 from aiops_rca.schemas.parsed_request import ParsedRequest
+from aiops_rca.schemas.report import Report
 from aiops_rca.tools.result import ToolExecutionResult
 
 
@@ -88,6 +89,23 @@ class InvestigationState(StrictModel):
     uncovered_effects: Annotated[list[str], Field(max_length=50)] = Field(
         default_factory=list,
     )
+
+    #: The selected report template's output spec -- section ids, headings,
+    #: which are required. Carried in state because the writer runs inside the
+    #: graph now and the template was chosen before it started.
+    template_output: dict[str, Any] | None = None
+    report: Report | None = None
+    #: What the checks said about the last draft, in the checker's own words.
+    #: Handed back to the writer, which is the only way it learns that its own
+    #: count or citation was rejected.
+    report_findings: Annotated[list[str], Field(max_length=50)] = Field(
+        default_factory=list,
+    )
+    report_attempts: Annotated[int, Field(ge=0, le=10)] = 0
+    #: Summed across attempts, so the audit row reports the whole cost of
+    #: writing rather than the last pass.
+    report_duration_ms: Annotated[int, Field(ge=0)] = 0
+
     visited_nodes: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

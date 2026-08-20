@@ -1,6 +1,7 @@
 """End-to-end orchestration used by the synchronous HTTP endpoint."""
 
 import asyncio
+import functools
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -35,6 +36,7 @@ from aiops_rca.graph.live_nodes import (
     HypothesisUpdaterNode,
     ObservationPlannerNode,
 )
+from aiops_rca.graph.report_nodes import ReportEvalNode, ReportWriterNode
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.schemas.investigation import UnknownItem
 from aiops_rca.schemas.parsed_request import ParsedRequest
@@ -98,6 +100,15 @@ class InvestigationService:
                 ),
                 stop_guard=StopGuardNode(),
                 evidence_package_builder=EvidencePackageBuilderNode(),
+                report_writer=ReportWriterNode(
+                    # Bound to the model here so the node has no opinion about
+                    # how a client is built, and a test can drive it with none.
+                    functools.partial(
+                        write_report, model, settings.rca_writer_model
+                    ),
+                    settings.rca_writer_model,
+                ),
+                report_eval=ReportEvalNode(),
             ),
             checkpointer=InMemorySaver(),
         )
@@ -183,6 +194,7 @@ class InvestigationService:
             # actually begins collecting evidence.
             started_at=datetime.now(UTC),
             tool_catalog=tool_catalog,
+            template_output=template.output,
             unknowns=(
                 [*catalog_unknowns, template_unknown]
                 if template_unknown
@@ -247,20 +259,16 @@ class InvestigationService:
                 trace=trace,
             )
 
-        started = perf_counter()
-        report = await write_report(
-            self.model,
-            self.settings.rca_writer_model,
-            parsed=parsed,
-            package=package,
-            template_output=template.output,
-            uncovered_effects=output.get("uncovered_effects") or (),
-        )
+        report = finished.report
+        if report is None:
+            raise RuntimeError("the graph produced an evidence package but no report")
         runs.append(
             AgentRun(
                 stage="rca_writer",
                 model=self.settings.rca_writer_model,
-                duration_ms=_elapsed_ms(started),
+                # Summed across drafts: a report the checks sent back twice cost
+                # what all three passes cost, and the audit row should say so.
+                duration_ms=finished.report_duration_ms,
                 output=report.model_dump(mode="json"),
             )
         )
@@ -367,6 +375,7 @@ async def write_report(
     package: Any,
     template_output: dict[str, Any],
     uncovered_effects: Iterable[str] = (),
+    findings: Iterable[str] = (),
 ) -> Report:
     """Turn a finished evidence package into a report.
 
@@ -386,6 +395,10 @@ async def write_report(
             "evidence_package": package.model_dump(mode="json", by_alias=True),
             "report_guidance": template_output.get("guidance", ""),
             "sections": _writer_sections(template_output, package, uncovered_effects),
+            # What the checks rejected about the previous draft, in their own
+            # words. Absent on the first pass; on a second it is the only way
+            # the writer learns its own count or citation did not hold.
+            "rejected_previous_draft": list(findings),
         },
         reasoning_effort="medium",
     )

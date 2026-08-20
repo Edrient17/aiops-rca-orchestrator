@@ -26,15 +26,21 @@ graph TD;
 	hypothesis_updater(hypothesis_updater)
 	stop_guard(stop_guard)
 	evidence_package_builder(evidence_package_builder)
+	report_writer(report_writer)
+	report_eval(report_eval)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> resolve_hosts;
 	coverage_sweep -.-> evidence_package_builder;
 	coverage_sweep -.-> hypothesis_planner;
 	establish_phenomenon --> coverage_sweep;
 	evidence_normalizer --> hypothesis_updater;
+	evidence_package_builder --> report_writer;
 	hypothesis_planner --> observation_planner;
 	hypothesis_updater --> stop_guard;
 	observation_planner --> tool_router;
+	report_eval -.-> __end__;
+	report_eval -.-> report_writer;
+	report_writer --> report_eval;
 	resolve_hosts -.-> establish_phenomenon;
 	resolve_hosts -.-> evidence_package_builder;
 	stop_guard -.-> coverage_sweep;
@@ -43,7 +49,6 @@ graph TD;
 	tool_executor --> evidence_normalizer;
 	tool_router -.-> evidence_package_builder;
 	tool_router -.-> tool_executor;
-	evidence_package_builder --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

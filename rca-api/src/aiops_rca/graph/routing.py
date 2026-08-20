@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from aiops_rca.graph.coverage_nodes import pending_effects
+from aiops_rca.graph.report_nodes import MAX_REPORT_ATTEMPTS
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
 
@@ -73,6 +74,23 @@ def route_after_coverage_sweep(
     if state.stop_reason or state.fatal_error:
         return "evidence_package_builder"
     return "hypothesis_planner"
+
+
+def route_after_report_eval(
+    state: InvestigationState,
+) -> Literal["report_writer", "__end__"]:
+    """Another draft, or out.
+
+    The checks that fail here are the writer's own -- a count the cited evidence
+    does not support, a citation to nothing. Sending those back through the
+    investigation would re-run every tool call to fix a sentence, so the loop is
+    short and closes on the writer.
+    """
+    if not state.report_findings:
+        return "__end__"
+    if state.report_attempts >= MAX_REPORT_ATTEMPTS:
+        return "__end__"
+    return "report_writer"
 
 
 def route_after_tool_router(

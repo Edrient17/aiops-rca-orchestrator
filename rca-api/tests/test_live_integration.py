@@ -363,6 +363,9 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
         "observation_planner",
         "tool_router",
         "evidence_package_builder",
+        # The writer runs inside the graph now, and the checks run after it.
+        "report_writer",
+        "report_eval",
     ]
 
 
