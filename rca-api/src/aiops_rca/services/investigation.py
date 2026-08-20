@@ -248,22 +248,14 @@ class InvestigationService:
             )
 
         started = perf_counter()
-        report = await self.model.complete(
-            model=self.settings.rca_writer_model,
-            output_type=Report,
-            system_prompt=_prompt("rca_writer.md"),
-            payload={
-                "parsed_request": parsed.model_dump(mode="json"),
-                "evidence_package": package.model_dump(mode="json", by_alias=True),
-                "report_guidance": template.output.get("guidance", ""),
-                "sections": _writer_sections(
-                    template.output, package, output.get("uncovered_effects") or ()
-                ),
-            },
-            reasoning_effort="medium",
+        report = await write_report(
+            self.model,
+            self.settings.rca_writer_model,
+            parsed=parsed,
+            package=package,
+            template_output=template.output,
+            uncovered_effects=output.get("uncovered_effects") or (),
         )
-        _validate_report(report, template.output, package)
-        report = _reconcile_evidence(report, template.output, package)
         runs.append(
             AgentRun(
                 stage="rca_writer",
@@ -365,6 +357,40 @@ def build_live_service(settings: Settings) -> InvestigationService:
         },
     )
     return InvestigationService(settings=settings, model=model, adapters=adapters)
+
+
+async def write_report(
+    model: Any,
+    model_name: str,
+    *,
+    parsed: ParsedRequest,
+    package: Any,
+    template_output: dict[str, Any],
+    uncovered_effects: Iterable[str] = (),
+) -> Report:
+    """Turn a finished evidence package into a report.
+
+    Lifted out of `investigate` so it can be run on its own against a package
+    that is already on disk. The writer is where a report says twenty-five of a
+    list of twenty-six, and re-running the whole investigation to exercise it
+    means live infrastructure, three MCP servers, and an answer that has moved
+    since yesterday. Given a stored package, this is the same call the service
+    makes, with nothing to reach.
+    """
+    report = await model.complete(
+        model=model_name,
+        output_type=Report,
+        system_prompt=_prompt("rca_writer.md"),
+        payload={
+            "parsed_request": parsed.model_dump(mode="json"),
+            "evidence_package": package.model_dump(mode="json", by_alias=True),
+            "report_guidance": template_output.get("guidance", ""),
+            "sections": _writer_sections(template_output, package, uncovered_effects),
+        },
+        reasoning_effort="medium",
+    )
+    _validate_report(report, template_output, package)
+    return _reconcile_evidence(report, template_output, package)
 
 
 def _writer_sections(

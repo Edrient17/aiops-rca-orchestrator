@@ -34,6 +34,35 @@ effects, hypothesis ids and evidence ids are all bound to the values that exist
 at that moment, so an invented one cannot be represented rather than being
 caught later.
 
+## Evaluating the writer
+
+The suite proves the machinery is right. It never proved the answers were: a
+report saying twenty-five of a list of twenty-six passed all of it.
+`evals/properties.py` judges a finished report against the evidence it was
+written from -- counts that the cited evidence does not count, citations to
+nothing, an omission not passed on, unknowns reported as no limitations. None of
+them needs the right answer, which is what lets them run against infrastructure
+whose right answer changes hourly.
+
+`evals/harness.py` re-runs the writer over evidence packages this service really
+collected, so an experiment measures the writer and nothing else. Export them
+from the orchestrator host (the query is in `evals/run.py`), then:
+
+```powershell
+.\.venv\Scripts\python -m aiops_rca.evals.run baseline exports.jsonl
+.\.venv\Scripts\python -m aiops_rca.evals.run upload   exports.jsonl
+.\.venv\Scripts\python -m aiops_rca.evals.run evaluate exports.jsonl --limit 5
+```
+
+`baseline` scores the reports that already shipped and needs nothing but the
+file -- it is the floor an experiment is compared against, and several of those
+reports are the defects the checks were written from. `upload` and `evaluate`
+need `LANGSMITH_API_KEY`; `evaluate` calls the writer model once per example, so
+try it with `--limit` first.
+
+Rows from before the current schemas, and report kinds since retired, are
+counted and explained rather than dropped or raised on.
+
 ## Collector graph
 
 [docs/collector-graph.md](docs/collector-graph.md) draws the node topology and
