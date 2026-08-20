@@ -84,6 +84,20 @@ services:
       N8N_INTERNAL_WEBHOOK_URL: ${N8N_INTERNAL_WEBHOOK_URL:-http://n8n:5678/webhook/aiops-process}
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
       DISPATCH_TIMEOUT_MS: ${DISPATCH_TIMEOUT_MS:-10000}
+      # Which side runs an investigation. "n8n" posts the claimed request to the
+      # workflow; "ingress" runs it in this process. The default is the one that
+      # has been in production, so cutting over is a deliberate act and coming
+      # back is one variable.
+      AIOPS_PIPELINE: ${AIOPS_PIPELINE:-n8n}
+      RCA_API_URL: ${RCA_API_URL:-http://rca-api:8090}
+      # Answers are published here, which is not the channel questions arrive on.
+      SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:-}
+      RCA_TIMEOUT_MS: ${RCA_TIMEOUT_MS:-900000}
+      SLACK_POST_TIMEOUT_MS: ${SLACK_POST_TIMEOUT_MS:-30000}
+      # Where a footnote leads. Absent, a citation degrades to a bare id.
+      ZABBIX_FRONTEND_URL: ${ZABBIX_FRONTEND_URL:-}
+      KIBANA_URL: ${KIBANA_URL:-}
+      KIBANA_DATA_VIEW_ID: ${KIBANA_DATA_VIEW_ID:-}
       TEMPLATE_DIR: /opt/aiops/templates
       # Which Zabbix host group the monthly report covers. Lives here rather
       # than in the template so the file stays true for any installation.

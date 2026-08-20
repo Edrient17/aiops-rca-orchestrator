@@ -205,6 +205,31 @@ python3 scripts/redeploy-workflow.py --force      # 손실을 감수하고 강�
 python3 scripts/redeploy-workflow.py --retire "Old MCP Tools,Old Model"
 ```
 
+### 조사 파이프라인은 어느 쪽이 도는가
+
+`AIOPS_PIPELINE`이 정합니다.
+
+| 값 | 동작 |
+| --- | --- |
+| `n8n` (기본) | 큐에서 집은 요청을 워크플로 웹훅으로 POST |
+| `ingress` | ingress가 직접 ACK·조사 호출·게시·저장까지 수행 |
+
+n8n 워크플로 21개 노드 중 추론하는 것은 하나도 없습니다. 일곱은 ingress 자신의
+`/internal/*`로 되돌아오는 HTTP 호출이고, 셋은 Slack 게시, 하나가 RCA 호출,
+나머지는 포맷과 검증입니다. `ingress` 모드에서는 그 HTTP가 전부 메서드 호출이
+됩니다.
+
+`ingress`로 두려면 `RCA_API_URL`, `SLACK_ANSWER_CHANNEL_ID`, `SLACK_BOT_TOKEN`이
+있어야 하며, 없으면 **기동 시점에** 거부합니다 — 첫 질문이 접수되고 ACK까지
+나간 뒤에 알게 되면 질문자는 이미 기다리고 있습니다.
+
+큐·재시도·포기 처리는 두 모드가 같습니다. 다른 것은 **배달 하나가 얼마나
+걸리느냐**뿐이고, 클레임 락이 거기서 유도되므로 `ingress` 모드는
+`RCA_TIMEOUT_MS`(기본 900초)로 락을 잡습니다. 웹훅의 10초를 그대로 쓰면
+조사 중에 락이 풀려 다른 디스패처가 같은 조사를 다시 시작합니다.
+
+되돌리려면 변수 하나를 `n8n`으로 되돌리고 ingress를 재시작하면 됩니다.
+
 ### RCA API 배포
 
 조사와 보고서 작성은 전부 `rca-api`가 합니다. API가 healthy가 된 것을 확인한

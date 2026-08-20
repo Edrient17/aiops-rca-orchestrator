@@ -77,14 +77,23 @@ export function normalizeReaction(reaction: string): string {
  * already been acknowledged by this point and a missed prompt must not turn
  * into a retried event.
  */
-export async function postThreadReply(input: {
+/**
+ * Post a message, and say where it landed.
+ *
+ * The timestamp is the return value because an investigation is a thread: the
+ * acknowledgement opens it and everything afterwards is anchored to that `ts`.
+ * A post whose ts is thrown away can still be seen and can never be replied to.
+ */
+export async function postMessage(input: {
   botToken: string;
   channel: string;
-  threadTs: string;
   text: string;
+  threadTs?: string | undefined;
   timeoutMs?: number;
-}): Promise<void> {
-  const response = await fetch("https://slack.com/api/chat.postMessage", {
+  fetchImpl?: typeof fetch;
+}): Promise<{ ts: string }> {
+  const send = input.fetchImpl ?? fetch;
+  const response = await send("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
       "content-type": "application/json; charset=utf-8",
@@ -92,16 +101,31 @@ export async function postThreadReply(input: {
     },
     body: JSON.stringify({
       channel: input.channel,
-      thread_ts: input.threadTs,
       text: input.text,
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
     }),
     signal: AbortSignal.timeout(input.timeoutMs ?? 5_000),
   });
 
-  const body = (await response.json()) as { ok?: boolean; error?: string };
+  const body = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+    ts?: string;
+  };
   if (!body.ok) {
     throw new Error(`slack chat.postMessage failed: ${body.error ?? "unknown_error"}`);
   }
+  return { ts: body.ts ?? "" };
+}
+
+export async function postThreadReply(input: {
+  botToken: string;
+  channel: string;
+  threadTs: string;
+  text: string;
+  timeoutMs?: number;
+}): Promise<void> {
+  await postMessage(input);
 }
 
 export function makeRequestId(eventId: string, epochSeconds?: number): string {

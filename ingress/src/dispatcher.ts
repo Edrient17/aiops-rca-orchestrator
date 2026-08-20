@@ -1,12 +1,51 @@
-import type { RequestRepository } from "./types.js";
+import type { DispatchJob, RequestRepository } from "./types.js";
 
 export interface DispatcherOptions {
   repository: RequestRepository;
-  webhookUrl: string;
   internalToken: string;
   intervalMs: number;
+  /**
+   * How long one delivery may take. Also what the claim lock is derived from,
+   * so the two cannot drift apart -- see lockSecondsFor.
+   */
+  timeoutMs: number;
+  /**
+   * Where a claimed request is delivered. Handing this in rather than
+   * hardcoding the n8n POST is what lets the same queue, the same retry and the
+   * same abandonment run an investigation in this process instead.
+   */
+  deliver: Deliver;
+  /** Named in the message when delivery is given up on. */
+  targetName?: string;
+}
+
+export type Deliver = (job: DispatchJob) => Promise<void>;
+
+/**
+ * Delivery by POST to an n8n webhook, which is what this queue did for its
+ * whole life before the workflow moved in here.
+ */
+export function deliverToWebhook(options: {
+  webhookUrl: string;
+  internalToken: string;
   timeoutMs: number;
   fetchImpl?: typeof fetch;
+}): Deliver {
+  const send = options.fetchImpl ?? fetch;
+  return async (job) => {
+    const response = await send(options.webhookUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aiops-internal-token": options.internalToken,
+      },
+      body: JSON.stringify(job.payload),
+      signal: AbortSignal.timeout(options.timeoutMs),
+    });
+    if (!response.ok) {
+      throw new Error(`n8n webhook returned HTTP ${response.status}`);
+    }
+  };
 }
 
 /**
@@ -41,14 +80,12 @@ export function lockSecondsFor(timeoutMs: number): number {
   return Math.ceil(timeoutMs / 1_000) + LOCK_MARGIN_SECONDS;
 }
 
-export class N8nDispatcher {
+export class Dispatcher {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
-  private readonly fetchImpl: typeof fetch;
   private readonly lockSeconds: number;
 
   constructor(private readonly options: DispatcherOptions) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
     this.lockSeconds = lockSecondsFor(options.timeoutMs);
   }
 
@@ -84,20 +121,7 @@ export class N8nDispatcher {
         }
 
         try {
-          const response = await this.fetchImpl(this.options.webhookUrl, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-aiops-internal-token": this.options.internalToken,
-            },
-            body: JSON.stringify(job.payload),
-            signal: AbortSignal.timeout(this.options.timeoutMs),
-          });
-
-          if (!response.ok) {
-            throw new Error(`n8n webhook returned HTTP ${response.status}`);
-          }
-
+          await this.options.deliver(job);
           await this.options.repository.completeDispatch(job.id);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -125,7 +149,8 @@ export class N8nDispatcher {
    * an answer that was never coming.
    */
   private async abandon(jobId: number, requestId: string, message: string): Promise<void> {
-    const detail = `delivery to n8n failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
+    const target = this.options.targetName ?? "the investigation pipeline";
+    const detail = `delivery to ${target} failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
     await this.options.repository.completeDispatch(jobId);
     await this.options.repository.updateRequestStatus(requestId, "failed", detail);
     await this.options.repository.recordSystemError({

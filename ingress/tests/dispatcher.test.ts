@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { N8nDispatcher, lockSecondsFor } from "../src/dispatcher.js";
+import { Dispatcher, deliverToWebhook, lockSecondsFor } from "../src/dispatcher.js";
 import type {
   AgentRunInput,
   DispatchJob,
@@ -75,13 +75,18 @@ describe("dispatch lock", () => {
 
   it("passes the derived hold to the repository rather than a fixed one", async () => {
     const repository = repositoryWithJob(job);
-    const dispatcher = new N8nDispatcher({
+    const dispatcher = new Dispatcher({
       repository,
-      webhookUrl: "http://n8n/webhook/aiops-process",
+      targetName: "n8n",
       internalToken: "token",
       intervalMs: 1000,
       timeoutMs: 60_000,
-      fetchImpl: vi.fn(async () => new Response(null, { status: 202 })),
+      deliver: deliverToWebhook({
+        webhookUrl: "http://n8n/webhook/aiops-process",
+        internalToken: "token",
+        timeoutMs: 60_000,
+        fetchImpl: vi.fn(async () => new Response(null, { status: 202 })),
+      }),
     });
 
     await dispatcher.runOnce();
@@ -94,13 +99,18 @@ describe("n8n dispatcher", () => {
   it("marks successful webhook delivery complete", async () => {
     const repository = repositoryWithJob(job);
     const fetchImpl = vi.fn(async () => new Response(null, { status: 202 }));
-    const dispatcher = new N8nDispatcher({
+    const dispatcher = new Dispatcher({
       repository,
-      webhookUrl: "http://n8n/webhook/aiops-process",
+      targetName: "n8n",
       internalToken: "token",
       intervalMs: 1000,
       timeoutMs: 5000,
-      fetchImpl,
+      deliver: deliverToWebhook({
+        webhookUrl: "http://n8n/webhook/aiops-process",
+        internalToken: "token",
+        timeoutMs: 5000,
+        fetchImpl,
+      }),
     });
 
     await dispatcher.runOnce();
@@ -118,13 +128,18 @@ describe("n8n dispatcher", () => {
 
   it("schedules a retry when n8n is unavailable", async () => {
     const repository = repositoryWithJob({ ...job, attempts: 3 });
-    const dispatcher = new N8nDispatcher({
+    const dispatcher = new Dispatcher({
       repository,
-      webhookUrl: "http://n8n/webhook/aiops-process",
+      targetName: "n8n",
       internalToken: "token",
       intervalMs: 1000,
       timeoutMs: 5000,
-      fetchImpl: vi.fn(async () => new Response(null, { status: 503 })),
+      deliver: deliverToWebhook({
+        webhookUrl: "http://n8n/webhook/aiops-process",
+        internalToken: "token",
+        timeoutMs: 5000,
+        fetchImpl: vi.fn(async () => new Response(null, { status: 503 })),
+      }),
     });
 
     await dispatcher.runOnce();
@@ -183,13 +198,18 @@ describe("giving up on a delivery", () => {
 
   async function runOnce(attempts: number) {
     const { repository, calls } = failingRepository(attempts);
-    const dispatcher = new N8nDispatcher({
+    const dispatcher = new Dispatcher({
       repository,
-      webhookUrl: "http://n8n/webhook/aiops-process",
+      targetName: "n8n",
       internalToken: "t",
       intervalMs: 1_000,
       timeoutMs: 5_000,
-      fetchImpl: (async () => new Response("nope", { status: 500 })) as typeof fetch,
+      deliver: deliverToWebhook({
+        webhookUrl: "http://n8n/webhook/aiops-process",
+        internalToken: "token",
+        timeoutMs: 5_000,
+        fetchImpl: (async () => new Response("nope", { status: 500 })) as typeof fetch,
+      }),
     });
     await dispatcher.runOnce();
     return calls;

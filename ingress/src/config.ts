@@ -21,6 +21,22 @@ const envSchema = z.object({
     ),
   DISPATCH_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1_000),
   DISPATCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  /**
+   * Which side runs an investigation. "n8n" posts the claimed request to the
+   * workflow; "ingress" runs it here. Defaults to the one that has been running
+   * in production, so the cutover is a deliberate act and reverting is one
+   * variable.
+   */
+  AIOPS_PIPELINE: z.enum(["n8n", "ingress"]).default("n8n"),
+  RCA_API_URL: z.string().url().optional(),
+  SLACK_ANSWER_CHANNEL_ID: z.string().optional(),
+  /** The investigation's own ceiling. The workflow allowed 900 seconds. */
+  RCA_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(1_800_000).default(900_000),
+  SLACK_POST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(30_000),
+  /** Footnote destinations. Absent, a citation degrades to a bare id. */
+  ZABBIX_FRONTEND_URL: z.string().optional(),
+  KIBANA_URL: z.string().optional(),
+  KIBANA_DATA_VIEW_ID: z.string().optional(),
   /** Mounted from the repository's templates/ directory. */
   TEMPLATE_DIR: z.string().default("/opt/aiops/templates"),
 });
@@ -37,6 +53,14 @@ export interface AppConfig {
   n8nWebhookUrl: string;
   dispatchIntervalMs: number;
   dispatchTimeoutMs: number;
+  pipeline: "n8n" | "ingress";
+  rcaApiUrl?: string;
+  slackAnswerChannelId?: string;
+  rcaTimeoutMs: number;
+  slackPostTimeoutMs: number;
+  zabbixFrontendUrl?: string;
+  kibanaUrl?: string;
+  kibanaDataViewId?: string;
   /**
    * Directory the report templates are read from at startup. The files decide
    * which reports exist; the table follows them.
@@ -60,7 +84,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .filter(Boolean),
   );
 
-  return {
+  const config: AppConfig = {
     port: parsed.PORT,
     databaseUrl: parsed.DATABASE_URL,
     slackSigningSecret: parsed.SLACK_SIGNING_SECRET,
@@ -75,7 +99,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     templateDir: parsed.TEMPLATE_DIR,
     labelReactions: parseLabelReactions(parsed.SLACK_LABEL_REACTIONS),
     ...(parsed.SLACK_BOT_TOKEN ? { slackBotToken: parsed.SLACK_BOT_TOKEN } : {}),
+    pipeline: parsed.AIOPS_PIPELINE,
+    ...(parsed.RCA_API_URL ? { rcaApiUrl: parsed.RCA_API_URL } : {}),
+    ...(parsed.SLACK_ANSWER_CHANNEL_ID
+      ? { slackAnswerChannelId: parsed.SLACK_ANSWER_CHANNEL_ID }
+      : {}),
+    rcaTimeoutMs: parsed.RCA_TIMEOUT_MS,
+    slackPostTimeoutMs: parsed.SLACK_POST_TIMEOUT_MS,
+    ...(parsed.ZABBIX_FRONTEND_URL
+      ? { zabbixFrontendUrl: parsed.ZABBIX_FRONTEND_URL }
+      : {}),
+    ...(parsed.KIBANA_URL ? { kibanaUrl: parsed.KIBANA_URL } : {}),
+    ...(parsed.KIBANA_DATA_VIEW_ID
+      ? { kibanaDataViewId: parsed.KIBANA_DATA_VIEW_ID }
+      : {}),
   };
+
+  if (config.pipeline === "ingress") {
+    // Checked at startup rather than at the first question. Missing any of
+    // these only shows itself once a request has been accepted and
+    // acknowledged, and by then the asker is already waiting.
+    const missing = (
+      [
+        ["RCA_API_URL", config.rcaApiUrl],
+        ["SLACK_ANSWER_CHANNEL_ID", config.slackAnswerChannelId],
+        ["SLACK_BOT_TOKEN", config.slackBotToken],
+      ] as const
+    )
+      .filter(([, value]) => !value)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(
+        `AIOPS_PIPELINE=ingress requires ${missing.join(", ")}`,
+      );
+    }
+  }
+
+  return config;
 }
 
 /** Parses `emoji=verdict` pairs, failing loudly rather than silently dropping. */
