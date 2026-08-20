@@ -160,6 +160,7 @@ class ToolRouterNode:
                 question.required_tool,
                 state.candidate_tool_arguments.get(question.required_tool) or {},
                 context,
+                _catalog_scope(state.tool_catalog, question.required_tool),
             )
         except ToolPolicyError as error:
             return {
@@ -337,3 +338,17 @@ def _host_for_plan(state: InvestigationState) -> ResolvedHost | None:
 
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _catalog_scope(catalog: list[dict[str, Any]], name: str) -> str:
+    """What the live catalog says about when this tool's answer is true.
+
+    Read from the catalog rather than from the registry, so the fact belongs to
+    the server that owns the tool. A tool the catalog does not describe gets the
+    default, which is also what every tool got before any server declared.
+    """
+    for item in catalog:
+        if item.get("name") == name:
+            scope = item.get("temporal_scope")
+            return scope if isinstance(scope, str) else "any"
+    return "any"

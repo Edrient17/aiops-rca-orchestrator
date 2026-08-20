@@ -122,16 +122,40 @@ class TestValidatingTheCall:
         assert "budget is exhausted" in str(error.value)
 
     def test_a_current_only_tool_cannot_answer_a_historical_question(self):
-        # The one policy a server cannot infer for us and the loop cannot catch:
-        # a list of what is running now is indistinguishable from a correct
-        # answer about yesterday.
+        # The one rule the loop cannot recover from: a list of what is running
+        # now is a well-formed answer to a question about yesterday, and nothing
+        # downstream can tell it apart from a right one.
         with pytest.raises(ToolPolicyError) as error:
             DEFAULT_TOOL_REGISTRY.validate_call(
                 "get_wazuh_agent_processes",
                 {"agent_id": "001"},
                 RoutingContext(temporal_scope="historical"),
+                "current_only",
             )
         assert "historical" in str(error.value)
+
+    def test_a_tool_that_declares_nothing_is_not_restricted(self):
+        # Every tool was unrestricted until one said otherwise. A server that
+        # declares nothing is the default, not a case to handle.
+        policy = DEFAULT_TOOL_REGISTRY.validate_call(
+            "get_wazuh_agent_processes",
+            {"agent_id": "001"},
+            RoutingContext(temporal_scope="historical"),
+        )
+        assert policy.name == "get_wazuh_agent_processes"
+
+    def test_the_declaration_comes_from_the_catalog(self):
+        # Read off the live catalog, so the fact belongs to the server that owns
+        # the tool rather than to a table of tool names on this side.
+        from aiops_rca.graph.deterministic_nodes import _catalog_scope
+
+        catalog = [
+            {"name": "get_wazuh_agent_processes", "temporal_scope": "current_only"},
+            {"name": "get_wazuh_agents"},
+        ]
+        assert _catalog_scope(catalog, "get_wazuh_agent_processes") == "current_only"
+        assert _catalog_scope(catalog, "get_wazuh_agents") == "any"
+        assert _catalog_scope(catalog, "never_heard_of_it") == "any"
 
     def test_a_generic_tool_needs_the_gate_open(self):
         with pytest.raises(ToolPolicyError) as error:

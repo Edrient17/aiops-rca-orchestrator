@@ -30,7 +30,6 @@ class ToolPolicy(StrictModel):
     kind: ToolKind = "structured"
     requires: tuple[str, ...] = ()
     requires_any: tuple[str, ...] = ()
-    temporal_scope: TemporalScope = "any"
     priority: int = 100
     blocked_reason: str | None = None
     result_list_fields: tuple[str, ...] = ()
@@ -63,16 +62,27 @@ class ToolRegistry:
         name: str,
         arguments: Mapping[str, Any],
         context: RoutingContext,
+        declared_scope: TemporalScope = "any",
     ) -> ToolPolicy:
+        """Whether this call, with these arguments, is allowed to happen.
+
+        `declared_scope` is what the server said about the tool, not what this
+        service decided about it. It used to be a field here -- a table of tool
+        names on our side describing another server's tools, which went stale
+        the moment that server changed and told a pipeline the names of things
+        it should not have to know.
+        """
         policy = self.get(name)
         if policy.blocked_reason:
             raise ToolPolicyError(f"{name} is blocked: {policy.blocked_reason}")
         if context.tool_call_count >= context.max_tool_calls:
             raise ToolPolicyError("tool call budget is exhausted")
-        if (
-            policy.temporal_scope == "current_only"
-            and context.temporal_scope == "historical"
-        ):
+        if declared_scope == "current_only" and context.temporal_scope == "historical":
+            # The one rule the loop cannot recover from. A list of what is
+            # running now is a well-formed answer to "what was running
+            # yesterday" and nothing downstream can tell it apart from a right
+            # one, so it has to be refused before the call rather than judged
+            # after it.
             raise ToolPolicyError(
                 f"{name} reports current state and cannot prove historical state"
             )
@@ -280,7 +290,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
             "get_wazuh_agent_processes",
             "wazuh",
             requires=("agent_id",),
-            temporal_scope="current_only",
             priority=30,
             result_list_fields=("processes",),
         ),
@@ -288,7 +297,6 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
             "get_wazuh_agent_ports",
             "wazuh",
             requires=("agent_id", "protocol", "state"),
-            temporal_scope="current_only",
             priority=30,
             result_list_fields=("ports",),
         ),

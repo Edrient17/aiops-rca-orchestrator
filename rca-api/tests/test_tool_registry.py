@@ -7,15 +7,6 @@ from aiops_rca.tools.registry import (
 )
 
 
-def test_current_state_tool_is_blocked_for_historical_question():
-    with pytest.raises(ToolPolicyError, match="cannot prove historical state"):
-        DEFAULT_TOOL_REGISTRY.validate_call(
-            "get_wazuh_agent_processes",
-            {"agent_id": "001"},
-            RoutingContext(temporal_scope="historical"),
-        )
-
-
 def test_known_broken_tool_is_blocked():
     with pytest.raises(ToolPolicyError, match="known upstream"):
         DEFAULT_TOOL_REGISTRY.validate_call(

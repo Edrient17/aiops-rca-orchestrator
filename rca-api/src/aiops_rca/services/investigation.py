@@ -327,7 +327,9 @@ class InvestigationService:
                         "name": name,
                         "source": source,
                         "kind": policy.kind,
-                        "temporal_scope": policy.temporal_scope,
+                        # What the server said about its own tool, not what
+                        # this service decided about it.
+                        "temporal_scope": _declared_scope(item),
                         "description": str(item.get("description") or "")[:4000],
                         # No output_schema: not one of these servers declares
                         # one, so it was an empty object sent on every turn of
@@ -409,6 +411,18 @@ async def write_report(
     )
     _validate_report(report, template_output, package)
     return _reconcile_evidence(report, template_output, package)
+
+
+def _declared_scope(tool: dict[str, Any]) -> str:
+    """A tool's own statement about when its answer is true.
+
+    Absent means "any", which is what every tool was until one said otherwise.
+    A server that declares nothing is not a special case to handle; it is the
+    default.
+    """
+    meta = tool.get("_meta") or tool.get("meta") or {}
+    scope = meta.get("temporal_scope") if isinstance(meta, dict) else None
+    return scope if scope in ("historical", "current_only", "any") else "any"
 
 
 def _writer_sections(
