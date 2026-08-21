@@ -5,11 +5,12 @@ so whatever sat past it vanished without trace. A process list arrived as its
 first three kilobytes of kernel threads and the report described that as though
 it were the host.
 
-The example here used to be a raw Zabbix query, until that tool was given a list
-slot of its own and its rows stopped travelling in the summary at all. What
-remains on this path is the OSS Elasticsearch inventory, which answers in one
-long string with the rows embedded in it -- nothing this side can lift out into
-a slot, so the notice is the whole of the protection.
+The example here has moved twice. It was a raw Zabbix query, until that tool
+was given a list slot of its own. Then it was the OSS Elasticsearch inventory,
+which answers in one long string with the rows embedded -- until those, too,
+could be lifted out, because "prose then a JSON array" is a shape rather than a
+tool. What is left on this path is a reply with no rows to lift at all, where
+the notice really is the whole of the protection.
 """
 
 from datetime import UTC, datetime
@@ -43,8 +44,8 @@ def _evidence(response):
 
 
 def _long_reply():
-    rows = ",".join(f'{{"index":"vm-logs-{i}","shard":0}}' for i in range(200))
-    return f"Found 200 shards:\n[{rows}]"
+    """Long, and with nothing a row could be read out of."""
+    return "샤드 상태를 확인할 수 없습니다. " * 400
 
 
 def test_a_long_reply_is_marked_as_cut():
@@ -64,9 +65,36 @@ def test_the_full_length_is_stated():
 
 
 def test_a_short_reply_is_untouched():
-    evidence = _evidence("Found 1 shard:\n[{\"index\":\"vm-logs\",\"shard\":0}]")
+    evidence = _evidence("샤드가 하나도 없습니다")
     assert "요약 잘림" not in evidence.summary
-    assert "vm-logs" in evidence.summary
+    assert "샤드가 하나도 없습니다" in evidence.summary
+
+
+def test_rows_at_the_end_of_a_reply_travel_beside_the_sentence():
+    # The reason this file's example had to move. `Found 200 shards:\n[...]`
+    # is prose with its rows stuck on the end, which is a shape rather than a
+    # tool, so the rows go into the slot and the summary says how many.
+    rows = ",".join(f'{{"index":"vm-logs-{i}","shard":0}}' for i in range(200))
+    evidence = _evidence(f"Found 200 shards:\n[{rows}]")
+    assert evidence.observed is not None
+    # Two hundred small rows all fit, which is the point: this shape used to
+    # lose whatever sat past three thousand characters of summary.
+    assert len(evidence.observed.items) == 200
+    assert evidence.observed.omitted == 0
+    assert "요약 잘림" not in evidence.summary
+
+
+def test_more_rows_than_fit_are_counted_rather_than_dropped_silently():
+    rows = ",".join(
+        f'{{"service":"svc-{i}","note":"{"x" * 400}"}}' for i in range(200)
+    )
+    evidence = _evidence(f"Found 200 rows:\n[{rows}]")
+    assert evidence.observed is not None
+    assert evidence.observed.omitted > 0
+    assert len(evidence.observed.items) < 200
+    # The sentence says how many are there, so nobody reads the carried rows
+    # as the whole answer.
+    assert str(evidence.observed.omitted) in evidence.summary
 
 
 @pytest.mark.parametrize("size", [SUMMARY_CAPACITY - 1, SUMMARY_CAPACITY])

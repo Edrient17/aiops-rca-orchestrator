@@ -275,7 +275,7 @@ def _generic_evidence(
     profile = SOURCES[result.source]
     prefix, evidence_type = profile.generic_prefix, profile.generic_evidence_type
     source = result.source
-    response = result.response if isinstance(result.response, Mapping) else {}
+    response = result.response
     observed = _observed_list(result, response)
     return Evidence.model_validate(
         {
@@ -295,7 +295,13 @@ def _generic_evidence(
             "resource_ids": _resource_ids(host_id),
             "metric": None,
             "observed": observed,
-            "data_quality": _rounded_quality(response.get("data_quality")),
+            # Only an object carries one. A reply that is prose with rows on
+            # the end says its limits in the prose, which the summary keeps.
+            "data_quality": _rounded_quality(
+                response.get("data_quality")
+                if isinstance(response, Mapping)
+                else None
+            ),
             "tool_call_id": result.tool_call_id,
             "search_query": _search_query(planned.arguments),
         },
@@ -308,43 +314,87 @@ def _generic_evidence(
 LIST_CAPACITY_CHARS = 12_000
 
 
-def _observed_list(
-    result: ToolExecutionResult,
-    response: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    """The rows this observation returned, if it returned rows.
+def _trailing_rows(text: str) -> list[Any] | None:
+    """The JSON array a reply ends with, if it ends with one.
 
-    Which field holds them is the registry's `result_list_fields`, so a tool
-    that returns a list needs no per-tool knowledge here -- the same
-    declaration the result classifier already reads.
+    `esql` answers `Results\n[{...}, {...}]` and `list_indices` answers
+    `Found 12 indices:\n[...]`: a sentence, then the data. Nothing in the
+    reply is a Mapping, so the rows had nowhere to go but the summary, and a
+    summary caps at three thousand characters -- which is where a
+    seven-service, twenty-four-hour breakdown was lost, leaving a report
+    section that said the distribution could not be determined when it had
+    in fact been fetched.
     """
-    try:
-        policy = DEFAULT_TOOL_REGISTRY.get(result.tool_name)
-    except ToolPolicyError:
+    start = text.find("[")
+    if start < 0:
         return None
-    for field in policy.result_list_fields:
-        rows = response.get(field)
-        if not isinstance(rows, list) or not rows:
-            continue
-        items: list[dict[str, Any]] = []
-        budget = LIST_CAPACITY_CHARS
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            cost = len(_json(row))
-            if cost > budget and items:
-                break
-            budget -= cost
-            items.append(dict(row))
-        return {
-            "kind": field,
-            "items": items,
-            "omitted": len(rows) - len(items),
-        }
+    try:
+        parsed = json.loads(text[start:])
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, list) and parsed else None
+
+
+def _rows_in(
+    result: ToolExecutionResult,
+    response: Any,
+) -> tuple[str, list[Any]] | None:
+    """Where this reply keeps its rows, in whichever shape it returned them.
+
+    An object names the field, and which field is the registry's
+    `result_list_fields` -- the same declaration the result classifier reads,
+    so a tool needs no per-tool knowledge here. A bare array is its own rows. A
+    string is read for the array at its end, because the shape "prose then
+    data" belongs to the reply rather than to any one tool.
+    """
+    if isinstance(response, Mapping):
+        try:
+            policy = DEFAULT_TOOL_REGISTRY.get(result.tool_name)
+        except ToolPolicyError:
+            return None
+        for field in policy.result_list_fields:
+            rows = response.get(field)
+            if isinstance(rows, list) and rows:
+                return field, rows
+        return None
+    if isinstance(response, list) and response:
+        return "rows", response
+    if isinstance(response, str):
+        rows = _trailing_rows(response)
+        if rows:
+            return "rows", rows
     return None
 
 
-def _observed_text(observed: Mapping[str, Any], response: Mapping[str, Any]) -> str:
+def _observed_list(
+    result: ToolExecutionResult,
+    response: Any,
+) -> dict[str, Any] | None:
+    """The rows this observation returned, if it returned rows."""
+    found = _rows_in(result, response)
+    if found is None:
+        return None
+    kind, rows = found
+    items: list[dict[str, Any]] = []
+    budget = LIST_CAPACITY_CHARS
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        cost = len(_json(row))
+        if cost > budget and items:
+            break
+        budget -= cost
+        items.append(dict(row))
+    if not items:
+        return None
+    return {
+        "kind": kind,
+        "items": items,
+        "omitted": len(rows) - len(items),
+    }
+
+
+def _observed_text(observed: Mapping[str, Any], response: Any) -> str:
     """A sentence about the list, not the list."""
 
     kind = observed["kind"]
@@ -355,9 +405,16 @@ def _observed_text(observed: Mapping[str, Any], response: Mapping[str, Any]) -> 
         parts.append(f"({omitted} more not carried here)")
     # Anything the tool said besides the rows -- counts, limits, its own
     # partial flag -- still belongs in the sentence.
-    rest = {key: value for key, value in response.items() if key != kind}
-    if rest:
-        parts.append(_json(rest))
+    if isinstance(response, Mapping):
+        rest = {key: value for key, value in response.items() if key != kind}
+        if rest:
+            parts.append(_json(rest))
+    elif isinstance(response, str):
+        # The prose the rows were stuck on the end of. It is where a reply of
+        # this shape puts its total, and the rows are a page of it.
+        said = response[: response.find("[")].strip() if "[" in response else ""
+        if said:
+            parts.append(said)
     return " ".join(parts)
 
 
