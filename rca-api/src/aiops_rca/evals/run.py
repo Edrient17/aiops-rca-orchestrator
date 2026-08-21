@@ -120,17 +120,18 @@ def evaluate(path: Path, limit: int | None) -> None:
     data = list(client.list_examples(dataset_name=DATASET_NAME))
     if limit:
         data = data[:limit]
-    print(f"running the writer over {len(data)} examples with {settings.rca_writer_model}")
+    writer_model = settings.model_for("report_writer")
+    print(f"running the writer over {len(data)} examples with {writer_model}")
     # aevaluate rather than evaluate: the writer is async all the way down --
     # the service awaits the same call -- and the synchronous entry point
     # refuses a coroutine target rather than running it.
     async def run_experiment() -> tuple[str, Counter[tuple[str, int]], list[str]]:
         results = await aevaluate(
-            writer_target(model, settings.rca_writer_model),
+            writer_target(model, writer_model),
             data=data,
             evaluators=evaluators(),
             experiment_prefix="writer",
-            metadata={"writer_model": settings.rca_writer_model},
+            metadata={"writer_model": writer_model},
             max_concurrency=4,
         )
         tally: Counter[tuple[str, int]] = Counter()

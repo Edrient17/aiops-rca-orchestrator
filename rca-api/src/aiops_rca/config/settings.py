@@ -19,21 +19,33 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr
     openai_base_url: str | None = None
-    # Which model each stage gets. The five investigation nodes shared one
-    # setting, so the step that reads a host name out of a JSON response was
-    # billed at whatever the step that weighs evidence against hypotheses
-    # needed -- and both moved together, so neither could be tuned.
+    # One model per stage. A stage left unset follows `rca_model`, so a
+    # deployment with no opinion sets one variable and a deployment that wants
+    # to move a single node can do that without touching any other.
     #
-    # The split is by what the step decides, not by where it sits in the graph.
-    # A step that judges -- what was observed, what could explain it, what the
-    # evidence does to those explanations, what to look at next -- aims the
-    # whole investigation, and a wrong judgement produces a confident report
-    # about the wrong thing. A step that fetches a name or fills in a schema
-    # fails loudly and gets another turn.
-    rca_reasoning_model: str = "gpt-5.6-terra"
-    rca_routine_model: str = "gpt-5.6-luna"
-    rca_question_model: str = "gpt-5.6-luna"
-    rca_writer_model: str = "gpt-5.6-terra"
+    # The stages that ship higher are the ones that judge: what was observed,
+    # what could explain it, what the evidence does to those explanations, and
+    # what to look at next. A wrong judgement there aims the whole
+    # investigation and comes back as a confident report about the wrong thing.
+    # Fetching a host name or filling in a schema fails loudly and gets another
+    # turn, so it stays on the cheaper default.
+    rca_model: str = "gpt-5.6-luna"
+    rca_model_question_analyzer: str | None = None
+    rca_model_resolve_hosts: str | None = None
+    rca_model_establish_phenomenon: str | None = "gpt-5.6-terra"
+    rca_model_hypothesis_planner: str | None = "gpt-5.6-terra"
+    rca_model_observation_planner: str | None = "gpt-5.6-terra"
+    rca_model_hypothesis_updater: str | None = "gpt-5.6-terra"
+    rca_model_report_writer: str | None = "gpt-5.6-terra"
+
+    def model_for(self, stage: str) -> str:
+        """The model this stage runs on, or the default it falls back to.
+
+        A stage name with no setting behind it raises rather than quietly
+        returning the default: the graph is built at startup, so a typo here
+        stops the service instead of silently downgrading one node.
+        """
+        return getattr(self, f"rca_model_{stage}") or self.rca_model
 
     zabbix_mcp_url: str
     zabbix_mcp_auth_token: SecretStr

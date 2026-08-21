@@ -54,6 +54,17 @@ from aiops_rca.tools.registry import (
     ToolRegistry,
 )
 
+#: The stages inside the evidence_collector run, in the order they execute.
+#: Kept in one place so the trace and the audit row cannot describe different
+#: sets of nodes than the graph actually built.
+COLLECTOR_STAGES = (
+    "resolve_hosts",
+    "establish_phenomenon",
+    "hypothesis_planner",
+    "observation_planner",
+    "hypothesis_updater",
+)
+
 
 class InvestigationService:
     def __init__(
@@ -75,23 +86,23 @@ class InvestigationService:
         self.nodes = CollectorNodes(
             resolve_hosts=ResolveHostsNode(
                 model=model,
-                model_name=settings.rca_routine_model,
+                model_name=settings.model_for("resolve_hosts"),
                 executor=executor,
                 registry=registry,
             ),
             establish_phenomenon=EstablishPhenomenonNode(
                 model=model,
-                model_name=settings.rca_reasoning_model,
+                model_name=settings.model_for("establish_phenomenon"),
                 executor=executor,
                 registry=registry,
             ),
             hypothesis_planner=HypothesisPlannerNode(
                 model=model,
-                model_name=settings.rca_reasoning_model,
+                model_name=settings.model_for("hypothesis_planner"),
             ),
             observation_planner=ObservationPlannerNode(
                 model=model,
-                model_name=settings.rca_reasoning_model,
+                model_name=settings.model_for("observation_planner"),
                 registry=registry,
             ),
             tool_router=ToolRouterNode(registry),
@@ -99,7 +110,7 @@ class InvestigationService:
             evidence_normalizer=EvidenceNormalizerNode(),
             hypothesis_updater=HypothesisUpdaterNode(
                 model=model,
-                model_name=settings.rca_reasoning_model,
+                model_name=settings.model_for("hypothesis_updater"),
             ),
             stop_guard=StopGuardNode(),
             evidence_package_builder=EvidencePackageBuilderNode(),
@@ -107,9 +118,9 @@ class InvestigationService:
                 # Bound to the model here so the node has no opinion about
                 # how a client is built, and a test can drive it with none.
                 functools.partial(
-                    write_report, model, settings.rca_writer_model
+                    write_report, model, settings.model_for("report_writer")
                 ),
-                settings.rca_writer_model,
+                settings.model_for("report_writer"),
             ),
             report_eval=ReportEvalNode(),
         )
@@ -130,7 +141,7 @@ class InvestigationService:
             item.template_id for item in api_request.templates if item.enabled
         ]
         parsed = await self.model.complete(
-            model=self.settings.rca_question_model,
+            model=self.settings.model_for("question_analyzer"),
             output_type=_analyzer_output_type(tuple(catalog_ids)),
             system_prompt=_prompt("question_analyzer.md"),
             payload={
@@ -165,7 +176,7 @@ class InvestigationService:
         runs.append(
             AgentRun(
                 stage="question_analyzer",
-                model=self.settings.rca_question_model,
+                model=self.settings.model_for("question_analyzer"),
                 duration_ms=_elapsed_ms(started),
                 output=parsed.model_dump(mode="json"),
             )
@@ -220,11 +231,13 @@ class InvestigationService:
                     "request_id": api_request.request.request_id,
                     "investigation_id": investigation_id,
                     "host_queries": parsed.host_queries,
-                    # Named per tier rather than as one "model", which stopped
-                    # being true the moment the nodes were split and would have
-                    # sent anyone reading a trace to the wrong model.
-                    "reasoning_model": self.settings.rca_reasoning_model,
-                    "routine_model": self.settings.rca_routine_model,
+                    # Named per stage rather than as one "model", which
+                    # stopped being true the moment the nodes could differ and
+                    # would have sent anyone reading a trace to the wrong one.
+                    "models": {
+                        stage: self.settings.model_for(stage)
+                        for stage in COLLECTOR_STAGES
+                    },
                 },
                 "tags": ["evidence_collector", parsed.request_type],
             },
@@ -274,7 +287,7 @@ class InvestigationService:
         runs.append(
             AgentRun(
                 stage="rca_writer",
-                model=self.settings.rca_writer_model,
+                model=self.settings.model_for("report_writer"),
                 # Summed across drafts: a report the checks sent back twice cost
                 # what all three passes cost, and the audit row should say so.
                 duration_ms=finished.report_duration_ms,
@@ -582,14 +595,12 @@ def _without_examples(value: Any) -> Any:
 def _collector_models(settings: Settings) -> str:
     """What actually ran this stage, for the audit row.
 
-    The stage is one row but no longer one model, and a row naming only the
-    stronger one would understate what the cheaper nodes decided.
+    The stage is one row but no longer one model. Naming only the strongest
+    would understate what the cheaper nodes decided, so every distinct model is
+    listed -- and a deployment that points them all at one still gets one name.
     """
-    reasoning = settings.rca_reasoning_model
-    routine = settings.rca_routine_model
-    if reasoning == routine:
-        return reasoning
-    return f"{reasoning}+{routine}"
+    used = dict.fromkeys(settings.model_for(stage) for stage in COLLECTOR_STAGES)
+    return "+".join(used)
 
 
 def _elapsed_ms(started: float) -> int:
