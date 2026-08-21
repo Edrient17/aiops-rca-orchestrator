@@ -22,7 +22,6 @@ from aiops_rca.schemas.investigation import Hypothesis, ResolvedHost
 from aiops_rca.services.model_contracts import (
     HypothesisPlan,
     ObservationDecision,
-    ToolCandidate,
 )
 from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
 
@@ -86,39 +85,38 @@ class TestTheObservationPlanner:
         )
         return asyncio.run(node(state))
 
-    def _decision(self, **overrides):
-        base = {
+    def _decision(self, observations=None, stop_reason=None):
+        planned = {
             "question": "지금 이 호스트에서 무엇이 실행 중인가",
             "discriminates_hypothesis_ids": ["H1", "H2"],
             "expected_if_true": [],
             "expected_if_false": [],
             "temporal_scope": "current",
             "required_tool": "get_wazuh_agent_processes",
-            "candidates": [
-                ToolCandidate(
-                    tool_name="get_wazuh_agent_processes",
-                    host="vm-java-docker-2",
-                    arguments_json='{"agent_id": "001"}',
-                ),
-            ],
+            "host": "vm-java-docker-2",
+            "arguments_json": '{"agent_id": "001"}',
             "generic_fallback_allowed": False,
-            "stop_reason": None,
         }
-        base.update(overrides)
-        return ObservationDecision.model_validate(base)
+        return ObservationDecision.model_validate(
+            {
+                "observations": [planned] if observations is None else observations,
+                "stop_reason": stop_reason,
+            },
+        )
 
     def test_a_named_observation_survives_a_stop_reason(self):
         update = self._decide(self._decision(stop_reason="더 볼 것이 없어 보인다"))
-        assert update["next_question"] is not None
-        assert update["next_question"].required_tool == "get_wazuh_agent_processes"
+        assert [q.required_tool for q in update["next_questions"]] == [
+            "get_wazuh_agent_processes"
+        ]
         assert "stop_reason" not in update
 
-    def test_no_effect_still_ends_the_loop(self):
-        update = self._decide(self._decision(required_tool=None, stop_reason="끝"))
-        assert update["next_question"] is None
+    def test_an_empty_batch_still_ends_the_loop(self):
+        update = self._decide(self._decision(observations=[], stop_reason="끝"))
+        assert update["next_questions"] == []
         assert update["stop_reason"] == "끝"
 
-    def test_no_question_still_ends_the_loop(self):
-        update = self._decide(self._decision(question=None, stop_reason=None))
-        assert update["next_question"] is None
+    def test_an_empty_batch_with_no_reason_still_ends_the_loop(self):
+        update = self._decide(self._decision(observations=[]))
+        assert update["next_questions"] == []
         assert update["stop_reason"]

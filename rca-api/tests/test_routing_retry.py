@@ -35,7 +35,11 @@ WINDOW = {
 }
 
 
-def question(tool: str = "get_wazuh_alert_summary") -> ObservationQuestion:
+def question(
+    tool: str = "get_wazuh_alert_summary",
+    arguments: dict | None = None,
+    generic_fallback_allowed: bool = False,
+) -> ObservationQuestion:
     return ObservationQuestion(
         question="이 호스트에서 무엇이 실행되었는가",
         discriminates_hypothesis_ids=["h1"],
@@ -43,14 +47,17 @@ def question(tool: str = "get_wazuh_alert_summary") -> ObservationQuestion:
         expected_if_false={},
         temporal_scope="historical",
         required_tool=tool,
+        arguments=arguments if arguments is not None else {},
+        host="vm-known",
+        generic_fallback_allowed=generic_fallback_allowed,
     )
 
 
-def route(next_question_tool="get_wazuh_alert_summary", **updates):
+def route(questions=None, **updates):
     state = make_state(
         hosts=[HOST],
         hypotheses=[H1],
-        next_question=question(next_question_tool),
+        next_questions=questions if questions is not None else [question()],
         **updates,
     )
     update = dict(asyncio.run(ToolRouterNode(DEFAULT_TOOL_REGISTRY)(state)))
@@ -59,7 +66,7 @@ def route(next_question_tool="get_wazuh_alert_summary", **updates):
 
 class TestARefusedPlan:
     def test_the_first_refusal_does_not_end_the_investigation(self):
-        update, _ = route(candidate_tool_arguments={})
+        update, _ = route()
         assert update.get("stop_reason") is None
         assert update["routing_attempts"] == 1
         assert update["routing_rejections"] != []
@@ -67,24 +74,22 @@ class TestARefusedPlan:
     def test_the_objection_is_handed_back_verbatim(self):
         # The planner is told what to fix. A retry against a summary of the
         # objection is a retry against a guess.
-        update, _ = route(candidate_tool_arguments={})
+        update, _ = route()
         assert "time_from" in update["routing_rejections"][0]
 
     def test_it_is_still_recorded_as_an_unknown(self):
         # routing_rejections is cleared once a plan routes; the permanent record
         # of what went wrong has to survive that.
-        update, _ = route(candidate_tool_arguments={})
+        update, _ = route()
         assert "tool_routing_blocked" in [item.code for item in update["unknowns"]]
 
     def test_the_stale_question_does_not_survive_the_refusal(self):
-        update, _ = route(candidate_tool_arguments={})
-        assert update["next_question"] is None
-        assert update["planned_tool_call"] is None
+        update, _ = route()
+        assert update["next_questions"] == []
+        assert update["planned_tool_calls"] == []
 
     def test_the_investigation_gives_up_once_the_attempts_are_spent(self):
-        update, _ = route(
-            candidate_tool_arguments={}, routing_attempts=MAX_ROUTING_ATTEMPTS
-        )
+        update, _ = route(routing_attempts=MAX_ROUTING_ATTEMPTS)
         assert update["stop_reason"].startswith(
             "the next observation could not be routed"
         )
@@ -95,11 +100,13 @@ class TestAPlanThatRoutes:
         # A rejection the planner has already answered is noise in the next
         # payload, and would make a later plan look like a retry.
         update, _ = route(
-            candidate_tool_arguments={"get_wazuh_alert_summary": dict(WINDOW)},
+            questions=[question(arguments=dict(WINDOW))],
             routing_rejections=["something earlier"],
             routing_attempts=1,
         )
-        assert isinstance(update["planned_tool_call"], PlannedToolCall)
+        assert [c.tool_name for c in update["planned_tool_calls"]] == [
+            "get_wazuh_alert_summary"
+        ]
         assert update["routing_rejections"] == []
         assert update["routing_attempts"] == 0
 
@@ -118,12 +125,12 @@ class TestWhereARefusedPlanGoes:
 
     def test_to_the_executor_when_a_plan_survived(self):
         state = make_state(
-            planned_tool_call=PlannedToolCall(
+            planned_tool_calls=[PlannedToolCall(
                 tool_name="get_wazuh_alert_summary",
                 arguments=dict(WINDOW),
                 purpose="확인",
                 target_hypothesis_ids=[],
-            ),
+            )],
         )
         assert route_after_tool_router(state) == "tool_executor"
 
@@ -148,8 +155,7 @@ class TestWhatIsNotWorthRetrying:
 
     def test_the_generic_gate_is_not_reopened_by_replanning(self):
         update, _ = route(
-            next_question_tool="query_zabbix",
-            candidate_tool_arguments={"query_zabbix": {"method": "host.get"}},
+            questions=[question("query_zabbix", {"method": "host.get"})],
         )
         assert update["stop_reason"].startswith(
             "the next observation could not be routed"
@@ -164,5 +170,5 @@ class TestWhatIsNotWorthRetrying:
         assert error.retryable is False
 
     def test_a_malformed_call_is_still_worth_another_turn(self):
-        update, _ = route(candidate_tool_arguments={})
+        update, _ = route()
         assert update.get("stop_reason") is None

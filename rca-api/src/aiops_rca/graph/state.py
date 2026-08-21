@@ -46,13 +46,21 @@ class InvestigationState(StrictModel):
         default_factory=list
     )
 
-    next_question: ObservationQuestion | None = None
-    planned_tool_call: PlannedToolCall | None = None
-    candidate_tool_arguments: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    #: Tool name to the host its call is about, by name. The id it may not
-    #: have is looked up from `hosts` where a tool needs it.
-    candidate_tool_hosts: dict[str, str] = Field(default_factory=dict)
-    generic_fallback_allowed: bool = False
+    #: The questions of the current cycle and the calls that answer them, one
+    #: call per question. A cycle used to hold exactly one of each, so four
+    #: independent questions cost four cycles -- and a cycle is two model turns,
+    #: twenty-six seconds, around a tool call that takes three tenths of one.
+    #:
+    #: The two dicts that used to sit here, keyed by tool name, are gone:
+    #: arguments and host belong to the observation that asked for them, and
+    #: keying by tool made two questions of the same tool impossible to tell
+    #: apart.
+    next_questions: Annotated[list[ObservationQuestion], Field(max_length=8)] = Field(
+        default_factory=list,
+    )
+    planned_tool_calls: Annotated[list[PlannedToolCall], Field(max_length=8)] = Field(
+        default_factory=list,
+    )
     # Discovered once per investigation and checkpointed so every planning
     # turn sees one consistent set of live MCP contracts.
     tool_catalog: list[dict[str, Any]] = Field(default_factory=list)
@@ -60,7 +68,10 @@ class InvestigationState(StrictModel):
     evidence: Annotated[list[Evidence], Field(max_length=200)] = Field(
         default_factory=list
     )
-    last_observation: ToolExecutionResult | None = None
+    #: What the last cycle's calls returned, in the order they were planned.
+    last_observations: Annotated[
+        list[ToolExecutionResult], Field(max_length=8)
+    ] = Field(default_factory=list)
     tool_results: Annotated[list[ToolExecutionResult], Field(max_length=100)] = Field(
         default_factory=list,
     )
@@ -143,28 +154,21 @@ class InvestigationState(StrictModel):
             raise ValueError(
                 f"known_facts reference unknown evidence: {sorted(missing_evidence)}"
             )
-        if self.next_question:
-            missing = (
-                set(self.next_question.discriminates_hypothesis_ids) - known_hypotheses
-            )
+        for question in self.next_questions:
+            missing = set(question.discriminates_hypothesis_ids) - known_hypotheses
             if missing:
                 raise ValueError(
-                    f"next_question references unknown hypotheses: {sorted(missing)}"
+                    f"next_questions reference unknown hypotheses: {sorted(missing)}"
                 )
-        if self.planned_tool_call:
-            missing = (
-                set(self.planned_tool_call.target_hypothesis_ids) - known_hypotheses
-            )
+        resolved_hosts = {host.host for host in self.hosts}
+        for planned in self.planned_tool_calls:
+            missing = set(planned.target_hypothesis_ids) - known_hypotheses
             if missing:
                 raise ValueError(
-                    f"planned_tool_call references unknown hypotheses: {sorted(missing)}"
+                    f"planned_tool_calls reference unknown hypotheses: {sorted(missing)}"
                 )
-            if (
-                self.planned_tool_call.host
-                and self.planned_tool_call.host
-                not in {host.host for host in self.hosts}
-            ):
-                raise ValueError("planned_tool_call references an unresolved host")
+            if planned.host and planned.host not in resolved_hosts:
+                raise ValueError("planned_tool_calls reference an unresolved host")
         if self.tool_call_count != len(self.tool_results):
             raise ValueError("tool_call_count must equal the number of tool_results")
         return self

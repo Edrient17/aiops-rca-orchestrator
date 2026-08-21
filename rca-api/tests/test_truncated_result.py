@@ -54,7 +54,7 @@ async def _run(status: str):
     node = ToolExecutorNode(StubExecutor(status))
     return await node(
         make_state(
-            planned_tool_call=PLANNED,
+            planned_tool_calls=[PLANNED],
             hypotheses=[Hypothesis(id="h1", statement="용량 소진")],
             hosts=[ResolvedHost(host="vm-java-docker-2", host_id="11094")],
         ),
@@ -81,5 +81,5 @@ async def test_a_complete_reply_records_nothing():
 async def test_the_rows_are_still_kept():
     # The truncation is a caveat on the answer, not a reason to discard it.
     update = await _run("partial")
-    assert update["last_observation"].response["result_count"] == 100
+    assert update["last_observations"][0].response["result_count"] == 100
     assert update["tool_call_count"] == 1

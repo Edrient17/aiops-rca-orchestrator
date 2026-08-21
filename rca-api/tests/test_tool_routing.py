@@ -30,16 +30,24 @@ from aiops_rca.tools.registry import (
     ToolPolicyError,
 )
 
-BASE = {
+OBSERVATION = {
     "question": "서비스가 멈추기 전에 누가 명령을 실행했는가",
     "discriminates_hypothesis_ids": ["H1"],
     "expected_if_true": [],
     "expected_if_false": [],
     "temporal_scope": "historical",
-    "candidates": [],
+    "host": "vm-1",
+    "arguments_json": "{}",
     "generic_fallback_allowed": False,
-    "stop_reason": None,
 }
+
+
+def decision(**overrides):
+    """A turn that asks one question, however that turn is shaped."""
+    return {
+        "observations": [{**OBSERVATION, **overrides}],
+        "stop_reason": None,
+    }
 
 
 def test_every_offered_name_is_a_tool_that_exists():
@@ -54,8 +62,8 @@ def test_every_offered_name_is_a_tool_that_exists():
 
 def test_a_registered_tool_is_accepted():
     bound = observation_decision_for(DEFAULT_TOOL_REGISTRY.names())
-    decision = bound.model_validate({**BASE, "required_tool": "get_related_events"})
-    assert decision.required_tool == "get_related_events"
+    parsed = bound.model_validate(decision(required_tool="get_related_events"))
+    assert parsed.observations[0].required_tool == "get_related_events"
 
 
 def test_a_qualified_name_is_refused():
@@ -63,24 +71,26 @@ def test_a_qualified_name_is_refused():
     bound = observation_decision_for(DEFAULT_TOOL_REGISTRY.names())
     with pytest.raises(ValidationError):
         bound.model_validate(
-            {**BASE, "required_tool": "get_related_events around the target window"},
+            decision(required_tool="get_related_events around the target window"),
         )
 
 
 def test_a_tool_that_is_not_allowlisted_is_refused():
     bound = observation_decision_for(DEFAULT_TOOL_REGISTRY.names())
     with pytest.raises(ValidationError):
-        bound.model_validate({**BASE, "required_tool": "host.delete"})
+        bound.model_validate(decision(required_tool="host.delete"))
 
 
 def test_stopping_is_still_expressible():
     # Having no next observation is a legitimate answer, and narrowing the
-    # field must not turn it into a validation error.
+    # field must not turn it into a validation error. An empty turn is how it
+    # is said now, rather than a question with no tool attached.
     bound = observation_decision_for(DEFAULT_TOOL_REGISTRY.names())
-    decision = bound.model_validate(
-        {**BASE, "required_tool": None, "stop_reason": "더 가를 관측이 없음"},
+    parsed = bound.model_validate(
+        {"observations": [], "stop_reason": "더 가를 관측이 없음"},
     )
-    assert decision.required_tool is None
+    assert parsed.observations == []
+    assert parsed.stop_reason
 
 
 def test_an_empty_registry_leaves_the_contract_open():

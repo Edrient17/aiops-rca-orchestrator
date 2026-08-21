@@ -6,6 +6,7 @@ routing, execution, normalisation, the stop guard -- is policy that a rule can
 settle, and settling it in code is what keeps it from drifting.
 """
 
+import asyncio
 import json
 from collections.abc import Mapping
 from importlib.resources import files
@@ -15,6 +16,7 @@ from aiops_rca.graph.routing import hard_stop_update
 from aiops_rca.graph.state import InvestigationState
 from aiops_rca.schemas.investigation import PlannedToolCall, ResolvedHost, UnknownItem
 from aiops_rca.services.model_contracts import host_search_decision_for
+from aiops_rca.tools.adapters.base import describe_failure
 from aiops_rca.tools.executor import ToolExecutor
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
 from aiops_rca.tools.registry import (
@@ -144,7 +146,7 @@ class ResolveHostsNode:
             "tool_errors": errors,
             "tool_call_count": len(results),
             "tool_call_purposes": purposes,
-            "last_observation": results[-1] if results else state.last_observation,
+            "last_observations": produced,
             "stop_reason": stop_reason,
             "visited_nodes": [*state.visited_nodes, "resolve_hosts"],
         }
@@ -289,201 +291,329 @@ class ResolveHostsNode:
 
 
 class ToolRouterNode:
+    """Validate this turn's questions and turn the survivors into calls.
+
+    One question used to arrive with several candidate calls, of which this
+    picked whichever matched `required_tool`. Now several questions arrive, each
+    with the one call that answers it, and the work is the same for each: the
+    registry judges it, and a host name becomes whatever id the tools ask for.
+
+    A batch survives partial failure. Some questions route and some are refused,
+    and only a turn where nothing survives goes back to the planner.
+    """
+
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
-        question = state.next_question
-        if not question or not question.required_tool:
+        if not state.next_questions:
             return {
                 "stop_reason": "no routable observation question remains",
-                "planned_tool_call": None,
+                "planned_tool_calls": [],
                 "visited_nodes": [*state.visited_nodes, "tool_router"],
             }
-        context = RoutingContext(
-            temporal_scope=question.temporal_scope,
-            generic_fallback_allowed=state.generic_fallback_allowed,
-            tool_call_count=state.tool_call_count,
-            max_tool_calls=state.limits.max_tool_calls,
-        )
-        try:
-            policy = self.registry.validate_call(
-                question.required_tool,
-                state.candidate_tool_arguments.get(question.required_tool) or {},
-                context,
-                _catalog_scope(state.tool_catalog, question.required_tool),
+
+        planned: list[PlannedToolCall] = []
+        unknowns = list(state.unknowns)
+        refusals: list[str] = []
+        host_ids = {item.host: item.host_id for item in state.hosts}
+
+        for question in state.next_questions:
+            if not question.required_tool:
+                continue
+            context = RoutingContext(
+                temporal_scope=question.temporal_scope,
+                generic_fallback_allowed=question.generic_fallback_allowed,
+                # Counted across the batch as well as the investigation: four
+                # calls planned together still spend four of the budget.
+                tool_call_count=state.tool_call_count + len(planned),
+                max_tool_calls=state.limits.max_tool_calls,
             )
-        except ToolPolicyError as error:
-            # The registry already says which of three things went wrong; a
-            # prefix asserting a missing tool would put back the very sentence
-            # that made an unproposed call read as a capability the platform
-            # lacks.
-            unknowns = [
-                *state.unknowns,
-                UnknownItem(code="tool_routing_blocked", message=str(error)),
-            ]
-            attempts = state.routing_attempts + 1
-            if error.retryable and attempts <= MAX_ROUTING_ATTEMPTS:
-                # A refused plan is a plan to redo, not the end of the
-                # investigation. The report writer has always been allowed a
-                # second draft against the reason its first was sent back; a
-                # planner that named a source where a host belonged got no such
-                # turn, and one malformed candidate closed the whole run.
-                return {
-                    "planned_tool_call": None,
-                    "next_question": None,
-                    "unknowns": unknowns,
-                    "routing_rejections": [*state.routing_rejections, str(error)],
-                    "routing_attempts": attempts,
-                    "visited_nodes": [*state.visited_nodes, "tool_router"],
-                }
+            try:
+                policy = self.registry.validate_call(
+                    question.required_tool,
+                    question.arguments,
+                    context,
+                    _catalog_scope(state.tool_catalog, question.required_tool),
+                )
+            except ToolPolicyError as error:
+                # The registry already says which of three things went wrong; a
+                # prefix asserting a missing tool would put back the very
+                # sentence that made an unproposed call read as a capability the
+                # platform lacks.
+                unknowns.append(
+                    UnknownItem(code="tool_routing_blocked", message=str(error)),
+                )
+                if error.retryable:
+                    refusals.append(str(error))
+                continue
+            planned.append(
+                PlannedToolCall(
+                    tool_name=policy.name,
+                    arguments=dict(question.arguments),
+                    purpose=question.question,
+                    target_hypothesis_ids=question.discriminates_hypothesis_ids,
+                    host=question.host,
+                    # The call names a host; its Zabbix id comes from what was
+                    # resolved, and may not exist. A tool that needs one says so
+                    # in its own required arguments, so nothing here has to know
+                    # which tools those are.
+                    host_id=host_ids.get(question.host or ""),
+                ),
+            )
+
+        if planned:
+            # A rejection the planner has already worked around is noise in the
+            # next payload; the permanent record of it is in unknowns.
             return {
-                "stop_reason": f"the next observation could not be routed: {error}",
-                "planned_tool_call": None,
+                "planned_tool_calls": planned,
+                "routing_rejections": [],
+                "routing_attempts": 0,
                 "unknowns": unknowns,
-                "routing_rejections": [*state.routing_rejections, str(error)],
+                "visited_nodes": [*state.visited_nodes, "tool_router"],
+            }
+
+        attempts = state.routing_attempts + 1
+        if refusals and attempts <= MAX_ROUTING_ATTEMPTS:
+            # A refused plan is a plan to redo, not the end of the
+            # investigation. The report writer has always been allowed a second
+            # draft against the reason its first was sent back; a planner that
+            # named a source where a host belonged got no such turn, and one
+            # malformed candidate closed the whole run.
+            return {
+                "planned_tool_calls": [],
+                "next_questions": [],
+                "unknowns": unknowns,
+                "routing_rejections": [*state.routing_rejections, *refusals],
                 "routing_attempts": attempts,
                 "visited_nodes": [*state.visited_nodes, "tool_router"],
             }
-        # The candidate names a host; its Zabbix id comes from what was
-        # resolved, and may not exist. A tool that needs one says so in its own
-        # required arguments, so nothing here has to know which tools those are.
-        host = state.candidate_tool_hosts.get(policy.name)
-        host_id = next(
-            (item.host_id for item in state.hosts if item.host == host), None
-        )
         return {
-            "routing_rejections": [],
-            "routing_attempts": 0,
-            "planned_tool_call": PlannedToolCall(
-                tool_name=policy.name,
-                arguments=dict(state.candidate_tool_arguments[policy.name]),
-                purpose=question.question,
-                target_hypothesis_ids=question.discriminates_hypothesis_ids,
-                host=host,
-                host_id=host_id,
+            "stop_reason": (
+                "the next observation could not be routed: "
+                + (refusals[0] if refusals else "no proposal was allowed")
             ),
+            "planned_tool_calls": [],
+            "unknowns": unknowns,
+            "routing_rejections": [*state.routing_rejections, *refusals],
+            "routing_attempts": attempts,
             "visited_nodes": [*state.visited_nodes, "tool_router"],
         }
 
 
 class ToolExecutorNode:
+    """Make this turn's calls, together.
+
+    They were made one per cycle, each waiting on a planning turn it did not
+    depend on. A tool call takes three tenths of a second and the model turns
+    around it take twenty-six, so the waiting was the whole latency.
+    """
+
     def __init__(self, executor: ToolExecutor) -> None:
         self.executor = executor
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
-        planned = state.planned_tool_call
+        planned = list(state.planned_tool_calls)
         if not planned:
             return {
-                "fatal_error": "tool_executor entered without planned_tool_call",
+                "fatal_error": "tool_executor entered without a planned tool call",
                 "visited_nodes": [*state.visited_nodes, "tool_executor"],
             }
-        temporal_scope = (
-            state.next_question.temporal_scope if state.next_question else "timeless"
+        scopes = {
+            question.required_tool: question.temporal_scope
+            for question in state.next_questions
+            if question.required_tool
+        }
+        gates = {
+            question.required_tool: question.generic_fallback_allowed
+            for question in state.next_questions
+            if question.required_tool
+        }
+
+        async def run(call: PlannedToolCall, offset: int) -> Any:
+            return await self.executor.execute(
+                call,
+                RoutingContext(
+                    temporal_scope=scopes.get(call.tool_name, "timeless"),
+                    generic_fallback_allowed=gates.get(call.tool_name, False),
+                    tool_call_count=state.tool_call_count + offset,
+                    max_tool_calls=state.limits.max_tool_calls,
+                ),
+            )
+
+        produced = await asyncio.gather(
+            *(run(call, offset) for offset, call in enumerate(planned)),
+            return_exceptions=True,
         )
-        result = await self.executor.execute(
-            planned,
-            RoutingContext(
-                temporal_scope=temporal_scope,
-                generic_fallback_allowed=state.generic_fallback_allowed,
-                tool_call_count=state.tool_call_count,
-                max_tool_calls=state.limits.max_tool_calls,
-            ),
-        )
-        results = [*state.tool_results, result]
-        errors = (
-            [*state.tool_errors, result]
-            if result.status == "error"
-            else state.tool_errors
-        )
+
+        results = list(state.tool_results)
+        errors = list(state.tool_errors)
         unknowns = list(state.unknowns)
-        if result.status == "error":
-            unknowns.append(
-                UnknownItem(
-                    code="tool_error",
-                    message=result.error or f"{result.tool_name} failed",
-                    tool_call_id=result.tool_call_id,
-                ),
-            )
-        oversized = _response_chars(result)
-        if oversized > MAX_REASONABLE_RESPONSE_CHARS:
-            # Nothing is truncated here. The answer travels whole, because
-            # cutting it would take away the very rows a hypothesis is judged
-            # on. What is added is that the shape was wrong: a question about
-            # how much or how often is answered by an aggregate in a few rows,
-            # and this one came back as a wall of documents.
-            #
-            # Said out loud, three things read it -- the next planner turn,
-            # which can ask again in a better shape; the report, which can
-            # admit the window was surveyed rather than read; and whoever is
-            # looking at why an investigation cost what it did.
-            unknowns.append(
-                UnknownItem(
-                    code="response_too_large_to_reason_over",
-                    message=(
-                        f"{result.tool_name} returned {oversized:,} characters."
-                        " A question about counts or timing is answered by an"
-                        " aggregate in a few rows; fetch documents only once"
-                        " an aggregate says which ones to read."
+        purposes = dict(state.tool_call_purposes)
+        observations: list[Any] = []
+
+        for call, outcome in zip(planned, produced, strict=True):
+            if isinstance(outcome, BaseException):
+                # One call raising must not take the others down with it: they
+                # already ran, and their answers are paid for.
+                unknowns.append(
+                    UnknownItem(
+                        code="tool_call_failed",
+                        message=f"{call.tool_name}: {describe_failure(outcome)}",
                     ),
-                    tool_call_id=result.tool_call_id,
-                ),
-            )
-        if result.status == "partial":
-            # The reply stopped at a limit rather than at the end of the data,
-            # so its count is a floor. Nothing downstream can tell that from a
-            # complete answer once the rows are normalized into evidence, and a
-            # report that reads it as the total understates the month.
-            unknowns.append(
-                UnknownItem(
-                    code="result_truncated",
-                    message=(
-                        f"{result.tool_name} reached its result limit, so the"
-                        " returned count is a lower bound and the window is only"
-                        " partly covered"
+                )
+                continue
+            observations.append(outcome)
+            results.append(outcome)
+            purposes[outcome.tool_call_id] = call.purpose
+            if outcome.status == "error":
+                errors.append(outcome)
+                unknowns.append(
+                    UnknownItem(
+                        code="tool_error",
+                        message=outcome.error or f"{outcome.tool_name} failed",
+                        tool_call_id=outcome.tool_call_id,
                     ),
-                    tool_call_id=result.tool_call_id,
-                ),
-            )
+                )
+            if outcome.status == "partial":
+                # The reply stopped at a limit rather than at the end of the
+                # data, so its count is a floor. Nothing downstream can tell
+                # that from a complete answer once the rows are normalized into
+                # evidence, and a report that reads it as the total understates
+                # the month.
+                unknowns.append(
+                    UnknownItem(
+                        code="result_truncated",
+                        message=(
+                            f"{outcome.tool_name} reached its result limit, so"
+                            " the returned count is a lower bound and the window"
+                            " is only partly covered"
+                        ),
+                        tool_call_id=outcome.tool_call_id,
+                    ),
+                )
+            oversized = _response_chars(outcome)
+            if oversized > MAX_REASONABLE_RESPONSE_CHARS:
+                # Nothing is truncated here. The answer travels whole, because
+                # cutting it would take away the very rows a hypothesis is
+                # judged on. What is added is that the shape was wrong: a
+                # question about how much or how often is answered by an
+                # aggregate in a few rows, and this one came back as a wall of
+                # documents.
+                unknowns.append(
+                    UnknownItem(
+                        code="response_too_large_to_reason_over",
+                        message=(
+                            f"{outcome.tool_name} returned {oversized:,}"
+                            " characters. A question about counts or timing is"
+                            " answered by an aggregate in a few rows; fetch"
+                            " documents only once an aggregate says which ones"
+                            " to read."
+                        ),
+                        tool_call_id=outcome.tool_call_id,
+                    ),
+                )
+
         return {
-            "last_observation": result,
             "tool_results": results,
             "tool_errors": errors,
             "unknowns": unknowns,
+            "tool_call_purposes": purposes,
             "tool_call_count": len(results),
-            "tool_call_purposes": {
-                **state.tool_call_purposes,
-                result.tool_call_id: planned.purpose,
-            },
+            "last_observations": observations,
             "visited_nodes": [*state.visited_nodes, "tool_executor"],
         }
 
 
 class EvidenceNormalizerNode:
+    """Turn this turn's answers into evidence, each against its own call.
+
+    One observation used to arrive with the one plan that produced it. Now
+    several do, and they are paired by position: the executor returns what it
+    was given, in the order it was given.
+    """
+
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
-        if not state.last_observation or not state.planned_tool_call:
+        if not state.last_observations or not state.planned_tool_calls:
             return {
-                "fatal_error": "evidence_normalizer entered without an observation and plan",
+                "fatal_error": (
+                    "evidence_normalizer entered without an observation and plan"
+                ),
                 "visited_nodes": [*state.visited_nodes, "evidence_normalizer"],
             }
-        host = _host_for_plan(state)
-        if not host:
-            return {
-                "fatal_error": "no resolved host could be associated with the observation",
-                "visited_nodes": [*state.visited_nodes, "evidence_normalizer"],
-            }
-        additions = normalize_observation(
-            state.last_observation,
-            state.planned_tool_call,
-            host_id=host.host_id,
-            host=host.host,
-        )
-        evidence, merge_unknowns = merge_evidence(state.evidence, additions)
+
+        evidence = list(state.evidence)
+        unknowns = list(state.unknowns)
+        resolved = {item.host: item for item in state.hosts}
+
+        for observation in state.last_observations:
+            planned = _plan_for(state, observation)
+            if planned is None:
+                # The executor answers only what it was asked, so this is a
+                # programming error rather than a planner mistake -- but it
+                # costs one observation, not the investigation.
+                unknowns.append(
+                    UnknownItem(
+                        code="observation_unplanned",
+                        message=(
+                            f"{observation.tool_name} returned an answer no plan"
+                            " in this turn asked for"
+                        ),
+                        tool_call_id=observation.tool_call_id,
+                    ),
+                )
+                continue
+            host = resolved.get(planned.host or "") or (
+                state.hosts[0] if len(state.hosts) == 1 else None
+            )
+            if host is None:
+                unknowns.append(
+                    UnknownItem(
+                        code="observation_unhosted",
+                        message=(
+                            f"{observation.tool_name}: no resolved host could be"
+                            " associated with the answer"
+                        ),
+                        tool_call_id=observation.tool_call_id,
+                    ),
+                )
+                continue
+            evidence, merge_unknowns = merge_evidence(
+                evidence,
+                normalize_observation(
+                    observation,
+                    planned,
+                    host_id=host.host_id,
+                    host=host.host,
+                ),
+            )
+            unknowns.extend(merge_unknowns)
+
         return {
             "evidence": evidence,
-            "unknowns": [*state.unknowns, *merge_unknowns],
+            "unknowns": unknowns,
             "visited_nodes": [*state.visited_nodes, "evidence_normalizer"],
         }
+
+
+def _plan_for(state: InvestigationState, observation: Any) -> Any:
+    """The call that produced this answer, matched on the tool and its purpose.
+
+    The executor hands back what it was given in the order it was given, so
+    position would do -- but a call that raised leaves a gap, and pairing by
+    position after a gap files an answer under the wrong question.
+    """
+    for planned in state.planned_tool_calls:
+        if (
+            planned.tool_name == observation.tool_name
+            and state.tool_call_purposes.get(observation.tool_call_id)
+            == planned.purpose
+        ):
+            return planned
+    for planned in state.planned_tool_calls:
+        if planned.tool_name == observation.tool_name:
+            return planned
+    return None
 
 
 class StopGuardNode:
@@ -492,24 +622,6 @@ class StopGuardNode:
             **hard_stop_update(state),
             "visited_nodes": [*state.visited_nodes, "stop_guard"],
         }
-
-
-def _host_for_plan(state: InvestigationState) -> ResolvedHost | None:
-    arguments = state.planned_tool_call.arguments if state.planned_tool_call else {}
-    planned_host = state.planned_tool_call.host if state.planned_tool_call else None
-    wanted_id = str(arguments.get("host_id") or "")
-    wanted_name = str(arguments.get("host") or arguments.get("agent_name") or "")
-    for host in state.hosts:
-        # The name first: it is the identity, and the id may not exist.
-        if planned_host and host.host == planned_host:
-            return host
-        if wanted_id and host.host_id == wanted_id:
-            return host
-        if wanted_id and host.host_id == wanted_id:
-            return host
-        if wanted_name and host.host.casefold() == wanted_name.casefold():
-            return host
-    return state.hosts[0] if len(state.hosts) == 1 else None
 
 
 def _response_chars(result: Any) -> int:

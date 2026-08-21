@@ -58,14 +58,14 @@ class TestAnAnswerTooLargeToReasonOver:
         node = HypothesisUpdaterNode(model=Model(), model_name="stub")
         state = make_state(
             tool_results=[observation(blob)],
-            last_observation=observation(blob),
+            last_observations=[observation(blob)],
             tool_call_count=1,
         )
         try:
             asyncio.run(node(state))
         except RuntimeError:
             pass
-        assert blob in str(captured["observation"]["response"])
+        assert blob in str(captured["observations"][0]["response"])
 
     def test_the_size_is_measured_the_way_it_will_be_sent(self):
         assert _response_chars(observation(None)) == 0
@@ -132,12 +132,12 @@ class TestSayingTheQueryWasShapedWrong:
                 return result
 
         state = make_state(
-            planned_tool_call=PlannedToolCall(
+            planned_tool_calls=[PlannedToolCall(
                 tool_name="search",
                 arguments={"index": "vm-logs-*"},
                 purpose="로그 확인",
                 target_hypothesis_ids=[],
-            ),
+            )],
         )
         update = asyncio.run(ToolExecutorNode(Executor())(state))
         return [item.code for item in update["unknowns"]]

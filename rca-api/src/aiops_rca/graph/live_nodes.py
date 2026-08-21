@@ -18,7 +18,6 @@ from aiops_rca.services.llm import StructuredModel
 from aiops_rca.services.model_contracts import (
     HypothesisPlan,
     PhenomenonDecision,
-    ToolCandidate,
     hypothesis_update_decision_for,
     observation_decision_for,
     phenomenon_scan_plan_for,
@@ -201,7 +200,7 @@ class EstablishPhenomenonNode:
             "tool_errors": errors,
             "tool_call_count": len(results),
             "tool_call_purposes": purposes,
-            "last_observation": results[-1] if results else state.last_observation,
+            "last_observations": results[len(state.tool_results) :],
             "visited_nodes": [*state.visited_nodes, "establish_phenomenon"],
         }
 
@@ -256,12 +255,12 @@ class _CandidateRejected(ValueError):
     """A planner-proposed call this graph cannot use, carrying the reason."""
 
 
-def _candidate_call(
-    candidate: ToolCandidate,
+def _observation_call(
+    observation: Any,
     state: InvestigationState,
     known_hosts: set[str],
 ) -> tuple[dict[str, Any], str | None]:
-    """The arguments and host a proposed candidate resolves to.
+    """The arguments and host a proposed observation resolves to.
 
     Every rejection here describes the planner's output, not this code.
     arguments_json is a JSON object written inside a JSON string, so it is
@@ -270,12 +269,12 @@ def _candidate_call(
 
     These used to raise. The exception left the graph, left the request with it,
     and returned a 500 -- discarding the report, the trace, the agent-run audit
-    rows, and every tool call already paid for, because one candidate out of
-    several was unreadable. The planner proposes alternatives precisely so that
-    one of them failing is survivable.
+    rows, and every tool call already paid for, because one proposal out of
+    several was unreadable. A batch is planned precisely so that one of its
+    questions failing is survivable.
     """
     try:
-        arguments = json.loads(candidate.arguments_json)
+        arguments = json.loads(observation.arguments_json)
     except ValueError as error:
         raise _CandidateRejected(
             f"arguments_json is not valid JSON ({error})"
@@ -285,7 +284,7 @@ def _candidate_call(
             "arguments_json decoded to something other than an object"
         )
 
-    associated = candidate.host
+    associated = observation.host
     if associated is None and len(state.hosts) == 1:
         associated = state.hosts[0].host
     if associated is not None and associated not in known_hosts:
@@ -354,13 +353,13 @@ class ObservationPlannerNode:
             },
             reasoning_effort="medium",
         )
-        # Same rule one stage down: a planner that names an observation and a
-        # stop_reason in the same breath has described the next step, not the
-        # end. Only the absence of a routable question ends the loop here.
-        if not decision.question or not decision.required_tool:
+        # A planner that names observations and a stop_reason in the same
+        # breath has described the next step, not the end. Only an empty batch
+        # ends the loop here.
+        if not decision.observations:
             return {
-                "next_question": None,
-                "planned_tool_call": None,
+                "next_questions": [],
+                "planned_tool_calls": [],
                 "stop_reason": decision.stop_reason
                 or "no discriminating observation remains",
                 "iteration_count": state.iteration_count + 1,
@@ -368,88 +367,112 @@ class ObservationPlannerNode:
             }
 
         known_hypotheses = {item.id for item in state.hypotheses}
-        discriminates = [
-            item
-            for item in decision.discriminates_hypothesis_ids
-            if item in known_hypotheses
-        ]
-        if not discriminates:
-            # Naming no hypothesis this graph holds is a planner mistake and not
-            # a programming error. Raising it took the request down with it.
-            return {
-                "next_question": None,
-                "planned_tool_call": None,
-                "stop_reason": (
-                    "the planned observation discriminates no hypothesis"
-                    " this investigation is holding"
-                ),
-                "unknowns": [
-                    *state.unknowns,
+        known_hosts = {host.host for host in state.hosts}
+        remaining = state.limits.max_tool_calls - state.tool_call_count
+        unknowns = list(state.unknowns)
+        questions: list[ObservationQuestion] = []
+
+        for proposal in decision.observations:
+            if len(questions) >= remaining:
+                # The batch is planned before any of it is executed, so the
+                # budget has to be checked here rather than discovered call by
+                # call at the router.
+                unknowns.append(
+                    UnknownItem(
+                        code="observation_budget_exhausted",
+                        message=(
+                            "The tool-call budget held "
+                            f"{remaining} of the {len(decision.observations)} "
+                            "observations planned for this turn."
+                        ),
+                    ),
+                )
+                break
+            discriminates = [
+                item
+                for item in proposal.discriminates_hypothesis_ids
+                if item in known_hypotheses
+            ]
+            if not discriminates:
+                # Naming no hypothesis this graph holds is a planner mistake and
+                # not a programming error. Raising it took the request down.
+                unknowns.append(
                     UnknownItem(
                         code="observation_unanchored",
                         message=(
-                            "The next observation named hypotheses that do not"
-                            " exist: "
-                            + ", ".join(decision.discriminates_hypothesis_ids)
+                            f"{proposal.required_tool}: named hypotheses that do"
+                            " not exist: "
+                            + ", ".join(proposal.discriminates_hypothesis_ids)
                         ),
                     ),
-                ],
+                )
+                continue
+            try:
+                arguments, associated = _observation_call(
+                    proposal, state, known_hosts
+                )
+            except _CandidateRejected as rejection:
+                # One bad proposal is not a bad turn. The rest of the batch is
+                # still worth asking.
+                unknowns.append(
+                    UnknownItem(
+                        code="candidate_unusable",
+                        message=f"{proposal.required_tool}: {rejection}",
+                    ),
+                )
+                continue
+            questions.append(
+                ObservationQuestion(
+                    question=proposal.question,
+                    discriminates_hypothesis_ids=discriminates,
+                    expected_if_true={
+                        item.hypothesis_id: item.prediction
+                        for item in proposal.expected_if_true
+                        if item.hypothesis_id in known_hypotheses
+                    },
+                    expected_if_false={
+                        item.hypothesis_id: item.prediction
+                        for item in proposal.expected_if_false
+                        if item.hypothesis_id in known_hypotheses
+                    },
+                    temporal_scope=proposal.temporal_scope,
+                    required_tool=proposal.required_tool,
+                    arguments=arguments,
+                    host=associated,
+                    # The gate only means anything for a tool that is an escape
+                    # hatch; granting it for a structured tool grants nothing.
+                    generic_fallback_allowed=(
+                        proposal.generic_fallback_allowed
+                        and _is_generic(self.registry, proposal.required_tool)
+                    ),
+                ),
+            )
+
+        if not questions:
+            return {
+                "next_questions": [],
+                "planned_tool_calls": [],
+                "stop_reason": "no proposed observation could be used",
+                "unknowns": unknowns,
                 "iteration_count": state.iteration_count + 1,
                 "visited_nodes": [*state.visited_nodes, "observation_planner"],
             }
 
-        unknowns = list(state.unknowns)
-        arguments_by_tool: dict[str, dict[str, Any]] = {}
-        hosts_by_tool: dict[str, str] = {}
-        known_hosts = {host.host for host in state.hosts}
-        for candidate in decision.candidates:
-            try:
-                arguments, associated = _candidate_call(candidate, state, known_hosts)
-            except _CandidateRejected as rejection:
-                # One bad candidate is not a bad turn: the planner proposes
-                # several, and the router only needs one that survives.
-                unknowns.append(
-                    UnknownItem(
-                        code="candidate_unusable",
-                        message=f"{candidate.tool_name}: {rejection}",
-                    ),
-                )
-                continue
-            arguments_by_tool[candidate.tool_name] = arguments
-            if associated is not None:
-                hosts_by_tool[candidate.tool_name] = associated
-
-        next_question = ObservationQuestion(
-            question=decision.question,
-            discriminates_hypothesis_ids=discriminates,
-            expected_if_true={
-                item.hypothesis_id: item.prediction
-                for item in decision.expected_if_true
-                if item.hypothesis_id in known_hypotheses
-            },
-            expected_if_false={
-                item.hypothesis_id: item.prediction
-                for item in decision.expected_if_false
-                if item.hypothesis_id in known_hypotheses
-            },
-            temporal_scope=decision.temporal_scope,
-            required_tool=decision.required_tool,
-        )
         return {
-            "next_question": next_question,
-            "planned_tool_call": None,
-            "candidate_tool_arguments": arguments_by_tool,
-            "candidate_tool_hosts": hosts_by_tool,
+            "next_questions": questions,
+            "planned_tool_calls": [],
             "unknowns": unknowns,
-            # The gate only means anything for a tool that is an escape
-            # hatch; granting it for a structured tool grants nothing.
-            "generic_fallback_allowed": (
-                decision.generic_fallback_allowed
-                and self.registry.get(decision.required_tool).kind == "generic"
-            ),
             "iteration_count": state.iteration_count + 1,
             "visited_nodes": [*state.visited_nodes, "observation_planner"],
         }
+
+
+def _is_generic(registry: ToolRegistry, tool_name: str) -> bool:
+    """Whether this tool is the escape hatch, as the registry sees it."""
+    try:
+        return registry.get(tool_name).kind == "generic"
+    except ToolPolicyError:
+        return False
 
 
 class HypothesisUpdaterNode:
@@ -458,13 +481,12 @@ class HypothesisUpdaterNode:
         self.model_name = model_name
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
-        observation = state.last_observation
-        if observation is None:
+        observations = list(state.last_observations)
+        if not observations:
             raise ValueError("hypothesis updater requires an observation")
+        answered = {item.tool_call_id for item in observations}
         new_evidence = [
-            item
-            for item in state.evidence
-            if item.tool_call_id == observation.tool_call_id
+            item for item in state.evidence if item.tool_call_id in answered
         ]
         decision = await self.model.complete(
             model=self.model_name,
@@ -474,16 +496,15 @@ class HypothesisUpdaterNode:
             ),
             system_prompt=_prompt("hypothesis_updater.md"),
             payload={
-                "question": (
-                    state.next_question.model_dump(mode="json")
-                    if state.next_question
-                    else None
-                ),
-                # Whole. This node decides whether the observation supports or
-                # refutes a hypothesis, so the answer is the thing it reasons
-                # about, and any cut here costs judgement rather than tokens.
+                "questions": [
+                    item.model_dump(mode="json") for item in state.next_questions
+                ],
+                # Whole, and all of them. This node decides whether the
+                # turn's answers support or refute a hypothesis, so the answers
+                # are the thing it reasons about, and any cut here costs
+                # judgement rather than tokens.
                 #
-                # It was briefly sent without its body, on the grounds that
+                # One was briefly sent without its body, on the grounds that
                 # new_evidence carries it already. That is true when a tool
                 # returns an object -- the normaliser keeps the rows and counts
                 # what it left out -- and false when it returns a string, which
@@ -493,7 +514,9 @@ class HypothesisUpdaterNode:
                 #
                 # An answer too large to reason about is a badly shaped query,
                 # not something to hide. tool_executor says so out loud.
-                "observation": observation.model_dump(mode="json"),
+                "observations": [
+                    item.model_dump(mode="json") for item in observations
+                ],
                 "new_evidence": [item.model_dump(mode="json") for item in new_evidence],
                 "hypotheses": [
                     item.model_dump(mode="json") for item in state.hypotheses
@@ -540,11 +563,16 @@ class HypothesisUpdaterNode:
             # calls that succeeded, and then report the lot as unverifiable. A
             # live run had two hypotheses stripped of an id that was sitting in
             # the package the whole time.
-            if observation.status == "error":
+            if all(item.status == "error" for item in observations):
+                failed = {
+                    item.tool_call_id
+                    for item in observations
+                    if item.status == "error"
+                }
                 from_failure = {
                     item.evidence_id
                     for item in state.evidence
-                    if item.tool_call_id == observation.tool_call_id
+                    if item.tool_call_id in failed
                 }
                 refused = (set(supporting) | set(countering)) & from_failure
                 supporting = [ref for ref in supporting if ref not in refused]

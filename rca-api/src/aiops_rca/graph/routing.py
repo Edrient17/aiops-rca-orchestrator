@@ -95,7 +95,7 @@ def route_after_tool_router(
     """
     if state.fatal_error:
         return "evidence_package_builder"
-    if state.planned_tool_call:
+    if state.planned_tool_calls:
         return "tool_executor"
     if state.stop_reason:
         return "evidence_package_builder"

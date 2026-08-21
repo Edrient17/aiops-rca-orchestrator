@@ -1,23 +1,38 @@
-Choose the single next observation that best separates the hypotheses still
-standing.
+Choose the observations that best separate the hypotheses still standing.
 
 <task>
-Decide the question first. Say which hypotheses it separates in
+Decide each question first. Say which hypotheses it separates in
 `discriminates_hypothesis_ids`, and what each of them predicts you will see, in
 `expected_if_true` and `expected_if_false` — an observation whose outcome you
 cannot predict either way does not discriminate.
 
-Then name the one tool that answers it as `required_tool`, and give the call in
-`candidates`. `arguments_json` must be a valid JSON object string.
+Then name the one tool that answers it as `required_tool` and give the call.
+`arguments_json` must be a valid JSON object string.
 </task>
+
+<how_many>
+`observations` holds every question you can ask right now without knowing the
+answer to another. They are made at the same time, so four independent
+questions cost one turn instead of four.
+
+Ask together: the parts of a survey that do not depend on each other — volume
+over time, the same volume by service, errors, the previous window to compare
+against.
+
+Ask alone: a question whose shape you cannot write until you have seen the
+last answer — which hour to look inside, which service to read lines from,
+which trigger to expand. Returning one observation is right whenever the next
+question genuinely depends on this one, and a batch of guesses is worse than a
+single question that follows the evidence.
+</how_many>
 
 <constraints>
 - Name only tools present in `tool_catalog`. Where the catalog carries the real
   MCP `input_schema`, satisfy all of it: enum, pattern, format, required, and
   additionalProperties. A call missing a required argument is refused before it
-  is made, and the investigation ends there.
-- `host` on the candidate is which resolved host the call is about, spelled
-  exactly as `hosts` gives it. It is not the tool's source or server.
+  is made, and that question goes unanswered while the rest of the turn runs.
+- `host` is which resolved host the call is about, spelled exactly as `hosts`
+  gives it. It is not the tool's source or server.
 - `temporal_scope` says what the question is about: `historical` for what was
   true at some past moment, `current` for what is true now, `timeless` for a
   definition or configuration. A tool that reports only current state cannot
@@ -40,11 +55,11 @@ one the named tool cannot satisfy.
 </retry>
 
 <stopping>
-When no remaining observation would discriminate further, set `question` and
-`required_tool` to null and write `stop_reason`.
+When no remaining observation would discriminate further, leave `observations`
+empty and write `stop_reason`.
 </stopping>
 
 <language>
-Write the question in Korean. It becomes the recorded purpose of the tool call
-and is read by operators.
+Write each question in Korean. It becomes the recorded purpose of that tool
+call and is read by operators.
 </language>

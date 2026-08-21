@@ -41,27 +41,32 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
 
     async def observation_planner(state):
         return {
-            "next_question": ObservationQuestion(
-                question="Was a stop command executed before the service stopped?",
-                discriminates_hypothesis_ids=["h1", "h2"],
-                temporal_scope="historical",
-                required_tool="get_wazuh_alert_summary",
-            ),
+            "next_questions": [
+                ObservationQuestion(
+                    question="Was a stop command executed before the service stopped?",
+                    discriminates_hypothesis_ids=["h1", "h2"],
+                    temporal_scope="historical",
+                    required_tool="get_wazuh_alert_summary",
+                )
+            ],
             "iteration_count": state.iteration_count + 1,
             "visited_nodes": [*state.visited_nodes, "observation_planner"],
         }
 
     async def tool_router(state):
         return {
-            "planned_tool_call": PlannedToolCall(
-                tool_name="get_wazuh_alert_summary",
-                arguments={
-                    "time_from": "2026-08-12T02:00:00Z",
-                    "time_to": "2026-08-12T03:00:00Z",
-                },
-                purpose=state.next_question.question,
-                target_hypothesis_ids=state.next_question.discriminates_hypothesis_ids,
-            ),
+            "planned_tool_calls": [
+                PlannedToolCall(
+                    tool_name="get_wazuh_alert_summary",
+                    arguments={
+                        "time_from": "2026-08-12T02:00:00Z",
+                        "time_to": "2026-08-12T03:00:00Z",
+                    },
+                    purpose=question.question,
+                    target_hypothesis_ids=question.discriminates_hypothesis_ids,
+                )
+                for question in state.next_questions
+            ],
             "visited_nodes": [*state.visited_nodes, "tool_router"],
         }
 
@@ -71,13 +76,13 @@ def test_collector_graph_exposes_and_checkpoints_each_reasoning_boundary():
             tool_name="get_wazuh_alert_summary",
             source="wazuh",
             status="ok",
-            request=state.planned_tool_call.arguments,
+            request=state.planned_tool_calls[0].arguments,
             response={"alerts": [{"command": "systemctl stop payment-service"}]},
             started_at=now,
             finished_at=now,
         )
         return {
-            "last_observation": result,
+            "last_observations": [result],
             "tool_results": [result],
             "tool_call_count": 1,
             "visited_nodes": [*state.visited_nodes, "tool_executor"],

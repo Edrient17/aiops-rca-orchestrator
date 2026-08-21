@@ -58,6 +58,14 @@ class Hypothesis(StrictModel):
 
 
 class ObservationQuestion(StrictModel):
+    """One question and the call the planner proposes to answer it.
+
+    The arguments live here rather than in a dict keyed by tool name. Keying by
+    tool made two questions of the same tool -- volume by hour and volume by
+    service, both `esql` -- impossible to tell apart, which is exactly what a
+    batch of independent questions asks for.
+    """
+
     question: Annotated[str, Field(min_length=1, max_length=2000)]
     discriminates_hypothesis_ids: Annotated[
         list[str], Field(min_length=1, max_length=20)
@@ -66,6 +74,13 @@ class ObservationQuestion(StrictModel):
     expected_if_false: dict[str, str] = Field(default_factory=dict)
     temporal_scope: Literal["historical", "current", "timeless"] = "timeless"
     required_tool: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    #: Which resolved host the call is about. The id it may not have is looked
+    #: up from `hosts` by whoever needs one.
+    host: Annotated[str, Field(min_length=1, max_length=255)] | None = None
+    #: Per question: a batch may hold one that needs the escape hatch and one
+    #: that does not, and granting it to the batch would grant it to both.
+    generic_fallback_allowed: bool = False
 
 
 class PlannedToolCall(StrictModel):

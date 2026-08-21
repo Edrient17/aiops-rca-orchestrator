@@ -21,7 +21,7 @@ from aiops_rca.services.model_contracts import (
     PhenomenonDecision,
     PhenomenonScan,
     PhenomenonScanPlan,
-    ToolCandidate,
+    PlannedObservation,
 )
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
 from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
@@ -233,15 +233,14 @@ class FixtureModel:
             )
         if issubclass(output_type, ObservationDecision):
             return ObservationDecision(
-                question="Do logs show a downstream connection failure?",
-                discriminates_hypothesis_ids=["h1"],
-                expected_if_true=[],
-                expected_if_false=[],
-                temporal_scope="historical",
-                required_tool="search",
-                candidates=[
-                    ToolCandidate(
-                        tool_name="search",
+                observations=[
+                    PlannedObservation(
+                        question="Do logs show a downstream connection failure?",
+                        discriminates_hypothesis_ids=["h1"],
+                        expected_if_true=[],
+                        expected_if_false=[],
+                        temporal_scope="historical",
+                        required_tool="search",
                         host="node-alpha",
                         arguments_json=json.dumps(
                             {
@@ -249,9 +248,9 @@ class FixtureModel:
                                 "query_body": {"query": {"match_all": {}}},
                             }
                         ),
+                        generic_fallback_allowed=True,
                     )
                 ],
-                generic_fallback_allowed=True,
                 stop_reason=None,
             )
         if issubclass(output_type, HypothesisUpdateDecision):

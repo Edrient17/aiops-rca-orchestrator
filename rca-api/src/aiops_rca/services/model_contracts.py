@@ -23,23 +23,38 @@ class HypothesisExpectation(StrictModel):
     prediction: Annotated[str, Field(min_length=1, max_length=1000)]
 
 
-class ToolCandidate(StrictModel):
-    tool_name: Annotated[str, Field(min_length=1, max_length=100)]
+class PlannedObservation(StrictModel):
+    """One question and the single call that answers it.
+
+    This used to be a question plus a list of `candidates` for it -- alternative
+    calls of which the router took whichever matched `required_tool`. The
+    alternatives were never the useful axis: what an investigation wants is
+    several *different* questions, and it was asking them one per cycle, each
+    waiting on the previous answer it did not depend on.
+    """
+
+    question: Annotated[str, Field(min_length=1, max_length=2000)]
+    discriminates_hypothesis_ids: Annotated[list[str], Field(max_length=20)]
+    expected_if_true: Annotated[list[HypothesisExpectation], Field(max_length=20)]
+    expected_if_false: Annotated[list[HypothesisExpectation], Field(max_length=20)]
+    #: Per observation, not per turn: a batch may hold one question about now
+    #: and one about last night, and the guard that stops a current-state tool
+    #: proving history has to judge them apart.
+    temporal_scope: Literal["historical", "current", "timeless"]
+    required_tool: Annotated[str, Field(min_length=1, max_length=100)]
     #: Which resolved host this call is about, by name. The name is what the
     #: sources share; a host found in a log search has no Zabbix id to give.
     host: Annotated[str, Field(min_length=1, max_length=255)] | None
     arguments_json: Annotated[str, Field(min_length=2, max_length=12_000)]
+    generic_fallback_allowed: bool
 
 
 class ObservationDecision(StrictModel):
-    question: Annotated[str, Field(min_length=1, max_length=2000)] | None
-    discriminates_hypothesis_ids: Annotated[list[str], Field(max_length=20)]
-    expected_if_true: Annotated[list[HypothesisExpectation], Field(max_length=20)]
-    expected_if_false: Annotated[list[HypothesisExpectation], Field(max_length=20)]
-    temporal_scope: Literal["historical", "current", "timeless"]
-    required_tool: Annotated[str, Field(min_length=1, max_length=100)] | None
-    candidates: Annotated[list[ToolCandidate], Field(max_length=20)]
-    generic_fallback_allowed: bool
+    #: Independent questions, asked together. Tool calls cost tenths of a second
+    #: and the model turns around them cost twenty-six, so a sweep that asks
+    #: four independent things one per cycle spends its whole latency waiting to
+    #: be allowed to ask the next one.
+    observations: Annotated[list[PlannedObservation], Field(max_length=8)]
     stop_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None
 
 
@@ -60,10 +75,15 @@ def observation_decision_for(tools: tuple[str, ...]) -> type[ObservationDecision
     """
     if not tools:
         return ObservationDecision
+    bound = create_model(
+        "RoutableObservation",
+        __base__=PlannedObservation,
+        required_tool=(Literal[tools], ...),  # type: ignore[valid-type]
+    )
     return create_model(
         "RoutableObservationDecision",
         __base__=ObservationDecision,
-        required_tool=(Literal[tools] | None, ...),  # type: ignore[valid-type]
+        observations=(Annotated[list[bound], Field(max_length=8)], ...),
     )
 
 

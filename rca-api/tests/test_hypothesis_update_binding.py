@@ -131,7 +131,7 @@ async def test_an_unresolvable_citation_is_dropped_rather_than_fatal():
         ],
         tool_results=[observation],
         tool_call_count=1,
-        last_observation=observation,
+        last_observations=[observation],
     )
 
     node = HypothesisUpdaterNode(
@@ -209,7 +209,7 @@ async def test_a_failed_call_costs_only_its_own_evidence():
         evidence=[earlier],
         tool_results=[failed],
         tool_call_count=1,
-        last_observation=failed,
+        last_observations=[failed],
     )
 
     node = HypothesisUpdaterNode(
