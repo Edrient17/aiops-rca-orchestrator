@@ -23,14 +23,14 @@ class Settings(BaseSettings):
     # deployment with no opinion sets one variable and a deployment that wants
     # to move a single node can do that without touching any other.
     #
-    # Only the writer ships above the default, because it produces the thing an
-    # operator actually reads and there is no later step to catch a bad one.
+    # Every stage on one model. The writer ran a tier above for a while, on the
+    # reasoning that it produces what an operator reads and nothing downstream
+    # catches a bad one. What that cost was not obvious until it was measured:
+    # in one investigation the writer was 7% of the tokens and 59% of the bill,
+    # $0.070 of $0.118, because price per token dwarfs any of these payloads.
     #
-    # The stages worth raising next are the ones that judge: what was observed,
-    # what could explain it, what the evidence does to those explanations, and
-    # what to look at next. A wrong judgement there aims the whole
-    # investigation and comes back as a confident report about the wrong thing.
-    # They are on the default until that is measured rather than assumed.
+    # Raising a stage is a per-stage knob, so it stays cheap to try again --
+    # but on a measurement, not on the argument that a stage sounds important.
     rca_model: str = "gpt-5.6-luna"
     rca_model_question_analyzer: str | None = None
     rca_model_resolve_hosts: str | None = None
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     rca_model_hypothesis_planner: str | None = None
     rca_model_observation_planner: str | None = None
     rca_model_hypothesis_updater: str | None = None
-    rca_model_report_writer: str | None = "gpt-5.6-terra"
+    rca_model_report_writer: str | None = None
 
     def model_for(self, stage: str) -> str:
         """The model this stage runs on, or the default it falls back to.

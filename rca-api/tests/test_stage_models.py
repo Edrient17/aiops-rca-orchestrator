@@ -74,17 +74,12 @@ class TestChoosingPerStage:
 
 
 class TestWhatShipsByDefault:
-    def test_the_writer_ships_above_the_default(self):
-        # It produces what an operator reads, and nothing downstream catches a
-        # bad one -- the report checks can send a draft back, but not to a
-        # better model.
-        settings = make_settings()
-        assert settings.model_for("report_writer") != settings.rca_model
-
-    @pytest.mark.parametrize(
-        "stage", [stage for stage in ALL_STAGES if stage != "report_writer"]
-    )
-    def test_every_other_stage_ships_on_the_default(self, stage):
+    @pytest.mark.parametrize("stage", ALL_STAGES)
+    def test_every_stage_ships_on_the_default(self, stage):
+        # The writer ran a tier above for a while, on the argument that it
+        # produces what an operator reads. Measured, it was 7% of one
+        # investigation's tokens and 59% of its bill. Raising a stage stays a
+        # one-line change, so it can be tried again against a number.
         settings = make_settings()
         assert settings.model_for(stage) == settings.rca_model
 
