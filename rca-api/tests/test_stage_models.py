@@ -74,22 +74,17 @@ class TestChoosingPerStage:
 
 
 class TestWhatShipsByDefault:
-    @pytest.mark.parametrize(
-        "stage",
-        [
-            "establish_phenomenon",
-            "hypothesis_planner",
-            "observation_planner",
-            "hypothesis_updater",
-            "report_writer",
-        ],
-    )
-    def test_the_stages_that_judge_ship_above_the_default(self, stage):
+    def test_the_writer_ships_above_the_default(self):
+        # It produces what an operator reads, and nothing downstream catches a
+        # bad one -- the report checks can send a draft back, but not to a
+        # better model.
         settings = make_settings()
-        assert settings.model_for(stage) != settings.rca_model
+        assert settings.model_for("report_writer") != settings.rca_model
 
-    @pytest.mark.parametrize("stage", ["resolve_hosts", "question_analyzer"])
-    def test_the_stages_that_fetch_ship_on_the_default(self, stage):
+    @pytest.mark.parametrize(
+        "stage", [stage for stage in ALL_STAGES if stage != "report_writer"]
+    )
+    def test_every_other_stage_ships_on_the_default(self, stage):
         settings = make_settings()
         assert settings.model_for(stage) == settings.rca_model
 
@@ -101,11 +96,7 @@ class TestTheAuditRow:
         row = _collector_models(
             make_settings(
                 rca_model="cheap",
-                rca_model_resolve_hosts=None,
-                rca_model_establish_phenomenon="strong",
-                rca_model_hypothesis_planner="strong",
                 rca_model_observation_planner="strong",
-                rca_model_hypothesis_updater="strong",
             ),
         )
         assert row == "cheap+strong"

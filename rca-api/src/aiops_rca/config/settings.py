@@ -23,19 +23,21 @@ class Settings(BaseSettings):
     # deployment with no opinion sets one variable and a deployment that wants
     # to move a single node can do that without touching any other.
     #
-    # The stages that ship higher are the ones that judge: what was observed,
+    # Only the writer ships above the default, because it produces the thing an
+    # operator actually reads and there is no later step to catch a bad one.
+    #
+    # The stages worth raising next are the ones that judge: what was observed,
     # what could explain it, what the evidence does to those explanations, and
     # what to look at next. A wrong judgement there aims the whole
     # investigation and comes back as a confident report about the wrong thing.
-    # Fetching a host name or filling in a schema fails loudly and gets another
-    # turn, so it stays on the cheaper default.
+    # They are on the default until that is measured rather than assumed.
     rca_model: str = "gpt-5.6-luna"
     rca_model_question_analyzer: str | None = None
     rca_model_resolve_hosts: str | None = None
-    rca_model_establish_phenomenon: str | None = "gpt-5.6-terra"
-    rca_model_hypothesis_planner: str | None = "gpt-5.6-terra"
-    rca_model_observation_planner: str | None = "gpt-5.6-terra"
-    rca_model_hypothesis_updater: str | None = "gpt-5.6-terra"
+    rca_model_establish_phenomenon: str | None = None
+    rca_model_hypothesis_planner: str | None = None
+    rca_model_observation_planner: str | None = None
+    rca_model_hypothesis_updater: str | None = None
     rca_model_report_writer: str | None = "gpt-5.6-terra"
 
     def model_for(self, stage: str) -> str:
