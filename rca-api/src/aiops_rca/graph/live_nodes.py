@@ -513,10 +513,31 @@ class HypothesisUpdaterNode:
                 set(update.supporting_evidence_ids) | set(update.counter_evidence_ids)
             ) - known_evidence
             # A tool error is not an observation about the world, so nothing it
-            # produced may stand as support or contradiction.
+            # produced may stand as support or contradiction. Only what it
+            # produced: this used to discard every citation in an update whose
+            # observation had failed, including evidence collected earlier by
+            # calls that succeeded, and then report the lot as unverifiable. A
+            # live run had two hypotheses stripped of an id that was sitting in
+            # the package the whole time.
             if observation.status == "error":
-                dropped |= set(supporting) | set(countering)
-                supporting, countering = [], []
+                from_failure = {
+                    item.evidence_id
+                    for item in state.evidence
+                    if item.tool_call_id == observation.tool_call_id
+                }
+                refused = (set(supporting) | set(countering)) & from_failure
+                supporting = [ref for ref in supporting if ref not in refused]
+                countering = [ref for ref in countering if ref not in refused]
+                if refused:
+                    unknowns.append(
+                        UnknownItem(
+                            code="hypothesis_update_evidence_from_failed_call",
+                            message=(
+                                f"가설 {current.id}의 근거 중 {sorted(refused)}는 "
+                                f"실패한 도구 호출에서 나온 것이라 연결하지 않았다."
+                            ),
+                        )
+                    )
             if dropped:
                 unknowns.append(
                     UnknownItem(

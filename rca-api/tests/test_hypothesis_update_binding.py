@@ -155,3 +155,81 @@ async def test_an_unresolvable_citation_is_dropped_rather_than_fatal():
         item.code == "hypothesis_update_evidence_dropped"
         for item in result["unknowns"]
     )
+
+
+@pytest.mark.anyio
+async def test_a_failed_call_costs_only_its_own_evidence():
+    """An error discards what it produced, not what earlier calls proved.
+
+    "A tool error is not an observation about the world" was right, and the
+    code went further than it said: every citation in an update whose
+    observation had failed was discarded, including ids collected earlier by
+    calls that succeeded -- and the whole lot was then reported as
+    unverifiable. A live run had two hypotheses stripped of an id that was
+    sitting in the evidence package the entire time.
+    """
+    from datetime import UTC, datetime
+
+    from conftest import make_state
+
+    from aiops_rca.graph.live_nodes import HypothesisUpdaterNode
+    from aiops_rca.schemas.evidence_package import Evidence, ResourceIds
+    from aiops_rca.schemas.investigation import Hypothesis, ResolvedHost
+    from aiops_rca.tools.result import ToolExecutionResult
+
+    now = datetime(2026, 8, 13, 7, tzinfo=UTC)
+    earlier = Evidence(
+        evidence_id="zbx:event:11094:down",
+        evidence_type="event",
+        source="zabbix",
+        summary="이벤트 없음",
+        observed_at=None,
+        window=None,
+        resource_ids=ResourceIds(
+            host_id="11094", event_id=None, trigger_id=None, item_id=None
+        ),
+        metric=None,
+        data_quality=None,
+        tool_call_id="call-earlier",
+    )
+    failed = ToolExecutionResult(
+        tool_call_id="call-failed",
+        tool_name="query_zabbix",
+        source="zabbix",
+        status="error",
+        request={},
+        response=None,
+        error="countOutput is not supported here",
+        started_at=now,
+        finished_at=now,
+    )
+    state = make_state(
+        hosts=[ResolvedHost(host="vm-1", host_id="11094")],
+        hypotheses=[Hypothesis(id="H1", statement="운영자가 중지함")],
+        evidence=[earlier],
+        tool_results=[failed],
+        tool_call_count=1,
+        last_observation=failed,
+    )
+
+    node = HypothesisUpdaterNode(
+        model=_Model(
+            {
+                "updates": [
+                    update(supporting_evidence_ids=["zbx:event:11094:down"])
+                ],
+                "new_hypotheses": [],
+                "new_facts": [],
+                "stop_reason": None,
+            }
+        ),
+        model_name="test",
+    )
+
+    result = await node(state)
+    updated = {item.id: item for item in result["hypotheses"]}
+    assert updated["H1"].supporting_evidence_ids == ["zbx:event:11094:down"]
+    assert not any(
+        item.code == "hypothesis_update_evidence_dropped"
+        for item in result["unknowns"]
+    )

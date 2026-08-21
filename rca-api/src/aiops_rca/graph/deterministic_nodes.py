@@ -298,7 +298,7 @@ class ToolRouterNode:
                 UnknownItem(code="tool_routing_blocked", message=str(error)),
             ]
             attempts = state.routing_attempts + 1
-            if attempts <= MAX_ROUTING_ATTEMPTS:
+            if error.retryable and attempts <= MAX_ROUTING_ATTEMPTS:
                 # A refused plan is a plan to redo, not the end of the
                 # investigation. The report writer has always been allowed a
                 # second draft against the reason its first was sent back; a

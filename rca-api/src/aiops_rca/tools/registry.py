@@ -14,7 +14,23 @@ TemporalScope = Literal["historical", "current_only", "any"]
 
 
 class ToolPolicyError(ValueError):
-    """A planned call violates a deterministic investigation policy."""
+    """A planned call violates a deterministic investigation policy.
+
+    `retryable` says whether handing this back to the planner could produce a
+    better call. A malformed one could: it named a host nobody resolved or left
+    out an argument the server requires, and the message says which.
+
+    A policy refusal could not, and handing one back is worse than useless. The
+    refusal names the condition it wants, so the planner reads it as
+    instructions -- a live run was told `query_zabbix` needs evidence that the
+    structured tools are insufficient, replanned with the permission flag set,
+    and spent six of ten calls in the escape hatch. A guard the planner can
+    open by being told it is closed is not a guard.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class RoutingContext(StrictModel):
@@ -79,9 +95,11 @@ class ToolRegistry:
         """
         policy = self.get(name)
         if policy.blocked_reason:
-            raise ToolPolicyError(f"{name} is blocked: {policy.blocked_reason}")
+            raise ToolPolicyError(
+                f"{name} is blocked: {policy.blocked_reason}", retryable=False
+            )
         if context.tool_call_count >= context.max_tool_calls:
-            raise ToolPolicyError("tool call budget is exhausted")
+            raise ToolPolicyError("tool call budget is exhausted", retryable=False)
         if declared_scope == "current_only" and context.temporal_scope == "historical":
             # The one rule the loop cannot recover from. A list of what is
             # running now is a well-formed answer to "what was running
@@ -89,11 +107,15 @@ class ToolRegistry:
             # one, so it has to be refused before the call rather than judged
             # after it.
             raise ToolPolicyError(
-                f"{name} reports current state and cannot prove historical state"
+                f"{name} reports current state and cannot prove historical state",
+                retryable=False,
             )
         if policy.kind == "generic" and not context.generic_fallback_allowed:
             raise ToolPolicyError(
                 f"{name} is generic and requires evidence that structured tools are insufficient",
+                # Not retryable: the planner would satisfy it by asserting the
+                # permission rather than by finding a structured tool.
+                retryable=False,
             )
 
         missing = [key for key in policy.requires if not _present(arguments.get(key))]

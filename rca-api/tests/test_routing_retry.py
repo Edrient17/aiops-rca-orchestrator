@@ -24,7 +24,7 @@ from aiops_rca.schemas.investigation import (
     PlannedToolCall,
     ResolvedHost,
 )
-from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY
+from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY, ToolPolicyError
 
 HOST = ResolvedHost(host="vm-known", host_id="11094")
 H1 = Hypothesis(id="h1", statement="운영자가 서비스를 재시작했다")
@@ -46,9 +46,12 @@ def question(tool: str = "get_wazuh_alert_summary") -> ObservationQuestion:
     )
 
 
-def route(**updates):
+def route(next_question_tool="get_wazuh_alert_summary", **updates):
     state = make_state(
-        hosts=[HOST], hypotheses=[H1], next_question=question(), **updates
+        hosts=[HOST],
+        hypotheses=[H1],
+        next_question=question(next_question_tool),
+        **updates,
     )
     update = dict(asyncio.run(ToolRouterNode(DEFAULT_TOOL_REGISTRY)(state)))
     return update, state
@@ -130,3 +133,36 @@ class TestWhereARefusedPlanGoes:
             fatal_error="tool_executor entered without planned_tool_call",
         )
         assert route_after_tool_router(state) == "evidence_package_builder"
+
+
+class TestWhatIsNotWorthRetrying:
+    """A refusal the planner can answer by asserting permission.
+
+    The live run that motivated the retry also showed its cost: told that
+    `query_zabbix` needs evidence the structured tools are insufficient, the
+    planner replanned with `generic_fallback_allowed` set and spent six of ten
+    calls in the escape hatch. The refusal named the condition, so it read as
+    instructions. A guard the planner can open by being told it is closed is
+    not a guard.
+    """
+
+    def test_the_generic_gate_is_not_reopened_by_replanning(self):
+        update, _ = route(
+            next_question_tool="query_zabbix",
+            candidate_tool_arguments={"query_zabbix": {"method": "host.get"}},
+        )
+        assert update["stop_reason"].startswith(
+            "the next observation could not be routed"
+        )
+        assert update["routing_attempts"] == 1
+
+    def test_a_current_only_tool_cannot_replan_into_proving_history(self):
+        # Same shape: the objection names temporal_scope, and a retry would
+        # answer it by relabelling the question rather than by finding a tool
+        # that can actually prove the claim.
+        error = ToolPolicyError("x reports current state", retryable=False)
+        assert error.retryable is False
+
+    def test_a_malformed_call_is_still_worth_another_turn(self):
+        update, _ = route(candidate_tool_arguments={})
+        assert update.get("stop_reason") is None
