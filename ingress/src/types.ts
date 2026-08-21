@@ -86,6 +86,8 @@ export interface DispatchJob {
      * continuation posts into this thread instead of starting a new one.
      */
     parent_ack_ts: string | null;
+    /** Set once acknowledged, so a retry rejoins that thread. */
+    slack_ack_ts: string | null;
   };
 }
 

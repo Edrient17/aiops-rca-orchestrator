@@ -58,6 +58,7 @@ const job: DispatchJob = {
     parent_request_id: null,
     prior_question: null,
     parent_ack_ts: null,
+    slack_ack_ts: null,
   },
 };
 

@@ -25,8 +25,11 @@ from aiops_rca.tools.registry import (
     ToolRegistry,
 )
 
-#: Turns the search gets before it gives up. Each is a model call and a tool
-#: call, spent only on names the fast path could not resolve.
+#: Lookups the search gets before it gives up, spent only on names the fast
+#: path could not resolve. Each is a model call and a tool call, and one more
+#: model call follows the last of them: a tool whose answer nobody reads is a
+#: call paid for and thrown away, which is what happened when the host was in
+#: Wazuh and the first lookup had gone to the log index.
 MAX_HOST_SEARCH_TURNS = 2
 
 
@@ -209,8 +212,14 @@ class ResolveHostsNode:
         output_type = host_search_decision_for(self.registry.names())
         seen: list[dict[str, Any]] = []
 
-        for _turn in range(MAX_HOST_SEARCH_TURNS):
-            if len(results) + len(produced) >= state.limits.max_tool_calls:
+        for turn in range(MAX_HOST_SEARCH_TURNS + 1):
+            # The extra turn reads the last lookup rather than making another.
+            reading_only = turn == MAX_HOST_SEARCH_TURNS
+            if reading_only and not seen:
+                break
+            if not reading_only and (
+                len(results) + len(produced) >= state.limits.max_tool_calls
+            ):
                 unknowns.append(
                     UnknownItem(
                         code="host_search_budget_exhausted",
@@ -236,6 +245,8 @@ class ResolveHostsNode:
                 reasoning_effort="low",
             )
             for item in decision.hosts:
+                if any(item.host == existing.host for existing in found):
+                    continue
                 found.append(
                     ResolvedHost(
                         host=item.host,
@@ -244,7 +255,7 @@ class ResolveHostsNode:
                         found_by=item.found_by,
                     ),
                 )
-            if not decision.tool_name:
+            if reading_only or not decision.tool_name:
                 break
 
             try:

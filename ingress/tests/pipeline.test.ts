@@ -30,6 +30,7 @@ const PAYLOAD: DispatchPayload = {
   parent_request_id: null,
   prior_question: null,
   parent_ack_ts: null,
+  slack_ack_ts: null,
 };
 
 const CONFIG: PipelineConfig = {
@@ -241,7 +242,24 @@ describe("a completed investigation", () => {
     expect(String(input.slackMarkdown)).toContain("확인 결과");
   });
 
-  it("anchors a continuation to the parent rather than to its own ack", async () => {
+  it("does not acknowledge a second time when a retry runs it again", async () => {
+      // Delivery is retried: a failing investigation goes back to the queue and
+      // runs again. Posting unconditionally put three identical
+      // acknowledgements in the channel for one question.
+      const { repository } = fakeRepository();
+      const { impl, slackPosts } = fakeFetch(COMPLETED);
+      await runInvestigation(
+        { ...PAYLOAD, slack_ack_ts: "1700.1" },
+        { repository, fetchImpl: impl },
+        CONFIG,
+      );
+      expect(slackPosts).toHaveLength(1);
+      expect(slackPosts[0]!.text).not.toContain("조사 접수");
+      // And the report still lands in the thread the first attempt opened.
+      expect(slackPosts[0]!.thread_ts).toBe("1700.1");
+    });
+
+    it("anchors a continuation to the parent rather than to its own ack", async () => {
     const { slackPosts } = await run({
       ...PAYLOAD,
       parent_request_id: "REQ-0",

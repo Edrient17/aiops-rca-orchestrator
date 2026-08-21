@@ -29,6 +29,8 @@ export interface DispatchPayload {
   parent_request_id?: string | null;
   prior_question?: string | null;
   parent_ack_ts?: string | null;
+  /** Set once this request has been acknowledged, by whichever attempt did it. */
+  slack_ack_ts?: string | null;
 }
 
 export interface PipelineConfig {
@@ -159,15 +161,24 @@ export async function runInvestigation(
   // 1. Acknowledge, and find the thread everything else hangs from. A
   //    continuation replies under the parent's acknowledgement so one
   //    investigation stays one thread.
-  const posted = await postMessage({
-    botToken: config.botToken,
-    channel: config.answerChannelId,
-    text: ackText(payload),
-    threadTs: payload.parent_ack_ts ?? undefined,
-    timeoutMs: config.slackTimeoutMs,
-    fetchImpl: send,
-  });
-  const anchor = payload.parent_ack_ts || posted.ts;
+  //
+  //    Only once. Delivery is retried -- a failing investigation is handed back
+  //    to the queue and run again -- and posting here unconditionally put three
+  //    identical acknowledgements in the channel for one question. The
+  //    timestamp of the first one is on the request, so a retry rejoins that
+  //    thread instead of starting another.
+  let anchor = payload.slack_ack_ts ?? null;
+  if (!anchor) {
+    const posted = await postMessage({
+      botToken: config.botToken,
+      channel: config.answerChannelId,
+      text: ackText(payload),
+      threadTs: payload.parent_ack_ts ?? undefined,
+      timeoutMs: config.slackTimeoutMs,
+      fetchImpl: send,
+    });
+    anchor = payload.parent_ack_ts || posted.ts;
+  }
   if (!anchor) {
     throw new Error("Slack acknowledgement returned no ts to anchor this investigation to");
   }

@@ -289,6 +289,7 @@ export class PostgresRequestRepository implements RequestRepository {
       parent_request_id: string | null;
       prior_question: string | null;
       parent_ack_ts: string | null;
+      slack_ack_ts: string | null;
     }>(
       `
         WITH candidate AS (
@@ -321,6 +322,9 @@ export class PostgresRequestRepository implements RequestRepository {
           request.question,
           request.received_at,
           request.parent_request_id,
+          -- Set by the first attempt. A retry reuses it rather than
+          -- posting a second acknowledgement for the same question.
+          request.slack_ack_ts,
           (
             SELECT parent.question
             FROM aiops_requests AS parent
@@ -357,6 +361,7 @@ export class PostgresRequestRepository implements RequestRepository {
         parent_request_id: row.parent_request_id,
         prior_question: row.prior_question,
         parent_ack_ts: row.parent_ack_ts,
+        slack_ack_ts: row.slack_ack_ts,
       },
     };
   }

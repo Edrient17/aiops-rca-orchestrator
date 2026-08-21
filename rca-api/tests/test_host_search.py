@@ -155,6 +155,33 @@ class TestSearchingElsewhere:
         update, _ = _run(model=model, executor=executor)
         assert update["tool_call_count"] == 2
 
+    def test_the_last_lookup_is_read_before_giving_up(self):
+        # Live, the host was in Wazuh and the first lookup went to the log
+        # index. The model named Wazuh on its second turn, the call was made,
+        # and the loop ended before anyone read the answer -- so a host that was
+        # there was reported as not found, and the call was paid for and thrown
+        # away.
+        model = ScriptedModel(LOOK_IN_LOGS, LOOK_IN_LOGS, FOUND)
+        executor = RecordingExecutor({"agents": [{"name": "ghost-host"}]})
+        update, _ = _run(model=model, executor=executor)
+        assert len(executor.calls) == MAX_HOST_SEARCH_TURNS
+        # One more model call than lookups: the last one only reads.
+        assert len(model.payloads) == MAX_HOST_SEARCH_TURNS + 1
+        assert [host.host for host in update["hosts"]] == ["ghost-host"]
+
+    def test_the_reading_turn_is_skipped_when_nothing_was_looked_up(self):
+        # Nothing to read means nothing to pay a model call for.
+        model = ScriptedModel(FOUND)
+        _run(model=model, executor=RecordingExecutor())
+        assert len(model.payloads) == 1
+
+    def test_a_host_named_twice_is_kept_once(self):
+        # The reading turn sees the same lookups as the turn before it, so it
+        # can name a host that has already been recorded.
+        model = ScriptedModel(LOOK_IN_LOGS, FOUND, FOUND)
+        update, _ = _run(model=model, executor=RecordingExecutor())
+        assert [host.host for host in update["hosts"]] == ["ghost-host"]
+
     def test_it_gives_up_rather_than_looping(self):
         model = ScriptedModel(LOOK_IN_LOGS)
         executor = RecordingExecutor()

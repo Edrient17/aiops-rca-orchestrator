@@ -27,6 +27,7 @@ from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
 from aiops_rca.tools.registry import (
     DEFAULT_TOOL_REGISTRY,
     RoutingContext,
+    ToolPolicyError,
     ToolRegistry,
 )
 
@@ -55,6 +56,22 @@ class EstablishPhenomenonNode:
 
         observations: list[dict[str, Any]] = []
         for host in state.hosts:
+            if host.host_id is None:
+                # Zabbix cannot be asked about a host it has no id for. The
+                # name came from somewhere else -- a log index, an agent list --
+                # and asking without an id would return the whole allowed group,
+                # which is a well-formed answer about the wrong machines.
+                unknowns.append(
+                    UnknownItem(
+                        code="phenomenon_scan_skipped",
+                        message=(
+                            f"{host.host} is not a Zabbix host"
+                            + (f" (found by {host.found_by})" if host.found_by else "")
+                            + ", so no Zabbix event scan was made for it."
+                        ),
+                    ),
+                )
+                continue
             if len(results) >= state.limits.max_tool_calls:
                 unknowns.append(
                     UnknownItem(
@@ -68,14 +85,27 @@ class EstablishPhenomenonNode:
                 "time_from": window["from"],
                 "time_to": window["to"],
             }
-            result = await self.zabbix.execute(
-                "get_incident_events",
-                arguments,
-                RoutingContext(
-                    tool_call_count=len(results),
-                    max_tool_calls=state.limits.max_tool_calls,
-                ),
-            )
+            try:
+                result = await self.zabbix.execute(
+                    "get_incident_events",
+                    arguments,
+                    RoutingContext(
+                        tool_call_count=len(results),
+                        max_tool_calls=state.limits.max_tool_calls,
+                    ),
+                )
+            except ToolPolicyError as error:
+                # A refusal is a fact about this call, not a programming error.
+                # Raising left the graph and the request with it -- a 500 that
+                # discarded an investigation over one host the scan could not
+                # address.
+                unknowns.append(
+                    UnknownItem(
+                        code="phenomenon_scan_blocked",
+                        message=f"{host.host}: {error}",
+                    ),
+                )
+                continue
             results.append(result)
             purposes[result.tool_call_id] = (
                 f"Establish the observed phenomenon on host {host.host}"
