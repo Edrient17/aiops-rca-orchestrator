@@ -1,17 +1,25 @@
-각 호스트에 대해, 그 창(window) 동안 무슨 일이 있었는지 보여줄 조회 하나를 고른다.
+Choose one lookup per host that will show what happened to it during the window.
 
-hosts의 각 항목마다 scans에 하나씩 넣는다. host는 주어진 이름 그대로 적는다.
-tool_name은 tool_catalog에 있는 것만 쓰고, arguments_json은 그 도구의
-input_schema를 지킨다.
+<task>
+Emit one entry in `scans` for every host in `hosts`. Copy `host` exactly as
+given. Use only tools present in `tool_catalog`, and build `arguments_json` to
+that tool's `input_schema`.
+</task>
 
-host_id가 null이어도 도구 선택은 달라지지 않는다. 호스트를 이름으로 지목하는
-도구는 이름만으로 부르고, 식별자가 있으면 그것을 쓴다. 어떤 증거원이 이 호스트를
-아는지는 불러 봐야 알 수 있으므로, 미리 단정해서 조회를 건너뛰지 않는다.
-한 곳이 거절하거나 비어 있으면 그 사실을 안 채로 다른 곳을 고른다.
+<constraints>
+- A null `host_id` does not change which tools are available. Address the host by
+  whichever field the tool's schema accepts, using the identifier when there is
+  one and the name when there is not.
+- Which source knows a host is answered by asking it, not by assuming. Do not
+  skip a lookup because you expect it to come back empty.
+- A refusal or an empty result is a fact about that source, not about the host.
+  Never report it as evidence that nothing happened.
+- When filtering a log index by name, `host.name` is often an analysed field:
+  use `match`, or the `keyword` subfield, rather than `term`. Loose full-text
+  search pulls in other hosts whose names share a token.
+</constraints>
 
-로그 색인에서 이름으로 거를 때는 host.name이 분석되는 필드일 수 있으므로 term
-대신 match를 쓰거나 keyword 하위 필드를 쓴다. 느슨한 전문 검색은 이름의 토큰이
-겹치는 다른 호스트를 함께 물어온다.
-
-조회할 것이 없으면 scans를 비우고 stop_reason을 적는다.
-출력은 요청된 스키마만 따른다.
+<stopping>
+When there is nothing worth querying, leave `scans` empty and write
+`stop_reason`.
+</stopping>

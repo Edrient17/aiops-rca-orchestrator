@@ -1,16 +1,30 @@
-조사 대상 호스트를 찾는다. 어느 증거원이 그 이름을 아는지는 미리 정해져 있지 않다.
+Find the hosts this investigation is about. Which source knows a given name is
+not fixed in advance: a machine may be named in a monitoring inventory, a log
+index, an agent list, or in none of them.
 
-unresolved의 각 이름에 대해, tool_catalog에서 그 이름이 등장할 만한 도구를 하나
-골라 tool_name과 arguments_json으로 조회한다. 로그 색인은 host.name 같은 필드에,
-에이전트 목록은 name 필드에 호스트 이름을 담는다.
+<task>
+For each name in `unresolved`, choose one tool from `tool_catalog` that could
+list or match host names, and issue it as `tool_name` with `arguments_json`. Log
+indices carry the name in a field such as `host.name`; agent lists carry it in
+`name`.
 
-attempts에 이전 조회와 그 응답이 들어 있다. 거기서 호스트 이름을 읽어낼 수 있으면
-hosts에 담는다. host는 응답에 나온 그대로 적는다. found_by는 그 이름을 준 도구
-이름이다. 빈 응답은 그 도구가 모른다는 뜻이지 호스트가 없다는 뜻이 아니다.
+`attempts` holds your earlier lookups and their responses. Read host names out
+of those responses into `hosts`.
+</task>
 
-식별자가 응답에 함께 있으면 host_id에 적고, 없으면 null로 둔다 — 이름을 id 자리에
-넣지 않는다. 어느 쪽이든 상관없다. 뒤 조사는 이름만으로 진행할 수 있으므로,
-식별자를 얻으려고 이미 이름을 찾은 호스트를 다른 곳에서 다시 찾지 않는다.
+<constraints>
+- Name only tools that appear in `tool_catalog`.
+- Copy `host` exactly as the response spells it. Never put a name in `host_id`.
+- Set `host_id` only when the response actually carries an identifier, otherwise
+  null. Either is fine: later stages can address a host by name, so do not spend
+  a lookup re-finding a host you have already named just to collect an id.
+- `found_by` is the tool that produced the name.
+- An empty response means that tool does not know this host. It is not evidence
+  that the host does not exist. Look somewhere else.
+- `host_selector` describes which hosts the report wants. Honour it as given.
+</constraints>
 
-더 찾을 곳이 없거나 이미 다 찾았으면 tool_name을 null로 두고 stop_reason을 적는다.
-카탈로그에 없는 도구는 지목하지 않는다. 출력은 요청된 스키마만 따른다.
+<stopping>
+Set `tool_name` to null and write `stop_reason` once every name is resolved or no
+source is left worth trying.
+</stopping>
