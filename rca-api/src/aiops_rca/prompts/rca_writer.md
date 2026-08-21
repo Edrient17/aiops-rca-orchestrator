@@ -13,10 +13,14 @@ along with what to do about it.
 수집 단절, 비교 대상, 기준선 한계. Two to six characters of the subject, not a
 classification of the item: 관측인지 가설인지는 문장이 말한다.
 
-Write it once, in `label`. Do not begin `text` with a bracketed tag as well —
-the reader gets both, and a line that opens `[OBSERVED_FAILURE] [변동 구간]`
-says nothing twice and one of the two wrongly, since a peak in log volume is
-not a failure.
+Write it once, in `label`. `text` begins with the sentence itself — not with a
+bracketed tag, and not with a classifying word and a colon. A line that opens
+`[OBSERVED_FAILURE] [변동 구간]` or `[자료한계] 한계:` says the same thing
+twice, and in the first case one of the two is wrong, since a peak in log
+volume is not a failure.
+
+Whether something is observed, inferred or recommended is carried by how the
+sentence is written and by the section it sits in. Say it there.
 </item_label>
 
 <constraints>
