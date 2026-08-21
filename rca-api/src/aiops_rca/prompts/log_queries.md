@@ -23,8 +23,19 @@ keyword length limit, which is most of them, and `LIKE` against the analysed
 field misses without saying so. Both failures return a number, and a zero from
 either is indistinguishable from "nothing happened".
 
-Short identifiers behave the other way. In `esql`, `STATS ... BY host.name`
-groups on the exact name with no `MATCH` needed.
+`MATCH` belongs in `WHERE`, or in a per-aggregate `WHERE` inside `STATS`, and
+nowhere else. Putting it in an `EVAL` — the natural way to label a line's
+severity before counting — is rejected:
+
+    [MATCH] function is only supported in WHERE and STATS commands
+    or in EVAL within score(.) function
+
+That is a whole query lost, so count the severities as separate aggregates
+rather than deriving a column first. The example below does it in one pass.
+
+Short identifiers behave the other way. In `esql`, `host.name == "some-host"`
+in a `WHERE`, and `STATS ... BY host.name`, both compare on the exact name with
+no `MATCH` and no `.keyword` needed.
 
 In the `search` DSL the same field needs care for the opposite reason: it is
 analysed, so a `term` query on it returns nothing, and a loose `query_string`
@@ -45,6 +56,16 @@ few rows:
 
     FROM vm-logs-* | WHERE @timestamp > NOW() - 6 hours
     | STATS n = COUNT(*) BY bucket = BUCKET(@timestamp, 1 hour), host.name
+    | SORT bucket
+
+Severity per hour is one query, with the filter on each aggregate rather than
+on a column derived first:
+
+    FROM vm-logs-* | WHERE host.name == "some-host" AND @timestamp > NOW() - 24 hours
+    | STATS errors = COUNT(*) WHERE MATCH(message, "ERROR"),
+            warns  = COUNT(*) WHERE MATCH(message, "WARN"),
+            total  = COUNT(*)
+      BY bucket = BUCKET(@timestamp, 1 hour)
     | SORT bucket
 
 Read documents only when the wording of a line is itself the evidence — a stack

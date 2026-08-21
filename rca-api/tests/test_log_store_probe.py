@@ -6,7 +6,7 @@ that goes stale first, which is how a table of required arguments outlived the
 server it described.
 """
 
-from aiops_rca.evals.log_store import FORMS, _rows, claims
+from aiops_rca.evals.log_store import FORMS, _rows, claims, examples
 
 
 class TestWhatTheCheckReadsFromThePrompt:
@@ -50,3 +50,30 @@ def test_all_three_matching_forms_are_still_compared():
     # recommending a form nothing measures any more.
     assert len(FORMS) == 3
     assert any(name.startswith("MATCH") for name in FORMS)
+
+
+class TestTheExamplesTheCheckRuns:
+    def test_it_finds_the_esql_blocks(self):
+        text = (
+            "prose here\n\n"
+            "    FROM vm-logs-* | STATS n = COUNT(*)\n"
+            "    | SORT n\n\n"
+            "more prose\n"
+        )
+        assert examples(text) == ["FROM vm-logs-* | STATS n = COUNT(*) | SORT n"]
+
+    def test_an_indented_fragment_that_is_not_a_query_is_left_alone(self):
+        # The matching comparison is indented too, and running "WHERE ..." on
+        # its own would fail for a reason that says nothing about the prompt.
+        text = '    WHERE MATCH(message, "ERROR")   -> 15\n'
+        assert examples(text) == []
+
+    def test_every_example_in_the_live_prompt_is_extracted(self):
+        from importlib.resources import files
+
+        text = (files("aiops_rca.prompts") / "log_queries.md").read_text(
+            encoding="utf-8"
+        )
+        found = examples(text)
+        assert found, "an example nobody runs is an example nobody checks"
+        assert all(query.startswith("FROM ") for query in found)

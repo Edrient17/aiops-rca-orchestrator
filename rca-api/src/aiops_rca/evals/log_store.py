@@ -70,6 +70,30 @@ def claims(text: str) -> tuple[list[str], list[str]]:
     return patterns, fields
 
 
+def examples(text: str) -> list[str]:
+    """The ES|QL the prompt holds up as the way to ask.
+
+    An example that no longer runs is worse than no example: the planner copies
+    its shape and loses the turn. One live investigation lost its error counts
+    to `CASE(MATCH(...))` inside an `EVAL`, which ES|QL refuses, so the examples
+    are checked by running them rather than by reading them.
+    """
+    found: list[str] = []
+    block: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("    ") and line.strip():
+            block.append(line.strip())
+            continue
+        if block:
+            joined = " ".join(block)
+            if joined.startswith("FROM "):
+                found.append(joined)
+            block = []
+    if block and " ".join(block).startswith("FROM "):
+        found.append(" ".join(block))
+    return found
+
+
 class Store:
     def __init__(self, adapter: Any) -> None:
         self.adapter = adapter
@@ -157,6 +181,12 @@ async def check(store: Store, text: str, term: str, window: str) -> list[str]:
                 f"{pattern}: the three forms now agree, so the warning the "
                 f"prompt spends its tokens on no longer describes this store"
             )
+
+    for query in examples(text):
+        status, _rows_out, error = await store.esql(query)
+        print(f"example: {status:<6} {query[:70]}")
+        if status != "ok":
+            failures.append(f"example no longer runs ({error}): {query}")
     return failures
 
 
