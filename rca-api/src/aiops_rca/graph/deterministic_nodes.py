@@ -164,6 +164,23 @@ class ResolveHostsNode:
         seen: list[dict[str, Any]] = []
 
         for turn in range(MAX_HOST_SEARCH_TURNS + 1):
+            # What is still missing, rather than what was asked for. The whole
+            # request went back every turn, so a name reported as found on one
+            # turn was presented as unresolved on the next and the model went
+            # looking for it again -- three calls and 23,137 tokens to resolve
+            # one host the question had named outright.
+            still = [
+                query
+                for query in wanted
+                if not any(host.query == query for host in found)
+            ]
+            # Nothing left to look for. `found` has to be non-empty as well:
+            # a selector that names its own hosts -- a group -- asks for no
+            # name at all, and stopping on that would be stopping before the
+            # first lookup.
+            if found and not still:
+                break
+
             # The extra turn reads the last lookup rather than making another.
             # A tool whose answer nobody reads is a call paid for and thrown
             # away, which is how a host that was in Wazuh came back missing.
@@ -191,7 +208,7 @@ class ResolveHostsNode:
                 system_prompt=_prompt("host_search.md", "log_queries.md"),
                 payload={
                     "tool_catalog": state.tool_catalog,
-                    "unresolved": wanted,
+                    "unresolved": still,
                     "host_selector": selector,
                     "attempts": seen,
                 },

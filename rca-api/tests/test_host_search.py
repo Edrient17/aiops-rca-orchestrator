@@ -78,6 +78,18 @@ def _report(*hosts: DiscoveredHost, stop: str = "찾음") -> HostSearchDecision:
     )
 
 
+def _report_and_look(
+    *hosts: DiscoveredHost, tool_name: str = "search", **arguments: Any
+) -> HostSearchDecision:
+    """A turn that reports one name and goes looking for the next."""
+    return HostSearchDecision(
+        hosts=list(hosts),
+        tool_name=tool_name,
+        arguments_json=json.dumps(arguments),
+        stop_reason=None,
+    )
+
+
 def _found(host: str, host_id: str | None = None, by: str = "find_hosts"):
     return DiscoveredHost(host=host, host_id=host_id, found_by=by)
 
@@ -210,3 +222,52 @@ class TestWhenTheLookupCannotHappen:
         )
         assert "host_search_blocked" in [i.code for i in update["unknowns"]]
         assert update["stop_reason"] == "no host could be resolved for investigation"
+
+
+class TestNotLookingForWhatItAlreadyFound:
+    """The turn is spent on what is missing, not on the whole request again.
+
+    Every turn was handed the original `host_queries`, so a name reported as
+    found on one turn came back as unresolved on the next and the model went
+    looking for it somewhere else. A live investigation spent three model calls
+    and 23,137 tokens -- 12% of the whole run -- resolving one host the question
+    had named outright.
+    """
+
+    def test_it_stops_once_every_name_is_accounted_for(self):
+        _update, model, executor = _run(
+            _look(query="vm-java-docker-2"),
+            _report(_found("vm-java-docker-2", "11094")),
+        )
+        assert len(model.payloads) == 2
+        assert len(executor.calls) == 1
+
+    def test_a_turn_is_told_only_what_is_still_missing(self):
+        update, model, _executor = _run(
+            _look(query="a"),
+            _report_and_look(_found("a", "1"), index="vm-logs-*"),
+            _report(_found("b", None, by="search")),
+            queries=("a", "b"),
+        )
+        assert model.payloads[0]["unresolved"] == ["a", "b"]
+        # `a` was reported on the second turn, so the third stops asking for it
+        # and the model can spend the turn on what is actually missing.
+        assert model.payloads[2]["unresolved"] == ["b"]
+        assert sorted(host.host for host in update["hosts"]) == ["a", "b"]
+
+    def test_a_selector_with_no_names_still_gets_its_lookup(self):
+        # A host group asks for whatever the lookup returns, so nothing is
+        # outstanding from the start. Stopping on that would stop before the
+        # first call.
+        update, _model, executor = _run(
+            _look("find_hosts", group_ids=["73"]),
+            _report(_found("in-the-group", "10")),
+            queries=(),
+            collection={"host_selector": {"mode": "host_group", "group_ids": ["73"]}},
+        )
+        assert len(executor.calls) == 1
+        assert [host.host for host in update["hosts"]] == ["in-the-group"]
+
+    def test_a_name_nothing_matched_still_uses_its_turns(self):
+        _update, _model, executor = _run(_look(query="ghost"), queries=("ghost",))
+        assert len(executor.calls) == MAX_HOST_SEARCH_TURNS
