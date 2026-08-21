@@ -73,10 +73,10 @@ class EstablishPhenomenonNode:
             output_type=phenomenon_scan_plan_for(self.registry.names()),
             system_prompt=_prompt("phenomenon_scan.md"),
             payload={
+                "tool_catalog": state.tool_catalog,
                 "hosts": [host.model_dump(mode="json") for host in state.hosts],
                 "window": window,
                 "question": state.parsed_request.original_question,
-                "tool_catalog": state.tool_catalog,
             },
             reasoning_effort="low",
         )
@@ -318,6 +318,15 @@ class ObservationPlannerNode:
             output_type=self.output_type,
             system_prompt=_prompt("observation_planner.md"),
             payload={
+                # The catalog leads, and it does not change inside one
+                # investigation. The prompt is fixed per node, so prompt plus
+                # catalog is a long identical prefix on every turn -- which is
+                # the only thing a prompt cache can reuse. It used to sit last,
+                # behind fields that change every turn, so the cacheable prefix
+                # ended at the first byte and roughly seven thousand tokens of
+                # schema were paid for in full on each of nine planner calls.
+                "tool_catalog": state.tool_catalog
+                or [policy.model_dump(mode="json") for policy in self.registry.list()],
                 "phenomenon": state.phenomenon,
                 "hosts": [host.model_dump(mode="json") for host in state.hosts],
                 "window": _resolved_window(state),
@@ -338,8 +347,6 @@ class ObservationPlannerNode:
                     }
                     for item in state.tool_results
                 ],
-                "tool_catalog": state.tool_catalog
-                or [policy.model_dump(mode="json") for policy in self.registry.list()],
                 # Why the router turned the last plan away. Empty on a first
                 # attempt; on a retry it is the whole reason this node ran
                 # again, and planning past it repeats the refusal.
@@ -472,7 +479,14 @@ class HypothesisUpdaterNode:
                     if state.next_question
                     else None
                 ),
-                "observation": observation.model_dump(mode="json"),
+                # The observation without its raw body. The body arrives
+                # already normalised in new_evidence, bounded and with its rows
+                # counted, so sending both put the same answer in twice -- and
+                # when the answer was a hundred log documents that was 25,369
+                # tokens for one of these calls, more than half the
+                # investigation. What is kept is what the evidence does not
+                # carry: which call this was, and whether it failed.
+                "observation": _without_body(observation),
                 "new_evidence": [item.model_dump(mode="json") for item in new_evidence],
                 "hypotheses": [
                     item.model_dump(mode="json") for item in state.hypotheses
@@ -708,6 +722,21 @@ def _evidence_summaries(state: InvestigationState) -> list[dict[str, Any]]:
         }
         for item in state.evidence
     ]
+
+
+def _without_body(observation: Any) -> dict[str, Any]:
+    """An observation described rather than reproduced.
+
+    Everything a reader needs to judge what the call was and whether it
+    answered, minus the response itself, which the normalised evidence beside
+    it already carries within a bound.
+    """
+    dumped = observation.model_dump(mode="json")
+    body = dumped.pop("response", None)
+    dumped["response_size_chars"] = len(
+        json.dumps(body, ensure_ascii=False, default=str)
+    ) if body is not None else 0
+    return dumped
 
 
 def _bounded(value: Any, *, max_chars: int = 20_000) -> Any:

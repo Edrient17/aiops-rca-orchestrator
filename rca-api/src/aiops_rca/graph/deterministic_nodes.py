@@ -182,10 +182,10 @@ class ResolveHostsNode:
                 output_type=output_type,
                 system_prompt=_prompt("host_search.md"),
                 payload={
+                    "tool_catalog": state.tool_catalog,
                     "unresolved": wanted,
                     "host_selector": selector,
                     "attempts": seen,
-                    "tool_catalog": state.tool_catalog,
                 },
                 reasoning_effort="low",
             )
