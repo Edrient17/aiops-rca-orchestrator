@@ -35,6 +35,14 @@ MAX_HOST_SEARCH_TURNS = 2
 #: bounds it too; this bounds it tightly enough that a planner stuck on one
 #: malformed candidate does not spend the whole investigation on it.
 MAX_ROUTING_ATTEMPTS = 2
+#: Past this, an answer is not an observation any more, it is a haystack. One
+#: log search came back at 175,834 characters -- 25,369 tokens in the single
+#: model call that read it, more than half of that whole investigation -- and
+#: the same day of the same host is 24 rows when asked as an aggregate.
+#:
+#: The threshold does not cut anything. It decides when to say the query was
+#: shaped wrong, which is a fact the planner and the report both want.
+MAX_REASONABLE_RESPONSE_CHARS = 40_000
 
 
 class ResolveHostsNode:
@@ -380,6 +388,30 @@ class ToolExecutorNode:
                     tool_call_id=result.tool_call_id,
                 ),
             )
+        oversized = _response_chars(result)
+        if oversized > MAX_REASONABLE_RESPONSE_CHARS:
+            # Nothing is truncated here. The answer travels whole, because
+            # cutting it would take away the very rows a hypothesis is judged
+            # on. What is added is that the shape was wrong: a question about
+            # how much or how often is answered by an aggregate in a few rows,
+            # and this one came back as a wall of documents.
+            #
+            # Said out loud, three things read it -- the next planner turn,
+            # which can ask again in a better shape; the report, which can
+            # admit the window was surveyed rather than read; and whoever is
+            # looking at why an investigation cost what it did.
+            unknowns.append(
+                UnknownItem(
+                    code="response_too_large_to_reason_over",
+                    message=(
+                        f"{result.tool_name} returned {oversized:,} characters."
+                        " A question about counts or timing is answered by an"
+                        " aggregate in a few rows; fetch documents only once"
+                        " an aggregate says which ones to read."
+                    ),
+                    tool_call_id=result.tool_call_id,
+                ),
+            )
         if result.status == "partial":
             # The reply stopped at a limit rather than at the end of the data,
             # so its count is a floor. Nothing downstream can tell that from a
@@ -461,6 +493,13 @@ def _host_for_plan(state: InvestigationState) -> ResolvedHost | None:
         if wanted_name and host.host.casefold() == wanted_name.casefold():
             return host
     return state.hosts[0] if len(state.hosts) == 1 else None
+
+
+def _response_chars(result: Any) -> int:
+    """How much answer came back, measured the way it will be sent."""
+    if result.response is None:
+        return 0
+    return len(json.dumps(result.response, ensure_ascii=False, default=str))
 
 
 def _dedupe(values: list[str]) -> list[str]:

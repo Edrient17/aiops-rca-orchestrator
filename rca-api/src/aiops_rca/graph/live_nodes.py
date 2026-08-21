@@ -479,14 +479,21 @@ class HypothesisUpdaterNode:
                     if state.next_question
                     else None
                 ),
-                # The observation without its raw body. The body arrives
-                # already normalised in new_evidence, bounded and with its rows
-                # counted, so sending both put the same answer in twice -- and
-                # when the answer was a hundred log documents that was 25,369
-                # tokens for one of these calls, more than half the
-                # investigation. What is kept is what the evidence does not
-                # carry: which call this was, and whether it failed.
-                "observation": _without_body(observation),
+                # Whole. This node decides whether the observation supports or
+                # refutes a hypothesis, so the answer is the thing it reasons
+                # about, and any cut here costs judgement rather than tokens.
+                #
+                # It was briefly sent without its body, on the grounds that
+                # new_evidence carries it already. That is true when a tool
+                # returns an object -- the normaliser keeps the rows and counts
+                # what it left out -- and false when it returns a string, which
+                # is exactly the log search the change was aimed at: the
+                # evidence summary caps at 3000 characters, so 175,000 became
+                # 3,000 and the reasoning lost the rest.
+                #
+                # An answer too large to reason about is a badly shaped query,
+                # not something to hide. tool_executor says so out loud.
+                "observation": observation.model_dump(mode="json"),
                 "new_evidence": [item.model_dump(mode="json") for item in new_evidence],
                 "hypotheses": [
                     item.model_dump(mode="json") for item in state.hypotheses
@@ -732,21 +739,6 @@ def _evidence_summaries(state: InvestigationState) -> list[dict[str, Any]]:
         }
         for item in state.evidence
     ]
-
-
-def _without_body(observation: Any) -> dict[str, Any]:
-    """An observation described rather than reproduced.
-
-    Everything a reader needs to judge what the call was and whether it
-    answered, minus the response itself, which the normalised evidence beside
-    it already carries within a bound.
-    """
-    dumped = observation.model_dump(mode="json")
-    body = dumped.pop("response", None)
-    dumped["response_size_chars"] = len(
-        json.dumps(body, ensure_ascii=False, default=str)
-    ) if body is not None else 0
-    return dumped
 
 
 def _bounded(value: Any, *, max_chars: int = 20_000) -> Any:
