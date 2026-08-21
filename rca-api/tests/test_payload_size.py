@@ -52,3 +52,37 @@ class TestTheObservationTheUpdaterSees:
         # findings, and the difference would otherwise vanish with the body.
         assert _without_body(observation(None))["response_size_chars"] == 0
         assert _without_body(observation({"hits": [1, 2]}))["response_size_chars"] > 0
+
+
+class TestTheLogKnowledgeEveryQueryingNodeGets:
+    """Three nodes query the log store, so the facts about it live in one file.
+
+    `esql` describes itself in six words -- "Perform an Elasticsearch ES|QL
+    query." -- and its only parameter is a free-text query string. Nothing tells
+    a planner which indices exist, that there is no parsed level field, or that
+    the three ways of matching `message` return three different numbers.
+    """
+
+    def test_the_nodes_that_query_logs_are_told_how(self):
+        from aiops_rca.graph.deterministic_nodes import _prompt as host_prompt
+        from aiops_rca.graph.live_nodes import _prompt as live_prompt
+
+        for load, own in (
+            (host_prompt, "host_search.md"),
+            (live_prompt, "phenomenon_scan.md"),
+            (live_prompt, "observation_planner.md"),
+        ):
+            composed = load(own, "log_queries.md")
+            assert "vm-logs-*" in composed
+            assert "MATCH" in composed
+            assert composed.startswith(load(own).rstrip()[:40])
+
+    def test_the_facts_in_it_are_the_measured_ones(self):
+        # Numbers from the live store. If they are ever edited to something
+        # nobody measured, the file stops being worth its place in the prefix.
+        from aiops_rca.graph.live_nodes import _prompt
+
+        text = _prompt("log_queries.md")
+        assert 'MATCH(message, "ERROR")' in text
+        assert "message.keyword" in text
+        assert "STATS" in text

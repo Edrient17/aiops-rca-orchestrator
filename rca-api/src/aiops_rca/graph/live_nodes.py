@@ -71,7 +71,7 @@ class EstablishPhenomenonNode:
         plan = await self.model.complete(
             model=self.model_name,
             output_type=phenomenon_scan_plan_for(self.registry.names()),
-            system_prompt=_prompt("phenomenon_scan.md"),
+            system_prompt=_prompt("phenomenon_scan.md", "log_queries.md"),
             payload={
                 "tool_catalog": state.tool_catalog,
                 "hosts": [host.model_dump(mode="json") for host in state.hosts],
@@ -316,7 +316,7 @@ class ObservationPlannerNode:
         decision = await self.model.complete(
             model=self.model_name,
             output_type=self.output_type,
-            system_prompt=_prompt("observation_planner.md"),
+            system_prompt=_prompt("observation_planner.md", "log_queries.md"),
             payload={
                 # The catalog leads, and it does not change inside one
                 # investigation. The prompt is fixed per node, so prompt plus
@@ -690,8 +690,18 @@ class EvidencePackageBuilderNode:
         }
 
 
-def _prompt(name: str) -> str:
-    return files("aiops_rca.prompts").joinpath(name).read_text(encoding="utf-8")
+def _prompt(*names: str) -> str:
+    """One prompt, or several joined into one.
+
+    Knowledge about the log store belongs to whichever node queries it, which is
+    three of them. Written out three times it would drift in two of them, so it
+    is a file the nodes that need it compose in.
+    """
+    separator = "\n\n"
+    return separator.join(
+        (files("aiops_rca.prompts") / name).read_text(encoding="utf-8")
+        for name in names
+    )
 
 
 def _resolved_window(state: InvestigationState) -> dict[str, str]:

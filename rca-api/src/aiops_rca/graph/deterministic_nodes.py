@@ -180,7 +180,7 @@ class ResolveHostsNode:
             decision = await self.model.complete(
                 model=self.model_name,
                 output_type=output_type,
-                system_prompt=_prompt("host_search.md"),
+                system_prompt=_prompt("host_search.md", "log_queries.md"),
                 payload={
                     "tool_catalog": state.tool_catalog,
                     "unresolved": wanted,
@@ -481,8 +481,18 @@ def _catalog_scope(catalog: list[dict[str, Any]], name: str) -> str:
     return "any"
 
 
-def _prompt(name: str) -> str:
-    return (files("aiops_rca.prompts") / name).read_text(encoding="utf-8")
+def _prompt(*names: str) -> str:
+    """One prompt, or several joined into one.
+
+    Knowledge about the log store belongs to whichever node queries it, which is
+    three of them. Written out three times it would drift in two of them, so it
+    is a file the nodes that need it compose in.
+    """
+    separator = "\n\n"
+    return separator.join(
+        (files("aiops_rca.prompts") / name).read_text(encoding="utf-8")
+        for name in names
+    )
 
 
 def _matching_query(host: str, unresolved: list[str]) -> str | None:

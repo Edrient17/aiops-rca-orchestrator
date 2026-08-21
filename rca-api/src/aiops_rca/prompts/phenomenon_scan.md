@@ -14,9 +14,6 @@ that tool's `input_schema`.
   skip a lookup because you expect it to come back empty.
 - A refusal or an empty result is a fact about that source, not about the host.
   Never report it as evidence that nothing happened.
-- When filtering a log index by name, `host.name` is often an analysed field:
-  use `match`, or the `keyword` subfield, rather than `term`. Loose full-text
-  search pulls in other hosts whose names share a token.
 </constraints>
 
 <stopping>
