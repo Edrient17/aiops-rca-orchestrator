@@ -1,13 +1,19 @@
-"""Writing the report inside the graph, and sending a bad draft back.
+"""Writing the report inside the graph, and recording what the checks found.
 
-The writer used to run after the graph returned. A miscount there had nowhere to
-go: the report was written once and posted, and the only thing that caught it was
-a person reading Slack. Inside the graph it can be written again.
+The writer used to run after the graph returned, so a miscount had nowhere to
+go: written once, posted, and caught only by a person reading Slack. Inside the
+graph the checks run against the finished report and what they find is kept.
 
-These cover the loop rather than the checks -- the checks have their own tests
-and were calibrated against a hundred and seventeen real reports. What matters
-here is that a failing draft comes back, that the writer is told why, and that
-the loop ends.
+They no longer send the draft back. Calibrated against a hundred and seventeen
+reports from an older pipeline, every rejection inspected since has been the
+check going stale rather than the report being wrong -- a count read as 261
+because it was written 7,261, a number said to come from nowhere while it sat
+in the evidence rows. A recorded finding is a line someone can dismiss; a fed
+finding changes the report, and the way to satisfy a false one is to drop true
+sentences.
+
+What matters here is that the checks still run, that what they find is written
+down, and that the run ends either way.
 """
 
 import asyncio
@@ -212,33 +218,30 @@ class TestChecking:
         assert update["report_rejections"][0] == "earlier"
         assert "counts_are_grounded" in update["report_rejections"][-1]
 
-    def test_an_earlier_draft_is_not_recorded_as_a_failure(self):
-        # It is about to be rewritten; recording it would report a defect the
-        # published report does not have.
+    def test_a_finding_is_recorded_on_the_draft_that_goes_out(self):
+        # It used to be withheld until the last attempt, because an earlier
+        # draft was about to be rewritten. Nothing is rewritten now, so the
+        # first draft is the published one and its findings are the ones a
+        # reader needs.
         update = _check(BAD, report_attempts=1)
-        assert "unknowns" not in update
+        assert [item.code for item in update["unknowns"]] == ["report_check_failed"]
+        assert update["report_rejections"]
 
 
 class TestTheLoop:
     def test_a_clean_report_ends_the_run(self):
         assert route_after_report_eval(_state(report=GOOD)) == "__end__"
 
-    def test_a_finding_sends_the_draft_back_to_the_writer(self):
-        state = _state(report=BAD, report_findings=["counts_are_grounded"], report_attempts=1)
-        assert route_after_report_eval(state) == "report_writer"
-
-    def test_the_loop_ends_when_the_drafts_run_out(self):
+    def test_a_failing_report_also_ends_the_run(self):
+        # The finding is recorded rather than acted on. Acting on it is what
+        # cost a second writer pass on every investigation while the check was
+        # rejecting numbers the evidence carried.
         state = _state(
-            report=BAD,
-            report_findings=["counts_are_grounded"],
-            report_attempts=MAX_REPORT_ATTEMPTS,
+            report=BAD, report_findings=["counts_are_grounded"], report_attempts=1
         )
         assert route_after_report_eval(state) == "__end__"
 
-    @pytest.mark.parametrize("attempts", range(1, MAX_REPORT_ATTEMPTS + 3))
-    def test_the_cap_is_the_only_thing_that_ends_a_failing_loop(self, attempts):
-        # Stated as the exact boundary rather than "at least": an off-by-one
-        # here is either a wasted model call or an unbounded loop.
+    @pytest.mark.parametrize("attempts", range(0, MAX_REPORT_ATTEMPTS + 3))
+    def test_no_number_of_attempts_reopens_it(self, attempts):
         state = _state(report=BAD, report_findings=["x"], report_attempts=attempts)
-        expected = "report_writer" if attempts < MAX_REPORT_ATTEMPTS else "__end__"
-        assert route_after_report_eval(state) == expected
+        assert route_after_report_eval(state) == "__end__"

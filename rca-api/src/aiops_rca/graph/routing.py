@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from aiops_rca.graph.report_nodes import MAX_REPORT_ATTEMPTS
 from aiops_rca.graph.state import InvestigationState
 
 
@@ -66,20 +65,26 @@ def route_after_stop_guard(
 
 
 def route_after_report_eval(
-    state: InvestigationState,
-) -> Literal["report_writer", "__end__"]:
-    """Another draft, or out.
+    state: InvestigationState) -> Literal["__end__"]:
+    """Out. The checks record what they found; they no longer send a draft back.
 
-    The checks that fail here are the writer's own -- a count the cited evidence
-    does not support, a citation to nothing. Sending those back through the
-    investigation would re-run every tool call to fix a sentence, so the loop is
-    short and closes on the writer.
+    They were calibrated against a hundred-odd reports from the pipeline as it
+    stood months ago, and the pipeline has moved: rows travel in `observed` now,
+    a turn asks several questions, the templates are new. Every rejection
+    inspected since has been the check being stale rather than the report being
+    wrong -- a count read as 261 because it was written 7,261, a number said to
+    come from nowhere while it sat in the evidence rows.
+
+    Recording a wrong finding costs a line someone can dismiss. Feeding it back
+    changes the report, and the way to satisfy a false finding is to stop
+    stating numbers the evidence supports. That asymmetry is why the loop
+    closes here while the checks stay on.
+
+    Reopening it needs a measurement rather than an argument, and the thing
+    that would supply one -- reports a human has marked correct -- is now being
+    collected.
     """
-    if not state.report_findings:
-        return "__end__"
-    if state.report_attempts >= MAX_REPORT_ATTEMPTS:
-        return "__end__"
-    return "report_writer"
+    return "__end__"
 
 
 def route_after_tool_router(

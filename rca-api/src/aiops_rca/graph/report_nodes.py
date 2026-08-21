@@ -95,21 +95,16 @@ class ReportEvalNode:
             f"{item.check} ({item.section_id or 'report'}): {item.detail}"
             for item in findings
         ]
-        rejections = [*state.report_rejections, *detail]
-        if state.report_attempts < self.max_attempts:
-            return {
-                "report_findings": detail,
-                "report_rejections": rejections,
-                "visited_nodes": visited,
-            }
-
-        # Out of drafts. The report goes out as it stands -- the writer was told
-        # about these on its last pass and had the chance to say so -- but the
-        # findings are recorded, because a report that failed its own checks and
-        # says nothing about it anywhere is the thing these checks exist to stop.
+        # The report goes out as it stands. What the checks found is recorded
+        # -- in the audit row and in the unknowns the report reads its own
+        # limitations from -- because a report that failed its own checks and
+        # says so nowhere is the thing these checks exist to stop. What is no
+        # longer done is sending the draft back: every rejection inspected
+        # since the pipeline moved has been the check being stale, and a false
+        # finding fed to the writer is answered by dropping true sentences.
         return {
+            "report_rejections": [*state.report_rejections, *detail],
             "report_findings": detail,
-            "report_rejections": rejections,
             "unknowns": [
                 *state.unknowns,
                 *(
