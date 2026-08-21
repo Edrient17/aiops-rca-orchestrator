@@ -84,7 +84,21 @@ def route_after_report_eval(
 
 def route_after_tool_router(
     state: InvestigationState,
-) -> Literal["tool_executor", "evidence_package_builder"]:
-    if state.stop_reason or state.fatal_error or not state.planned_tool_call:
+) -> Literal["tool_executor", "observation_planner", "evidence_package_builder"]:
+    """The call, another plan, or the report.
+
+    A refused plan used to mean the report: the router set a stop_reason and the
+    investigation ended with whatever it had, which in one live run was two tool
+    calls and a candidate that named a source where a host belonged. The writer
+    has always been allowed a second draft against the reason the first was
+    rejected. This is the same turn, one stage earlier.
+    """
+    if state.fatal_error:
         return "evidence_package_builder"
-    return "tool_executor"
+    if state.planned_tool_call:
+        return "tool_executor"
+    if state.stop_reason:
+        return "evidence_package_builder"
+    if state.routing_rejections:
+        return "observation_planner"
+    return "evidence_package_builder"

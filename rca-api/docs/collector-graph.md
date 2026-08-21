@@ -44,6 +44,7 @@ graph TD;
 	stop_guard -.-> observation_planner;
 	tool_executor --> evidence_normalizer;
 	tool_router -.-> evidence_package_builder;
+	tool_router -.-> observation_planner;
 	tool_router -.-> tool_executor;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0

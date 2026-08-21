@@ -32,6 +32,13 @@ Then name the one tool that answers it as `required_tool`, and give the call in
   then, and say in the question why the structured tools do not reach it.
 </constraints>
 
+<retry>
+`rejected_plans` holds the reasons the router refused your previous plans. It
+is empty on a first attempt. When it is not, fix what it names rather than
+proposing the same call again, and prefer a different tool if the objection is
+one the named tool cannot satisfy.
+</retry>
+
 <stopping>
 When no remaining observation would discriminate further, set `question` and
 `required_tool` to null and write `stop_reason`.

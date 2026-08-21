@@ -30,6 +30,11 @@ from aiops_rca.tools.registry import (
 #: call paid for and thrown away, which is what happened when the host was in
 #: Wazuh and the first lookup had gone to the log index.
 MAX_HOST_SEARCH_TURNS = 2
+#: How many times a refused plan may be sent back to the planner before the
+#: investigation gives up on it. Each retry costs an iteration, so the budget
+#: bounds it too; this bounds it tightly enough that a planner stuck on one
+#: malformed candidate does not spend the whole investigation on it.
+MAX_ROUTING_ATTEMPTS = 2
 
 
 class ResolveHostsNode:
@@ -284,17 +289,35 @@ class ToolRouterNode:
                 _catalog_scope(state.tool_catalog, question.required_tool),
             )
         except ToolPolicyError as error:
+            # The registry already says which of three things went wrong; a
+            # prefix asserting a missing tool would put back the very sentence
+            # that made an unproposed call read as a capability the platform
+            # lacks.
+            unknowns = [
+                *state.unknowns,
+                UnknownItem(code="tool_routing_blocked", message=str(error)),
+            ]
+            attempts = state.routing_attempts + 1
+            if attempts <= MAX_ROUTING_ATTEMPTS:
+                # A refused plan is a plan to redo, not the end of the
+                # investigation. The report writer has always been allowed a
+                # second draft against the reason its first was sent back; a
+                # planner that named a source where a host belonged got no such
+                # turn, and one malformed candidate closed the whole run.
+                return {
+                    "planned_tool_call": None,
+                    "next_question": None,
+                    "unknowns": unknowns,
+                    "routing_rejections": [*state.routing_rejections, str(error)],
+                    "routing_attempts": attempts,
+                    "visited_nodes": [*state.visited_nodes, "tool_router"],
+                }
             return {
-                # The registry already says which of three things went wrong;
-                # a prefix asserting a missing tool would put back the very
-                # sentence that made an unproposed call read as a capability
-                # the platform lacks.
                 "stop_reason": f"the next observation could not be routed: {error}",
                 "planned_tool_call": None,
-                "unknowns": [
-                    *state.unknowns,
-                    UnknownItem(code="tool_routing_blocked", message=str(error)),
-                ],
+                "unknowns": unknowns,
+                "routing_rejections": [*state.routing_rejections, str(error)],
+                "routing_attempts": attempts,
                 "visited_nodes": [*state.visited_nodes, "tool_router"],
             }
         # The candidate names a host; its Zabbix id comes from what was
@@ -305,6 +328,8 @@ class ToolRouterNode:
             (item.host_id for item in state.hosts if item.host == host), None
         )
         return {
+            "routing_rejections": [],
+            "routing_attempts": 0,
             "planned_tool_call": PlannedToolCall(
                 tool_name=policy.name,
                 arguments=dict(state.candidate_tool_arguments[policy.name]),

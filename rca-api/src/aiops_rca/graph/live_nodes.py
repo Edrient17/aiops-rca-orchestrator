@@ -340,6 +340,10 @@ class ObservationPlannerNode:
                 ],
                 "tool_catalog": state.tool_catalog
                 or [policy.model_dump(mode="json") for policy in self.registry.list()],
+                # Why the router turned the last plan away. Empty on a first
+                # attempt; on a retry it is the whole reason this node ran
+                # again, and planning past it repeats the refusal.
+                "rejected_plans": state.routing_rejections,
             },
             reasoning_effort="medium",
         )

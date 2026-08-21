@@ -73,6 +73,7 @@ def build_collector_graph(
         route_after_tool_router,
         {
             "tool_executor": "tool_executor",
+            "observation_planner": "observation_planner",
             "evidence_package_builder": "evidence_package_builder",
         },
     )

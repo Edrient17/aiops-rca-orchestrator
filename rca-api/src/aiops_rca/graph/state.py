@@ -101,6 +101,17 @@ class InvestigationState(StrictModel):
         default_factory=list,
     )
     report_attempts: Annotated[int, Field(ge=0, le=10)] = 0
+    #: Why the router turned the last plan away, so the planner can see what it
+    #: got wrong instead of guessing again. A bad draft was allowed a second
+    #: pass while a bad tool call ended the investigation outright, and a live
+    #: run spent an entire investigation on one candidate that named a source
+    #: where a host belonged. Cleared once a plan routes, because a rejection
+    #: the planner has already answered is noise in the next payload; the
+    #: permanent record of it is in unknowns.
+    routing_rejections: Annotated[list[str], Field(max_length=20)] = Field(
+        default_factory=list,
+    )
+    routing_attempts: Annotated[int, Field(ge=0, le=10)] = 0
     #: Summed across attempts, so the audit row reports the whole cost of
     #: writing rather than the last pass.
     report_duration_ms: Annotated[int, Field(ge=0)] = 0
