@@ -226,3 +226,54 @@ describe("a host Zabbix does not know", () => {
     expect(rendered.slackMarkdown).toContain("ghost-host, known-host");
   });
 });
+
+describe("an item's own tag", () => {
+  const item = (label: string | null, text: string) =>
+    render({
+      request_id: "REQ-TAG",
+      user_id: "U1",
+      traits: [],
+      template_output: {
+        sections: [{ id: "summary", heading: "요약", required: true }],
+      },
+      package: { evidence: [], query_context: {} },
+      report: {
+        title: "태그",
+        sections: [
+          {
+            id: "summary",
+            items: [
+              { text, label, evidence_refs: [], counter_evidence_refs: [] },
+            ],
+          },
+        ],
+      },
+      expected_markdown: "",
+    } as never).slackMarkdown ?? "";
+
+  it("renders as the writer spelled it", () => {
+    // Uppercasing did nothing to a Korean tag and mangled everything else: a
+    // host name came out as MIDIBUS-DOCKER-FTP03_203.0.113.134, which is not
+    // the name of that host, and Docker came out as DOCKER.
+    expect(item("Docker 관련 프로세스", "docker-proxy")).toContain(
+      "*[Docker 관련 프로세스]*",
+    );
+    expect(item("vm-java-docker-2", "떨어짐")).toContain("*[vm-java-docker-2]*");
+  });
+
+  it("is not printed twice when the text repeats it", () => {
+    // The writer began carrying a bracketed tag in the text as well, so a line
+    // read `[OBSERVED_FAILURE] [변동 구간] 전체 로그 최고치는...` -- the same
+    // convention twice, and the louder half wrong.
+    const rendered = item("변동 구간", "[변동 구간] 전체 로그 최고치는 7,261건");
+    expect(rendered).toContain("*[변동 구간]* 전체 로그 최고치는 7,261건");
+    expect(rendered).not.toContain("*[변동 구간]* [변동 구간]");
+  });
+
+  it("keeps a bracket the text opens with when there is no label", () => {
+    // Then it is the only tag there is, and dropping it would lose it.
+    expect(item(null, "[변동 구간] 전체 로그 최고치")).toContain(
+      "• [변동 구간] 전체 로그 최고치",
+    );
+  });
+});

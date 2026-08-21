@@ -273,11 +273,27 @@ export function formatReport(
     return null;
   };
 
+  /**
+   * The writer's own tag, rendered once.
+   *
+   * Uppercasing did nothing to a Korean tag and shouted an English one, which
+   * is how `observed_failure` came out as *[OBSERVED_FAILURE]* beside a line
+   * about a peak in log volume. The label is rendered as written.
+   *
+   * A text that opens with its own bracket is the same convention twice, and
+   * a reader got `[OBSERVED_FAILURE] [변동 구간] 전체 로그 최고치는...`. The
+   * prompt says to write the tag once; this makes a line that ignores it read
+   * as though it had.
+   */
+  const withoutLeadingTag = (text: string): string =>
+    text.replace(/^\s*\[[^\]\n]{1,40}\]\s*/, "");
+
   const renderItem = (item: ReportItemLike): string => {
-    const label = item.label ? "*[" + String(item.label).toUpperCase() + "]* " : "";
-    const lines = [
-      "• " + label + citeInline(item.text ?? "") + cite(item.evidence_refs),
-    ];
+    const label = item.label ? "*[" + String(item.label) + "]* " : "";
+    const text = item.label
+      ? withoutLeadingTag(item.text ?? "")
+      : (item.text ?? "");
+    const lines = ["• " + label + citeInline(text) + cite(item.evidence_refs)];
     const against = cite(item.counter_evidence_refs);
     if (against) lines.push("    ↳ 반박" + against);
     return lines.join("\n");

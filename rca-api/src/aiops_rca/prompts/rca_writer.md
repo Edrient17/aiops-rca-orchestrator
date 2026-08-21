@@ -8,6 +8,17 @@ what was established, what failure was observed, and what might have caused it
 along with what to do about it.
 </task>
 
+<item_label>
+`label` is a short Korean tag naming what that one item is about — 변동 구간,
+수집 단절, 비교 대상, 기준선 한계. Two to six characters of the subject, not a
+classification of the item: 관측인지 가설인지는 문장이 말한다.
+
+Write it once, in `label`. Do not begin `text` with a bracketed tag as well —
+the reader gets both, and a line that opens `[OBSERVED_FAILURE] [변동 구간]`
+says nothing twice and one of the two wrongly, since a peak in log volume is
+not a failure.
+</item_label>
+
 <constraints>
 - Do not add, rename, reorder or drop a section.
 - `evidence_refs` and `counter_evidence_refs` may cite only ids that exist in
