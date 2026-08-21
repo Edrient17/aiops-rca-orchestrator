@@ -182,3 +182,56 @@ def test_a_second_reading_supersedes_the_first_and_is_recorded(fixture_json):
     # programming error but an ordinary fact about time passing.
     assert [item.summary for item in merged] == ["different observation"]
     assert [item.code for item in unknowns] == ["evidence_superseded"]
+
+
+class TestTheQueryStoredWithTheEvidence:
+    """`search_query` reopens a citation, or it is not worth storing.
+
+    A planner following this project's own log guidance writes several
+    aggregates with a filter on each, and one such ES|QL query overran the
+    1000-character bound the field had. That raised out of evidence_normalizer
+    and ended an investigation whose tool calls were already paid for.
+    """
+
+    def _evidence(self, query: str):
+        from datetime import UTC, datetime
+
+        from aiops_rca.schemas.investigation import PlannedToolCall
+        from aiops_rca.tools.normalizer import normalize_observation
+        from aiops_rca.tools.result import ToolExecutionResult
+
+        now = datetime(2026, 8, 21, tzinfo=UTC)
+        planned = PlannedToolCall(
+            tool_name="esql",
+            arguments={"query": query},
+            purpose="시간대별 오류 집계",
+            target_hypothesis_ids=[],
+        )
+        result = ToolExecutionResult(
+            tool_call_id="call-1",
+            tool_name="esql",
+            source="elasticsearch",
+            status="ok",
+            request={"query": query},
+            response="Results\n[{\"n\": 3}]",
+            started_at=now,
+            finished_at=now,
+        )
+        return normalize_observation(result, planned, host_id=None, host="vm-1")
+
+    def test_a_long_esql_query_is_kept(self):
+        # Well past the old bound, and the shape the prompt asks for.
+        query = "FROM vm-logs-* | WHERE " + " OR ".join(
+            f'MATCH(message, "term{index}")' for index in range(40)
+        )
+        assert len(query) > 1000
+        assert self._evidence(query)[0].search_query == query
+
+    def test_a_query_too_long_to_store_costs_a_footnote_not_the_run(self):
+        # Cutting it would leave something nobody can re-run, which is the only
+        # reason the field exists. Dropping it loses a footnote; raising loses
+        # every tool call the investigation had already made.
+        query = "FROM vm-logs-* | WHERE " + ("x" * 5_000)
+        evidence = self._evidence(query)
+        assert evidence[0].search_query is None
+        assert evidence[0].summary

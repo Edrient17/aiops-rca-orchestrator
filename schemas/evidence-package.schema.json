@@ -712,7 +712,7 @@
             "string",
             "null"
           ],
-          "maxLength": 1000,
+          "maxLength": 4000,
           "description": "The query this evidence was drawn from, as the tool reported it -- copied, not composed. A footnote carrying it can reopen the citation on the lines it came from; without it the reader lands on everything the host logged that hour, which is not what was cited."
         }
       }

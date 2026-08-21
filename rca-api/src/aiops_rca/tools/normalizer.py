@@ -361,12 +361,22 @@ def _observed_text(observed: Mapping[str, Any], response: Mapping[str, Any]) -> 
     return " ".join(parts)
 
 
+#: What `Evidence.search_query` will accept. Held here as well so a query too
+#: long to store is dropped rather than raised: this field exists so a footnote
+#: can reopen the citation, and a query cut in half cannot be re-run, so a
+#: partial one is worth less than none. Losing it costs a footnote; raising it
+#: costs the whole investigation, which is what happened once.
+MAX_SEARCH_QUERY_CHARS = 4000
+
+
 def _search_query(arguments: Mapping[str, Any]) -> str | None:
     query = arguments.get("query")
-    if isinstance(query, str):
-        return query
-    query_body = arguments.get("query_body")
-    return _json(query_body) if query_body is not None else None
+    if not isinstance(query, str):
+        query_body = arguments.get("query_body")
+        query = _json(query_body) if query_body is not None else None
+    if query is None or len(query) > MAX_SEARCH_QUERY_CHARS:
+        return None
+    return query
 
 
 # Aggregate arithmetic produces every digit a float can hold, and the report

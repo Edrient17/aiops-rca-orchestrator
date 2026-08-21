@@ -178,7 +178,12 @@ class Evidence(StrictModel):
     observed: ObservedList | None = None
     data_quality: DataQuality | None
     tool_call_id: Annotated[str, Field(min_length=1, max_length=200)]
-    search_query: Annotated[str, Field(max_length=1000)] | None = None
+    #: 1000 was enough for a Lucene string and not for ES|QL. A planner
+    #: following this project's own guidance writes several aggregates with a
+    #: filter on each, and one such query overran the bound -- which raised out
+    #: of evidence_normalizer and ended an investigation that had already paid
+    #: for its tool calls.
+    search_query: Annotated[str, Field(max_length=4000)] | None = None
 
 
 class ConfirmedFact(StrictModel):
