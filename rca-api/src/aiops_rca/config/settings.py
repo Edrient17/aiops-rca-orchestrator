@@ -19,9 +19,21 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr
     openai_base_url: str | None = None
-    rca_question_model: str = "gpt-5.4-mini"
-    rca_investigation_model: str = "gpt-5.6-terra"
-    rca_writer_model: str = "gpt-5.4-mini"
+    # Which model each stage gets. The five investigation nodes shared one
+    # setting, so the step that reads a host name out of a JSON response was
+    # billed at whatever the step that weighs evidence against hypotheses
+    # needed -- and both moved together, so neither could be tuned.
+    #
+    # The split is by what the step decides, not by where it sits in the graph.
+    # A step that judges -- what was observed, what could explain it, what the
+    # evidence does to those explanations, what to look at next -- aims the
+    # whole investigation, and a wrong judgement produces a confident report
+    # about the wrong thing. A step that fetches a name or fills in a schema
+    # fails loudly and gets another turn.
+    rca_reasoning_model: str = "gpt-5.6-terra"
+    rca_routine_model: str = "gpt-5.6-luna"
+    rca_question_model: str = "gpt-5.6-luna"
+    rca_writer_model: str = "gpt-5.6-terra"
 
     zabbix_mcp_url: str
     zabbix_mcp_auth_token: SecretStr

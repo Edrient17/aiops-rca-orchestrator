@@ -69,48 +69,52 @@ class InvestigationService:
         self.registry = registry
         self.adapters = adapters
         executor = ToolExecutor(adapters, registry)
-        self.graph = build_collector_graph(
-            CollectorNodes(
-                resolve_hosts=ResolveHostsNode(
-                    model=model,
-                    model_name=settings.rca_investigation_model,
-                    executor=executor,
-                    registry=registry,
-                ),
-                establish_phenomenon=EstablishPhenomenonNode(
-                    model=model,
-                    model_name=settings.rca_investigation_model,
-                    executor=executor,
-                    registry=registry,
-                ),
-                hypothesis_planner=HypothesisPlannerNode(
-                    model=model,
-                    model_name=settings.rca_investigation_model,
-                ),
-                observation_planner=ObservationPlannerNode(
-                    model=model,
-                    model_name=settings.rca_investigation_model,
-                    registry=registry,
-                ),
-                tool_router=ToolRouterNode(registry),
-                tool_executor=ToolExecutorNode(executor),
-                evidence_normalizer=EvidenceNormalizerNode(),
-                hypothesis_updater=HypothesisUpdaterNode(
-                    model=model,
-                    model_name=settings.rca_investigation_model,
-                ),
-                stop_guard=StopGuardNode(),
-                evidence_package_builder=EvidencePackageBuilderNode(),
-                report_writer=ReportWriterNode(
-                    # Bound to the model here so the node has no opinion about
-                    # how a client is built, and a test can drive it with none.
-                    functools.partial(
-                        write_report, model, settings.rca_writer_model
-                    ),
-                    settings.rca_writer_model,
-                ),
-                report_eval=ReportEvalNode(),
+        # Held rather than inlined so the wiring can be read back: which model
+        # each node was given is a decision worth a test, and it is invisible
+        # once the graph is compiled.
+        self.nodes = CollectorNodes(
+            resolve_hosts=ResolveHostsNode(
+                model=model,
+                model_name=settings.rca_routine_model,
+                executor=executor,
+                registry=registry,
             ),
+            establish_phenomenon=EstablishPhenomenonNode(
+                model=model,
+                model_name=settings.rca_reasoning_model,
+                executor=executor,
+                registry=registry,
+            ),
+            hypothesis_planner=HypothesisPlannerNode(
+                model=model,
+                model_name=settings.rca_reasoning_model,
+            ),
+            observation_planner=ObservationPlannerNode(
+                model=model,
+                model_name=settings.rca_reasoning_model,
+                registry=registry,
+            ),
+            tool_router=ToolRouterNode(registry),
+            tool_executor=ToolExecutorNode(executor),
+            evidence_normalizer=EvidenceNormalizerNode(),
+            hypothesis_updater=HypothesisUpdaterNode(
+                model=model,
+                model_name=settings.rca_reasoning_model,
+            ),
+            stop_guard=StopGuardNode(),
+            evidence_package_builder=EvidencePackageBuilderNode(),
+            report_writer=ReportWriterNode(
+                # Bound to the model here so the node has no opinion about
+                # how a client is built, and a test can drive it with none.
+                functools.partial(
+                    write_report, model, settings.rca_writer_model
+                ),
+                settings.rca_writer_model,
+            ),
+            report_eval=ReportEvalNode(),
+        )
+        self.graph = build_collector_graph(
+            self.nodes,
             checkpointer=InMemorySaver(),
         )
 
@@ -216,7 +220,11 @@ class InvestigationService:
                     "request_id": api_request.request.request_id,
                     "investigation_id": investigation_id,
                     "host_queries": parsed.host_queries,
-                    "model": self.settings.rca_investigation_model,
+                    # Named per tier rather than as one "model", which stopped
+                    # being true the moment the nodes were split and would have
+                    # sent anyone reading a trace to the wrong model.
+                    "reasoning_model": self.settings.rca_reasoning_model,
+                    "routine_model": self.settings.rca_routine_model,
                 },
                 "tags": ["evidence_collector", parsed.request_type],
             },
@@ -226,7 +234,7 @@ class InvestigationService:
         runs.append(
             AgentRun(
                 stage="evidence_collector",
-                model=self.settings.rca_investigation_model,
+                model=_collector_models(self.settings),
                 duration_ms=_elapsed_ms(started),
                 output=(
                     package.model_dump(mode="json", by_alias=True)
@@ -569,6 +577,19 @@ def _without_examples(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_examples(item) for item in value]
     return value
+
+
+def _collector_models(settings: Settings) -> str:
+    """What actually ran this stage, for the audit row.
+
+    The stage is one row but no longer one model, and a row naming only the
+    stronger one would understate what the cheaper nodes decided.
+    """
+    reasoning = settings.rca_reasoning_model
+    routine = settings.rca_routine_model
+    if reasoning == routine:
+        return reasoning
+    return f"{reasoning}+{routine}"
 
 
 def _elapsed_ms(started: float) -> int:
