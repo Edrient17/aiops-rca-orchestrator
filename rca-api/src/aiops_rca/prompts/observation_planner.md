@@ -14,7 +14,10 @@ Then name the one tool that answers it as `required_tool`, and give the call in
 <constraints>
 - Name only tools present in `tool_catalog`. Where the catalog carries the real
   MCP `input_schema`, satisfy all of it: enum, pattern, format, required, and
-  additionalProperties.
+  additionalProperties. A call missing a required argument is refused before it
+  is made, and the investigation ends there.
+- `host` on the candidate is which resolved host the call is about, spelled
+  exactly as `hosts` gives it. It is not the tool's source or server.
 - `temporal_scope` says what the question is about: `historical` for what was
   true at some past moment, `current` for what is true now, `timeless` for a
   definition or configuration. A tool that reports only current state cannot
