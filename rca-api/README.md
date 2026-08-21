@@ -63,6 +63,32 @@ try it with `--limit` first.
 Rows from before the current schemas, and report kinds since retired, are
 counted and explained rather than dropped or raised on.
 
+## Log store facts in the prompt
+
+`prompts/log_queries.md` is composed into the three nodes that query logs. It
+names the index pattern, the fields that carry the host and the message, and
+which of three ways of matching text actually works. Every claim in it was
+measured, and every claim in it can go stale: this deployment has three hosts
+and a demo index template, and `host.name` in particular inverts between an ECS
+mapping and this one.
+
+A stale prompt is worse than none — the model follows it and names a field that
+is not there — so re-derive it whenever the store changes:
+
+```bash
+python -m aiops_rca.evals.log_store probe
+```
+
+and verify the claims still hold, which exits non-zero when they do not:
+
+```bash
+python -m aiops_rca.evals.log_store check
+```
+
+`check` reads the claims out of the prompt rather than keeping a copy, so the
+prompt stays the only place they are written. It needs the cluster, so CI runs
+the unit tests around it but not the check itself.
+
 ## Collector graph
 
 [docs/collector-graph.md](docs/collector-graph.md) draws the node topology and
