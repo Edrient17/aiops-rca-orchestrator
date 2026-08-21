@@ -122,6 +122,14 @@ def _counted_quantities(value: Any, field: str | None = None) -> set[int]:
         # counts whatever those names happen to be.
         if field == "select_counts":
             found.update(item for item in value.values() if isinstance(item, int))
+        # The rows a tool returned. Their column names belong to the query that
+        # asked for them -- a planner writing ES|QL names its own aggregates,
+        # `n` one turn and `errors` the next -- so no list of field names can
+        # cover them. Inside a row every integer is a value the tool reported,
+        # which is what an allowlist is protecting against out in prose, where
+        # 09:25:14 could otherwise ground a claim of twenty-five.
+        if field == "observed":
+            found |= _row_quantities(value.get("items"))
         for key, nested in value.items():
             found |= _counted_quantities(nested, key)
         return found
@@ -131,6 +139,20 @@ def _counted_quantities(value: Any, field: str | None = None) -> set[int]:
             found |= _counted_quantities(nested, field)
         return found
     return set()
+
+
+def _row_quantities(rows: Any) -> set[int]:
+    """Every number the returned rows hold, whatever their columns are called."""
+    found: set[int] = set()
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return found
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        for item in row.values():
+            if isinstance(item, int) and not isinstance(item, bool):
+                found.add(item)
+    return found
 
 
 def _evidence_items(package: Mapping[str, Any]) -> list[Mapping[str, Any]]:

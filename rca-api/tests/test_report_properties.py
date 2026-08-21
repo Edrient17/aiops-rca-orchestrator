@@ -381,3 +381,66 @@ class TestGroupedDigits:
             )
             == []
         )
+
+
+BY_SOURCE = {
+    "evidence_id": "e1",
+    "summary": "소스별 집계: 8 rows",
+    "observed": {
+        "kind": "rows",
+        "omitted": 0,
+        "items": [
+            {"log.file.path": "/hostfs/var/log/syslog", "n": 43847, "errors": 0},
+            {"log.file.path": "/hostfs/var/log/msa-demo/api-service.log", "n": 33975},
+        ],
+    },
+}
+
+
+class TestNumbersInsideReturnedRows:
+    """A row's column names belong to the query, not to any list we keep.
+
+    Lifting ES|QL rows out of the reply string put them in `observed`, where
+    the check looked only at how many rows there were. The report quoted
+    43,847 out of a row and was told the evidence counted [0, 8]. Every draft
+    since has been sent back over numbers that were sitting in the evidence,
+    which costs a second writer pass and hands the writer a finding that is
+    not true.
+
+    An allowlist of field names cannot fix it: the planner names its own
+    aggregates, `n` one turn and `errors` the next.
+    """
+
+    def test_a_number_from_a_row_grounds_a_claim(self):
+        assert (
+            counts_are_grounded(
+                _package(BY_SOURCE),
+                _report("by_service", _item("syslog 43,847건, api-service 33,975건")),
+            )
+            == []
+        )
+
+    def test_a_zero_in_a_row_grounds_a_claim_of_none(self):
+        # "ERROR는 0건" is the commonest true sentence these reports write.
+        assert (
+            counts_are_grounded(
+                _package(BY_SOURCE), _report("errors", _item("ERROR는 0건입니다"))
+            )
+            == []
+        )
+
+    def test_a_number_no_row_holds_is_still_caught(self):
+        findings = counts_are_grounded(
+            _package(BY_SOURCE), _report("by_service", _item("syslog 99,999건"))
+        )
+        assert [f.check for f in findings] == ["counts_are_grounded"]
+
+    def test_prose_is_still_held_to_the_named_fields(self):
+        # The protection this loosens inside rows stays outside them. The
+        # evidence grounds something, so the check does not abstain, and a
+        # timestamp sitting in its summary still grounds nothing.
+        noisy = {**BY_SOURCE, "summary": "소스별 집계, read at 2026-08-20T09:25:14Z"}
+        findings = counts_are_grounded(
+            _package(noisy), _report("answer", _item("트리거: 25개"))
+        )
+        assert [f.check for f in findings] == ["counts_are_grounded"]
