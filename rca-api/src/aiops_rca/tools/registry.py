@@ -28,6 +28,11 @@ class ToolPolicy(StrictModel):
     name: str
     source: ToolSource
     kind: ToolKind = "structured"
+    # Arguments without which the call is not worth making. This is a copy of
+    # what the servers declare in their own input schemas, and a copy drifts:
+    # host_id was listed here as required long after the tools began taking a
+    # host name instead, so the pipeline refused calls the server would have
+    # answered. How a tool wants to be addressed is the tool's to say.
     requires: tuple[str, ...] = ()
     requires_any: tuple[str, ...] = ()
     priority: int = 100
@@ -157,14 +162,6 @@ def _validate_tool_specific_arguments(name: str, arguments: Mapping[str, Any]) -
                 "get_metric_history.item_id must be a scalar, not item_ids"
             )
         _require_digit_id(item_id, "item_id")
-    if name in {
-        "get_incident_events",
-        "get_metric_summary",
-        "get_metric_history",
-        "list_relevant_metrics",
-        "get_related_events",
-    }:
-        _require_digit_id(arguments.get("host_id"), "host_id")
 
 
 def _tool(name: str, source: ToolSource, **kwargs: Any) -> ToolPolicy:
@@ -183,7 +180,7 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_incident_events",
             "zabbix",
-            requires=("host_id", "time_from", "time_to"),
+            requires=("time_from", "time_to"),
             priority=20,
             result_list_fields=("events",),
             window_policy_argument="policy",
@@ -197,7 +194,7 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_related_events",
             "zabbix",
-            requires=("host_id", "time_from", "time_to"),
+            requires=("time_from", "time_to"),
             requires_any=("trigger_ids", "tags"),
             priority=25,
             result_list_fields=("events",),
@@ -206,14 +203,14 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "list_relevant_metrics",
             "zabbix",
-            requires=("host_id", "keywords"),
+            requires=("keywords",),
             priority=20,
             result_list_fields=("metrics",),
         ),
         _tool(
             "get_metric_summary",
             "zabbix",
-            requires=("host_id", "item_ids", "time_from", "time_to", "aggregation"),
+            requires=("item_ids", "time_from", "time_to", "aggregation"),
             priority=20,
             result_list_fields=("series", "metrics"),
             window_policy_argument="policy",
@@ -221,7 +218,7 @@ DEFAULT_TOOL_REGISTRY = ToolRegistry(
         _tool(
             "get_metric_history",
             "zabbix",
-            requires=("host_id", "item_id", "time_from", "time_to", "aggregation"),
+            requires=("item_id", "time_from", "time_to", "aggregation"),
             priority=30,
             result_list_fields=("points",),
         ),
