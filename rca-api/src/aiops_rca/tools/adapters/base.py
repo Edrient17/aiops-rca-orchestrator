@@ -84,7 +84,7 @@ class McpAdapter:
         except Exception as exception:
             response = None
             status = "error"
-            error = str(exception) or exception.__class__.__name__
+            error = describe_failure(exception)
 
         return ToolExecutionResult(
             tool_call_id=call_id,
@@ -97,6 +97,30 @@ class McpAdapter:
             started_at=started_at,
             finished_at=datetime.now(UTC),
         )
+
+
+def describe_failure(exception: BaseException) -> str:
+    """What actually went wrong, rather than what the concurrency helper called it.
+
+    An MCP client that runs its request inside a TaskGroup raises an
+    ExceptionGroup, and `str()` of one is "unhandled errors in a TaskGroup
+    (1 sub-exception)" -- the same sentence for an ES|QL syntax error, a field
+    that does not exist, and a dead connection. That sentence is what reached
+    the planner, the unknowns and the report, so a live investigation retried a
+    broken query unchanged and then reported that the tooling had failed.
+
+    The causes are one level down, or several. Unwrapping them costs nothing
+    and is the difference between a message a planner can act on and a message
+    that only says something happened.
+    """
+    if isinstance(exception, BaseExceptionGroup):
+        inner = "; ".join(
+            describe_failure(item) for item in exception.exceptions
+        )
+        if inner:
+            return inner
+    text = str(exception).strip()
+    return text or exception.__class__.__name__
 
 
 def classify_result(policy: ToolPolicy, response: Any) -> tuple[str, str | None]:
