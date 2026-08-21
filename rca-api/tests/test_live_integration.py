@@ -13,6 +13,8 @@ from aiops_rca.schemas.parsed_request import ParsedRequest
 from aiops_rca.schemas.report import Report, ReportSection
 from aiops_rca.services.investigation import InvestigationService
 from aiops_rca.services.model_contracts import (
+    DiscoveredHost,
+    HostSearchDecision,
     HypothesisPlan,
     HypothesisUpdateDecision,
     ObservationDecision,
@@ -160,6 +162,31 @@ class FixtureModel:
                 allow_dynamic_expansion=True,
                 ambiguities=[],
                 original_question=question,
+            )
+        if issubclass(output_type, HostSearchDecision):
+            # Resolving a host is a search now, not one Zabbix call: the first
+            # turn names a tool, the next reads what came back.
+            attempts = payload["attempts"]
+            if not attempts:
+                return HostSearchDecision(
+                    hosts=[],
+                    tool_name="find_hosts",
+                    arguments_json=json.dumps({"query": payload["unresolved"][0]}),
+                    stop_reason=None,
+                )
+            named = [
+                query
+                for query in payload["unresolved"]
+                if query in attempts[-1]["response"]
+            ]
+            return HostSearchDecision(
+                hosts=[
+                    DiscoveredHost(host=query, host_id="10101", found_by="find_hosts")
+                    for query in named
+                ],
+                tool_name=None,
+                arguments_json="{}",
+                stop_reason="찾음" if named else "아무것도 못 찾음",
             )
         if issubclass(output_type, PhenomenonScanPlan):
             # The scan is planned now rather than hardcoded to Zabbix: one turn
@@ -367,6 +394,9 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
     # it was bound to rather than for the stored contract.
     assert model.output_types == [
         "CatalogBoundParsedRequest",
+        # Two turns to resolve a host: name a lookup, then read its answer.
+        "BoundHostSearchDecision",
+        "BoundHostSearchDecision",
         "BoundPhenomenonScanPlan",
         "PhenomenonDecision",
         "HypothesisPlan",

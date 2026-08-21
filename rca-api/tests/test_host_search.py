@@ -1,41 +1,33 @@
-"""Finding a host that Zabbix does not know.
+"""Finding the hosts an investigation is about.
 
-Host resolution was one call to `find_hosts` and nothing else, so a machine
-Zabbix had never been told about could not be investigated at all -- even though
-the same name sits in the log index and in the Wazuh agent list. The name is
-what the three sources share; the Zabbix id is one source's handle for it.
+This called `find_hosts` and nothing else, so a machine outside Zabbix could not
+be investigated at all -- even though the same name sits in a log index and in a
+Wazuh agent list. Keeping Zabbix as a fast path kept one tool's name in the
+pipeline for the sake of a model call, which is the trade this project decided
+against.
 
-Zabbix is still asked first, because that is where a monitored host almost
-always is and asking costs no model call. The model is the fallback, and it only
-sees the names the cheap path failed on.
+The node plans its lookups now. What survives from the old one is the property
+worth keeping: a name that matches several hosts is left unresolved rather than
+guessed at, because an investigation of the wrong machine reads exactly like an
+investigation of the right one.
 """
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from typing import Any
 
-import pytest
 from conftest import make_state
 
 from aiops_rca.graph.deterministic_nodes import MAX_HOST_SEARCH_TURNS, ResolveHostsNode
 from aiops_rca.schemas.investigation import InvestigationLimits, ResolvedHost
 from aiops_rca.services.model_contracts import DiscoveredHost, HostSearchDecision
+from aiops_rca.tools.registry import ToolPolicyError
 from aiops_rca.tools.result import ToolExecutionResult
 
 
-class ZabbixThatKnowsNothing:
-    """find_hosts answers, and matches nothing."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def execute(self, tool_name: str, arguments: Any, _context: Any) -> Any:
-        self.calls.append((tool_name, dict(arguments)))
-        return _ok("find_hosts", {"hosts": []})
-
-
-def _ok(tool_name: str, response: Any, status: str = "ok") -> ToolExecutionResult:
-    now = datetime(2026, 8, 20, tzinfo=UTC)
+def _result(tool_name: str, response: Any, status: str = "ok") -> ToolExecutionResult:
+    now = datetime(2026, 8, 21, tzinfo=UTC)
     return ToolExecutionResult(
         tool_call_id=f"call-{tool_name}-{id(response)}",
         tool_name=tool_name,
@@ -59,160 +51,162 @@ class ScriptedModel:
 
 
 class RecordingExecutor:
-    def __init__(self, response: Any = None) -> None:
+    def __init__(self, response: Any = None, refuse: bool = False) -> None:
         self.calls: list[Any] = []
-        self.response = response if response is not None else {"hits": []}
+        self.response = response if response is not None else {"hosts": []}
+        self.refuse = refuse
 
     async def execute(self, planned: Any, _context: Any) -> ToolExecutionResult:
         self.calls.append(planned)
-        return _ok(planned.tool_name, self.response)
+        if self.refuse:
+            raise ToolPolicyError(f"{planned.tool_name} is generic and needs the gate")
+        return _result(planned.tool_name, self.response)
 
 
-def _state(**updates: Any):
-    return make_state(
-        host_queries=["ghost-host"],
-        limits=InvestigationLimits(max_tool_calls=10),
-        tool_catalog=[{"name": "search", "source": "elasticsearch"}],
-        **updates,
+def _look(tool_name: str = "find_hosts", **arguments: Any) -> HostSearchDecision:
+    return HostSearchDecision(
+        hosts=[],
+        tool_name=tool_name,
+        arguments_json=json.dumps(arguments),
+        stop_reason=None,
     )
 
 
-def _run(model=None, executor=None, zabbix=None):
-    zabbix = zabbix or ZabbixThatKnowsNothing()
-    node = ResolveHostsNode(zabbix, model=model, model_name="stub", executor=executor)
-    return dict(asyncio.run(node(_state()))), zabbix
+def _report(*hosts: DiscoveredHost, stop: str = "찾음") -> HostSearchDecision:
+    return HostSearchDecision(
+        hosts=list(hosts), tool_name=None, arguments_json="{}", stop_reason=stop,
+    )
 
 
-FOUND = HostSearchDecision(
-    hosts=[DiscoveredHost(host="ghost-host", host_id=None, found_by="search")],
-    tool_name=None,
-    arguments_json="{}",
-    stop_reason="로그 색인에서 찾음",
-)
-
-LOOK_IN_LOGS = HostSearchDecision(
-    hosts=[],
-    tool_name="search",
-    arguments_json='{"index": "logs-*", "query_body": {"size": 1}}',
-    stop_reason=None,
-)
+def _found(host: str, host_id: str | None = None, by: str = "find_hosts"):
+    return DiscoveredHost(host=host, host_id=host_id, found_by=by)
 
 
-class TestWithoutTheFallback:
-    def test_nothing_changes_when_no_model_is_wired(self):
-        # The node is constructed without a model in tests that predate the
-        # search, and in any deployment that has not enabled it.
-        update, zabbix = _run()
-        assert [name for name, _ in zabbix.calls] == ["find_hosts"]
+def _run(*decisions, queries=("vm-java-docker-2",), executor=None, **updates):
+    model = ScriptedModel(*decisions)
+    executor = executor or RecordingExecutor()
+    node = ResolveHostsNode(model=model, model_name="stub", executor=executor)
+    state = make_state(
+        host_queries=list(queries),
+        limits=updates.pop("limits", InvestigationLimits(max_tool_calls=10)),
+        tool_catalog=[{"name": "find_hosts"}, {"name": "search"}],
+        **updates,
+    )
+    return dict(asyncio.run(node(state))), model, executor
+
+
+class TestResolvingByName:
+    def test_one_match_resolves(self):
+        update, _model, _executor = _run(
+            _look(query="vm-java-docker-2"),
+            _report(_found("vm-java-docker-2", "11094")),
+        )
+        assert [(h.host, h.host_id) for h in update["hosts"]] == [
+            ("vm-java-docker-2", "11094"),
+        ]
+        assert update["unresolved_hosts"] == []
+        assert update["stop_reason"] is None
+
+    def test_several_matches_are_never_guessed_between(self):
+        # An investigation of the wrong machine reads exactly like one of the
+        # right machine, so the name is left unresolved and said so.
+        update, _model, _executor = _run(
+            _look(query="payment"),
+            _report(_found("payment-api", "1"), _found("payment-worker", "2")),
+            queries=("payment",),
+        )
         assert update["hosts"] == []
-        assert update["unresolved_hosts"] == ["ghost-host"]
+        assert update["unresolved_hosts"] == ["payment"]
+        assert [i.code for i in update["unknowns"]] == ["host_ambiguous"]
         assert update["stop_reason"] == "no host could be resolved for investigation"
 
+    def test_a_name_nothing_matched_says_so(self):
+        update, _model, _executor = _run(_report(stop="아무것도 못 찾음"))
+        assert update["unresolved_hosts"] == ["vm-java-docker-2"]
+        assert [i.code for i in update["unknowns"]] == ["host_not_found"]
 
-class TestSearchingElsewhere:
-    def test_zabbix_is_asked_first_and_only_once(self):
-        # The fallback costs a model call. A monitored host must not pay for it.
-        model = ScriptedModel(FOUND)
-        _update, zabbix = _run(model=model, executor=RecordingExecutor())
-        assert [name for name, _ in zabbix.calls] == ["find_hosts"]
-
-    def test_a_host_found_elsewhere_carries_no_zabbix_id(self):
+    def test_a_host_found_outside_zabbix_carries_no_id(self):
         # A log line does not have one, and inventing it would put a string into
         # every later Zabbix call that Zabbix has never heard of.
-        model = ScriptedModel(FOUND)
-        update, _ = _run(model=model, executor=RecordingExecutor())
+        update, _model, _executor = _run(
+            _look("search", index="vm-logs-*"),
+            _report(_found("vm-java-docker-2", None, by="search")),
+        )
         host = update["hosts"][0]
         assert isinstance(host, ResolvedHost)
-        assert host.host == "ghost-host"
         assert host.host_id is None
         assert host.found_by == "search"
 
-    def test_finding_it_clears_the_unresolved_name(self):
-        model = ScriptedModel(FOUND)
-        update, _ = _run(model=model, executor=RecordingExecutor())
-        assert update["unresolved_hosts"] == []
-        assert update["stop_reason"] != "no host could be resolved for investigation"
 
-    def test_the_model_only_hears_about_names_zabbix_missed(self):
-        model = ScriptedModel(FOUND)
-        _run(model=model, executor=RecordingExecutor())
-        assert model.payloads[0]["unresolved"] == ["ghost-host"]
+class TestChoosingWhereToLook:
+    def test_the_named_tool_is_what_gets_called(self):
+        # Nothing here names a tool. The catalog is offered and the model picks.
+        _update, _model, executor = _run(
+            _look("search", index="vm-logs-*"),
+            _report(_found("vm-java-docker-2", None, by="search")),
+        )
+        assert [call.tool_name for call in executor.calls] == ["search"]
 
-    def test_a_named_tool_is_executed_and_its_answer_shown_back(self):
-        model = ScriptedModel(LOOK_IN_LOGS, FOUND)
-        executor = RecordingExecutor({"hits": [{"host": {"name": "ghost-host"}}]})
-        update, _ = _run(model=model, executor=executor)
-        assert [planned.tool_name for planned in executor.calls] == ["search"]
-        # The second turn is given what the first turn's call returned, or it
-        # has no way to read a name out of it.
-        assert model.payloads[1]["attempts"][0]["tool_name"] == "search"
-        assert "ghost-host" in model.payloads[1]["attempts"][0]["response"]
-        assert update["hosts"][0].host == "ghost-host"
+    def test_the_selector_is_passed_through_as_data(self):
+        # A host group is the template's idea, not this node's. It is handed to
+        # the model rather than turned into arguments here.
+        selector = {"mode": "host_group", "group_ids": ["73"]}
+        _update, model, _executor = _run(
+            _report(_found("in-the-group", "10")),
+            collection={"host_selector": selector},
+        )
+        assert model.payloads[0]["host_selector"] == selector
 
-    def test_the_search_call_is_counted_against_the_budget(self):
-        model = ScriptedModel(LOOK_IN_LOGS, FOUND)
-        executor = RecordingExecutor()
-        update, _ = _run(model=model, executor=executor)
-        assert update["tool_call_count"] == 2
+    def test_a_host_the_request_did_not_name_is_still_kept(self):
+        # Listing a group returns hosts nobody asked for by name; they are the
+        # answer, not a mismatch.
+        update, _model, _executor = _run(
+            _report(_found("in-the-group", "10")),
+            queries=(),
+            collection={"host_selector": {"mode": "host_group", "group_ids": ["73"]}},
+        )
+        assert [h.host for h in update["hosts"]] == ["in-the-group"]
 
     def test_the_last_lookup_is_read_before_giving_up(self):
         # Live, the host was in Wazuh and the first lookup went to the log
         # index. The model named Wazuh on its second turn, the call was made,
-        # and the loop ended before anyone read the answer -- so a host that was
-        # there was reported as not found, and the call was paid for and thrown
-        # away.
-        model = ScriptedModel(LOOK_IN_LOGS, LOOK_IN_LOGS, FOUND)
-        executor = RecordingExecutor({"agents": [{"name": "ghost-host"}]})
-        update, _ = _run(model=model, executor=executor)
+        # and the loop ended before anyone read the answer.
+        _update, model, executor = _run(
+            _look("find_hosts", query="x"),
+            _look("search", index="vm-logs-*"),
+            _report(_found("vm-java-docker-2", None, by="search")),
+        )
         assert len(executor.calls) == MAX_HOST_SEARCH_TURNS
-        # One more model call than lookups: the last one only reads.
         assert len(model.payloads) == MAX_HOST_SEARCH_TURNS + 1
-        assert [host.host for host in update["hosts"]] == ["ghost-host"]
-
-    def test_the_reading_turn_is_skipped_when_nothing_was_looked_up(self):
-        # Nothing to read means nothing to pay a model call for.
-        model = ScriptedModel(FOUND)
-        _run(model=model, executor=RecordingExecutor())
-        assert len(model.payloads) == 1
-
-    def test_a_host_named_twice_is_kept_once(self):
-        # The reading turn sees the same lookups as the turn before it, so it
-        # can name a host that has already been recorded.
-        model = ScriptedModel(LOOK_IN_LOGS, FOUND, FOUND)
-        update, _ = _run(model=model, executor=RecordingExecutor())
-        assert [host.host for host in update["hosts"]] == ["ghost-host"]
 
     def test_it_gives_up_rather_than_looping(self):
-        model = ScriptedModel(LOOK_IN_LOGS)
-        executor = RecordingExecutor()
-        _run(model=model, executor=executor)
+        _update, _model, executor = _run(_look(query="x"))
         assert len(executor.calls) == MAX_HOST_SEARCH_TURNS
+
+
+class TestWhenTheLookupCannotHappen:
+    def test_the_budget_stops_it_cleanly(self):
+        update, _model, executor = _run(
+            _look(query="x"),
+            limits=InvestigationLimits(max_tool_calls=1),
+            tool_call_count=1,
+            tool_results=[_result("earlier", {})],
+        )
+        assert executor.calls == []
+        assert "host_search_budget_exhausted" in [i.code for i in update["unknowns"]]
 
     def test_unreadable_arguments_stop_the_search_and_say_so(self):
         broken = HostSearchDecision(
-            hosts=[], tool_name="search", arguments_json="not json", stop_reason=None
+            hosts=[], tool_name="search", arguments_json="not json", stop_reason=None,
         )
-        model = ScriptedModel(broken)
-        executor = RecordingExecutor()
-        update, _ = _run(model=model, executor=executor)
+        update, _model, executor = _run(broken)
         assert executor.calls == []
-        assert "host_search_unusable" in [item.code for item in update["unknowns"]]
+        assert "host_search_unusable" in [i.code for i in update["unknowns"]]
 
-
-@pytest.mark.parametrize("budget", [1])
-def test_the_search_is_skipped_when_the_budget_is_already_gone(budget):
-    # find_hosts has already spent the only call. Asking a model where else to
-    # look would produce a plan nothing can execute.
-    model = ScriptedModel(LOOK_IN_LOGS)
-    executor = RecordingExecutor()
-    node = ResolveHostsNode(
-        ZabbixThatKnowsNothing(), model=model, model_name="stub", executor=executor
-    )
-    state = make_state(
-        host_queries=["ghost-host"],
-        limits=InvestigationLimits(max_tool_calls=budget),
-        tool_catalog=[],
-    )
-    update = dict(asyncio.run(node(state)))
-    assert executor.calls == []
-    assert "host_search_budget_exhausted" in [i.code for i in update["unknowns"]]
+    def test_a_refused_call_is_recorded_rather_than_raised(self):
+        update, _model, _executor = _run(
+            _look("search", index="vm-logs-*"),
+            executor=RecordingExecutor(refuse=True),
+        )
+        assert "host_search_blocked" in [i.code for i in update["unknowns"]]
+        assert update["stop_reason"] == "no host could be resolved for investigation"

@@ -72,7 +72,6 @@ class InvestigationService:
         self.graph = build_collector_graph(
             CollectorNodes(
                 resolve_hosts=ResolveHostsNode(
-                    adapters.zabbix,
                     model=model,
                     model_name=settings.rca_investigation_model,
                     executor=executor,
