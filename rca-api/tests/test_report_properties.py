@@ -48,6 +48,17 @@ TRIGGERS = {
 }
 
 
+HOURLY = {
+    "evidence_id": "e1",
+    "summary": "시간대별 집계: 24 rows",
+    "observed": {
+        "kind": "rows",
+        "omitted": 0,
+        "items": [{"bucket": "00", "total": 7261}, {"bucket": "13", "total": 5592}],
+    },
+}
+
+
 class TestCountsAreGrounded:
     def test_a_miscount_is_caught(self):
         # The report said twenty-five. Zabbix returned twenty-six, nothing was
@@ -322,3 +333,51 @@ class TestUnsupportedCauseIsAdmitted:
         # would flag every report of a kind that does not reason causally.
         report = _sectioned(limitations="해당 없음")
         assert unsupported_cause_is_admitted({"hypotheses": []}, report, TEMPLATE) == []
+
+
+class TestGroupedDigits:
+    """A report writes 7,261건. The check has to read that as seven thousand.
+
+    It read 261 -- bare digits cannot cross a comma -- so a sentence stating a
+    number the evidence carried was rejected as ungrounded. The investigation
+    paid for a second draft, half its wall clock, and the writer was handed a
+    finding that was not true about a sentence that was.
+    """
+
+
+    def test_a_grouped_number_the_evidence_carries_is_accepted(self):
+        assert (
+            counts_are_grounded(
+                _package(HOURLY),
+                _report("volume", _item("가장 많은 구간은 7,261건입니다")),
+            )
+            == []
+        )
+
+    def test_the_low_end_too(self):
+        assert (
+            counts_are_grounded(
+                _package(HOURLY),
+                _report("volume", _item("가장 적은 구간은 5,592건입니다")),
+            )
+            == []
+        )
+
+    def test_a_grouped_number_nothing_counted_is_still_caught(self):
+        # The fix must not turn the check off: reading the whole number is the
+        # point, not accepting whatever is written.
+        findings = counts_are_grounded(
+            _package(HOURLY),
+            _report("volume", _item("가장 많은 구간은 9,999건입니다")),
+        )
+        assert [f.check for f in findings] == ["counts_are_grounded"]
+        assert "9,999" in findings[0].detail
+
+    def test_the_same_number_ungrouped_reads_the_same(self):
+        # Whether the writer put the comma in cannot change the verdict.
+        assert (
+            counts_are_grounded(
+                _package(HOURLY), _report("volume", _item("7261건"))
+            )
+            == []
+        )

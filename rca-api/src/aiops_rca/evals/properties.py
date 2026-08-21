@@ -19,7 +19,12 @@ from typing import Any
 
 #: A number written against one of these is a claim about how many, and a claim
 #: about how many is answerable from the evidence rather than from memory.
-_COUNTED = re.compile(r"(\d+)\s*(개|건|대|회|가지|개소|줄)")
+#:
+#: The digits may be grouped, and reports group them: `7,261건`. Matching bare
+#: digits read that as 261, which nothing counted, so the check rejected a
+#: sentence that was right and cost the investigation a second draft -- half
+#: its wall clock -- and handed the writer a finding that was not true.
+_COUNTED = re.compile(r"(\d[\d,]*)\s*(개|건|대|회|가지|개소|줄)")
 
 _NO_LIMITS = ("해당 없음", "없음", "특이사항 없음", "N/A", "none")
 
@@ -221,7 +226,7 @@ def counts_are_grounded(
                 # judged. An absence is not evidence of a defect.
                 continue
             for number, unit in claims:
-                if int(number) in grounded:
+                if int(number.replace(",", "")) in grounded:
                     continue
                 findings.append(
                     Finding(
