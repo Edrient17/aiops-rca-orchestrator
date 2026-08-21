@@ -65,6 +65,7 @@ describe("shipped templates", () => {
     expect(files.map((file) => file.template_id).sort()).toEqual([
       "host_state_check",
       "incident_rca",
+      "log_review",
       "monthly_capacity_report",
     ]);
     // Substitution happened: what reaches the database is a real group id.
@@ -95,6 +96,34 @@ describe("shipped templates", () => {
           expect(Object.keys(parsed)).toContain(key);
         }
       }
+    }
+  });
+
+  it("give the analyzer descriptions it can choose between", async () => {
+    // The question analyzer picks one of these by reading the descriptions and
+    // nothing else. Two that read alike is a coin toss on every request, and
+    // the losing template is one nobody can reach.
+    process.env.AIOPS_MONTHLY_HOST_GROUP_ID = "10";
+    const files = await readTemplateFiles(dir);
+
+    const descriptions = files.map((file) => file.description);
+    expect(new Set(descriptions).size).toBe(files.length);
+    for (const description of descriptions) {
+      expect(description.length).toBeGreaterThan(40);
+    }
+  });
+
+  it("names each section once within a template", async () => {
+    // A repeated id means one section silently overwrites the other, and the
+    // report loses a heading the template promised.
+    process.env.AIOPS_MONTHLY_HOST_GROUP_ID = "10";
+    const files = await readTemplateFiles(dir);
+
+    for (const file of files) {
+      const ids = file.output.sections.map((section) => section.id);
+      expect(new Set(ids).size, `${file.template_id} repeats a section id`).toBe(
+        ids.length,
+      );
     }
   });
 
