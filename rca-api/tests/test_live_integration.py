@@ -17,6 +17,8 @@ from aiops_rca.services.model_contracts import (
     HypothesisUpdateDecision,
     ObservationDecision,
     PhenomenonDecision,
+    PhenomenonScan,
+    PhenomenonScanPlan,
     ToolCandidate,
 )
 from aiops_rca.tools.adapters.base import AdapterSet, McpAdapter
@@ -158,6 +160,27 @@ class FixtureModel:
                 allow_dynamic_expansion=True,
                 ambiguities=[],
                 original_question=question,
+            )
+        if issubclass(output_type, PhenomenonScanPlan):
+            # The scan is planned now rather than hardcoded to Zabbix: one turn
+            # names a tool per host, so a host with no Zabbix id is scanned
+            # wherever it does exist.
+            host = payload["hosts"][0]["host"]
+            return PhenomenonScanPlan(
+                scans=[
+                    PhenomenonScan(
+                        host=host,
+                        tool_name="get_incident_events",
+                        arguments_json=json.dumps(
+                            {
+                                "host_id": payload["hosts"][0]["host_id"],
+                                "time_from": payload["window"]["from"],
+                                "time_to": payload["window"]["to"],
+                            }
+                        ),
+                    )
+                ],
+                stop_reason=None,
             )
         if output_type is PhenomenonDecision:
             return PhenomenonDecision(
@@ -344,6 +367,7 @@ def test_live_service_connects_models_graph_and_mcp_adapters():
     # it was bound to rather than for the stored contract.
     assert model.output_types == [
         "CatalogBoundParsedRequest",
+        "BoundPhenomenonScanPlan",
         "PhenomenonDecision",
         "HypothesisPlan",
         "Report",

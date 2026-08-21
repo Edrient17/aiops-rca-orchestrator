@@ -79,9 +79,10 @@ class InvestigationService:
                     registry=registry,
                 ),
                 establish_phenomenon=EstablishPhenomenonNode(
-                    zabbix=adapters.zabbix,
                     model=model,
                     model_name=settings.rca_investigation_model,
+                    executor=executor,
+                    registry=registry,
                 ),
                 hypothesis_planner=HypothesisPlannerNode(
                     model=model,

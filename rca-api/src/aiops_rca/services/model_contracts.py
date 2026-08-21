@@ -152,3 +152,40 @@ def host_search_decision_for(tools: tuple[str, ...]) -> type[HostSearchDecision]
         __base__=HostSearchDecision,
         tool_name=(Literal[tools] | None, ...),  # type: ignore[valid-type]
     )
+
+
+class PhenomenonScan(StrictModel):
+    """One lookup that would show whether anything happened to one host."""
+
+    host: Annotated[str, Field(min_length=1, max_length=255)]
+    tool_name: Annotated[str, Field(min_length=1, max_length=100)]
+    arguments_json: Annotated[str, Field(min_length=2, max_length=4000)]
+
+
+class PhenomenonScanPlan(StrictModel):
+    """Which source to ask about each host before any reasoning starts.
+
+    A host is not always a Zabbix host. One found in a log index or an agent
+    list has no Zabbix id, and the events tool requires one -- so the scan that
+    establishes what was observed cannot be the same call every time.
+    """
+
+    scans: Annotated[list[PhenomenonScan], Field(max_length=20)]
+    stop_reason: Annotated[str, Field(min_length=1, max_length=1000)] | None
+
+
+@lru_cache(maxsize=8)
+def phenomenon_scan_plan_for(tools: tuple[str, ...]) -> type[PhenomenonScanPlan]:
+    """PhenomenonScanPlan whose tool names must be tools that exist."""
+    if not tools:
+        return PhenomenonScanPlan
+    bound_scan = create_model(
+        "BoundPhenomenonScan",
+        __base__=PhenomenonScan,
+        tool_name=(Literal[tools], ...),  # type: ignore[valid-type]
+    )
+    return create_model(
+        "BoundPhenomenonScanPlan",
+        __base__=PhenomenonScanPlan,
+        scans=(Annotated[list[bound_scan], Field(max_length=20)], ...),
+    )

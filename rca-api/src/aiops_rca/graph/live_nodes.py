@@ -21,8 +21,8 @@ from aiops_rca.services.model_contracts import (
     ToolCandidate,
     hypothesis_update_decision_for,
     observation_decision_for,
+    phenomenon_scan_plan_for,
 )
-from aiops_rca.tools.adapters.base import McpAdapter
 from aiops_rca.tools.normalizer import merge_evidence, normalize_observation
 from aiops_rca.tools.registry import (
     DEFAULT_TOOL_REGISTRY,
@@ -33,18 +33,32 @@ from aiops_rca.tools.registry import (
 
 
 class EstablishPhenomenonNode:
-    """Perform the required shallow Zabbix scan before causal reasoning."""
+    """Establish what was observed, from whichever source can say.
+
+    This asked Zabbix for incident events and nothing else, so a host Zabbix has
+    no id for got no phenomenon at all -- and the call it could not make raised
+    out of the graph as a 500 before it was guarded. Both were symptoms of the
+    node being bound to one tool.
+
+    It plans its lookups now, the way the observation planner does: one model
+    turn names a tool per host, the registry validates each call, and a host
+    that only exists in an agent list or a log index is scanned there. Nothing
+    here knows which tools need a Zabbix id; the tools say so themselves and the
+    refusal is recorded rather than raised.
+    """
 
     def __init__(
         self,
         *,
-        zabbix: McpAdapter,
         model: StructuredModel,
         model_name: str,
+        executor: Any,
+        registry: ToolRegistry = DEFAULT_TOOL_REGISTRY,
     ) -> None:
-        self.zabbix = zabbix
         self.model = model
         self.model_name = model_name
+        self.executor = executor
+        self.registry = registry
 
     async def __call__(self, state: InvestigationState) -> Mapping[str, Any]:
         results = list(state.tool_results)
@@ -54,20 +68,30 @@ class EstablishPhenomenonNode:
         purposes = dict(state.tool_call_purposes)
         window = _resolved_window(state)
 
+        plan = await self.model.complete(
+            model=self.model_name,
+            output_type=phenomenon_scan_plan_for(self.registry.names()),
+            system_prompt=_prompt("phenomenon_scan.md"),
+            payload={
+                "hosts": [host.model_dump(mode="json") for host in state.hosts],
+                "window": window,
+                "question": state.parsed_request.original_question,
+                "tool_catalog": state.tool_catalog,
+            },
+            reasoning_effort="low",
+        )
+
+        known = {host.host: host for host in state.hosts}
         observations: list[dict[str, Any]] = []
-        for host in state.hosts:
-            if host.host_id is None:
-                # Zabbix cannot be asked about a host it has no id for. The
-                # name came from somewhere else -- a log index, an agent list --
-                # and asking without an id would return the whole allowed group,
-                # which is a well-formed answer about the wrong machines.
+        for scan in plan.scans:
+            host = known.get(scan.host)
+            if host is None:
                 unknowns.append(
                     UnknownItem(
-                        code="phenomenon_scan_skipped",
+                        code="phenomenon_scan_unresolved_host",
                         message=(
-                            f"{host.host} is not a Zabbix host"
-                            + (f" (found by {host.found_by})" if host.found_by else "")
-                            + ", so no Zabbix event scan was made for it."
+                            f"The scan plan named {scan.host!r}, which this "
+                            f"investigation did not resolve."
                         ),
                     ),
                 )
@@ -76,22 +100,41 @@ class EstablishPhenomenonNode:
                 unknowns.append(
                     UnknownItem(
                         code="phenomenon_scan_budget_exhausted",
-                        message="The tool-call budget ended before every host received a shallow event scan.",
+                        message="The tool-call budget ended before every host received a shallow scan.",
                     )
                 )
                 break
-            arguments = {
-                "host_id": host.host_id,
-                "time_from": window["from"],
-                "time_to": window["to"],
-            }
             try:
-                result = await self.zabbix.execute(
-                    "get_incident_events",
-                    arguments,
+                arguments = json.loads(scan.arguments_json)
+                if not isinstance(arguments, dict):
+                    raise ValueError("arguments_json must decode to an object")
+            except ValueError as error:
+                unknowns.append(
+                    UnknownItem(
+                        code="phenomenon_scan_unusable",
+                        message=f"{scan.tool_name}: {error}",
+                    ),
+                )
+                continue
+
+            planned = PlannedToolCall(
+                tool_name=scan.tool_name,
+                arguments=arguments,
+                purpose=f"Establish the observed phenomenon on host {host.host}",
+                target_hypothesis_ids=[],
+                host=host.host,
+                host_id=host.host_id,
+            )
+            try:
+                result = await self.executor.execute(
+                    planned,
                     RoutingContext(
                         tool_call_count=len(results),
                         max_tool_calls=state.limits.max_tool_calls,
+                        # A scan reads whatever holds this host's recent
+                        # activity, which for a host outside Zabbix is a raw
+                        # index query by definition.
+                        generic_fallback_allowed=True,
                     ),
                 )
             except ToolPolicyError as error:
@@ -106,26 +149,18 @@ class EstablishPhenomenonNode:
                     ),
                 )
                 continue
+
             results.append(result)
-            purposes[result.tool_call_id] = (
-                f"Establish the observed phenomenon on host {host.host}"
-            )
+            purposes[result.tool_call_id] = planned.purpose
             if result.status == "error":
                 errors.append(result)
                 unknowns.append(
                     UnknownItem(
-                        code="incident_event_scan_error",
-                        message=result.error or "get_incident_events failed",
+                        code="phenomenon_scan_error",
+                        message=result.error or f"{scan.tool_name} failed",
                         tool_call_id=result.tool_call_id,
                     )
                 )
-            planned = PlannedToolCall(
-                tool_name="get_incident_events",
-                arguments=arguments,
-                purpose=purposes[result.tool_call_id],
-                target_hypothesis_ids=[],
-                host_id=host.host_id,
-            )
             evidence, merge_unknowns = merge_evidence(
                 evidence,
                 normalize_observation(
@@ -140,6 +175,7 @@ class EstablishPhenomenonNode:
                 {
                     "host": host.host,
                     "host_id": host.host_id,
+                    "scanned_with": scan.tool_name,
                     "status": result.status,
                     "response": _bounded(result.response),
                     "error": result.error,
