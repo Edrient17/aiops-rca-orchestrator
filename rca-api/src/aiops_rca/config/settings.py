@@ -19,18 +19,18 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr
     openai_base_url: str | None = None
-    # One model per stage. A stage left unset follows `rca_model`, so a
-    # deployment with no opinion sets one variable and a deployment that wants
-    # to move a single node can do that without touching any other.
+    # One model per stage, each falling back to `rca_model`. A deployment with
+    # no opinion sets one variable; one that wants a single stage higher can
+    # raise it without touching any other.
     #
-    # Every stage on one model. The writer ran a tier above for a while, on the
-    # reasoning that it produces what an operator reads and nothing downstream
-    # catches a bad one. What that cost was not obvious until it was measured:
-    # in one investigation the writer was 7% of the tokens and 59% of the bill,
-    # $0.070 of $0.118, because price per token dwarfs any of these payloads.
+    # Every stage currently follows the default. The writer ran a tier above
+    # for a while, on the reasoning that it produces what an operator reads and
+    # nothing downstream catches a bad one -- until it was measured: in one
+    # investigation it was 7% of the tokens and 59% of the bill, $0.070 of
+    # $0.118, because price per token dwarfs the size of any payload here.
     #
-    # Raising a stage is a per-stage knob, so it stays cheap to try again --
-    # but on a measurement, not on the argument that a stage sounds important.
+    # Raise one again on a measurement rather than on an argument about which
+    # stage sounds important.
     rca_model: str = "gpt-5.6-luna"
     rca_model_question_analyzer: str | None = None
     rca_model_resolve_hosts: str | None = None
