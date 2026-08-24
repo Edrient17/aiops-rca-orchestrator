@@ -2,8 +2,6 @@
 
 Slack으로 들어온 운영 질문을 조사해 RCA 보고서로 돌려주는 서비스다. `rca-api`가 Zabbix, Wazuh, Elasticsearch MCP에서 근거를 수집하고 LangGraph로 조사 과정을 진행한다. `ingress`는 Slack 연동과 작업 큐, 결과 저장을 담당한다.
 
-전체 프로젝트 구성은 상위 [PROJECT_HOME.md](../PROJECT_HOME.md)에서 확인할 수 있다. 이 문서는 이 저장소의 배포와 운영 방법을 설명한다.
-
 ## 구성
 
 ```text
