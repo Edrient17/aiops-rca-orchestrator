@@ -20,37 +20,6 @@ function schemaValidator(): Ajv2020 {
   return ajv;
 }
 
-// The incident RCA template is seeded as SQL, so nothing validates it on the
-// way in the way the API validates an operator's. If its section ids drifted
-// from the rules the API enforces, the mismatch would only surface when someone
-// tried to save that same template back through it.
-describe("seeded incident_rca template", () => {
-  const seed = readFileSync(
-    resolve(process.cwd(), "..", "database", "migrations", "007_seed_incident_rca.sql"),
-    "utf8",
-  );
-  const ids = [...seed.matchAll(/'id',\s*'([^']*)'/g)].map((match) => match[1]!);
-
-  it("declares sections whose ids the template API would accept", () => {
-    expect(ids.length).toBeGreaterThan(0);
-    for (const id of ids) {
-      expect(id).toMatch(/^[a-z][a-z0-9_]{2,63}$/);
-    }
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  // The renderer withholds these unless a real problem event was found, and the
-  // writer is never asked to produce them either. Getting the set wrong is how
-  // an outage that never happened gets reported.
-  it("gates exactly the sections that depend on an incident having occurred", () => {
-    const gated = [...seed.matchAll(/'id',\s*'([^']*)'[\s\S]*?'requires_problem_event',\s*(true|false)/g)]
-      .filter((match) => match[2] === "true")
-      .map((match) => match[1]!);
-
-    expect(gated.sort()).toEqual(["incident_timing", "recovery", "timeline"]);
-  });
-});
-
 // The shipped templates are what a deploy installs, so they go through the
 // exact path the deploy uses -- environment substitution included. Checking the
 // raw JSON instead would pass on a file that startup then rejects.
@@ -97,6 +66,21 @@ describe("shipped templates", () => {
         }
       }
     }
+  });
+
+  // The renderer withholds these unless a real problem event was found, and the
+  // writer is never asked to produce them either. Getting the set wrong is how
+  // an outage that never happened gets reported.
+  it("gates exactly the sections that depend on an incident having occurred", async () => {
+    process.env.AIOPS_MONTHLY_HOST_GROUP_ID = "10";
+    const files = await readTemplateFiles(dir);
+
+    const incidentRca = files.find((file) => file.template_id === "incident_rca")!;
+    const gated = incidentRca.output.sections
+      .filter((section) => section.requires_problem_event)
+      .map((section) => section.id);
+
+    expect(gated.sort()).toEqual(["incident_timing", "recovery", "timeline"]);
   });
 
   it("give the analyzer descriptions it can choose between", async () => {

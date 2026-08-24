@@ -88,7 +88,6 @@ const config: AppConfig = {
   rcaTimeoutMs: 900_000,
   slackPostTimeoutMs: 30_000,
   dispatchIntervalMs: 1000,
-  dispatchTimeoutMs: 10000,
   templateDir: "/unused-in-tests",
   labelReactions: new Map<string, FeedbackLabel>([
     ["white_check_mark", "correct"],
@@ -670,50 +669,5 @@ describe("report templates", () => {
 
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ deleted: false });
-  });
-});
-
-describe("internal API", () => {
-  it("requires the internal token and validates agent-run payloads", async () => {
-    const repository = new FakeRepository();
-    const app = createApp({ config, repository });
-    const unauthorized = await request(app)
-      .post("/internal/requests/REQ-TEST/agent-runs")
-      .send({});
-    expect(unauthorized.status).toBe(401);
-
-    const created = await request(app)
-      .post("/internal/requests/REQ-TEST/agent-runs")
-      .set("x-aiops-internal-token", internalToken)
-      .send({
-        stage: "question_analyzer",
-        status: "succeeded",
-        model: "gpt-5.4-mini",
-        output: { parse_status: "ready" },
-      });
-    expect(created.status).toBe(201);
-    expect(repository.recordAgentRun).toHaveBeenCalledOnce();
-  });
-
-  it("passes the execution id through on an error with no request id", async () => {
-    const repository = new FakeRepository();
-    const app = createApp({ config, repository });
-
-    const recorded = await request(app)
-      .post("/internal/errors")
-      .set("x-aiops-internal-token", internalToken)
-      .send({
-        workflow_name: "AIOps - Slack to Zabbix RCA",
-        execution_id: "4210",
-        last_node: "Evidence Collector",
-        message: "Model output doesn't fit required format",
-      });
-
-    expect(recorded.status).toBe(201);
-    const [input] = repository.recordSystemError.mock.calls[0] ?? [];
-    expect(input?.executionId).toBe("4210");
-    // The repository is what turns this into a request id; nothing upstream of
-    // it knows one, which is the case the fix exists for.
-    expect(input && "requestId" in input).toBe(false);
   });
 });

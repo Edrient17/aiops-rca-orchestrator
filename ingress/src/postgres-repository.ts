@@ -513,38 +513,25 @@ export class PostgresRequestRepository implements RequestRepository {
   }
 
   async recordSystemError(input: SystemErrorInput): Promise<void> {
-    // n8n hands the error workflow an execution id, not a request id, so the
-    // request has to be recovered from the mapping the run registered when it
-    // started. Without this the error is stored unattributed and the request is
-    // never moved off the status it was in when it died.
-    const requestId = input.requestId ?? (await this.resolveByExecution(input.executionId));
+    const requestId = input.requestId ?? null;
 
+    // execution_id, last_node and details are left unwritten. They belonged to
+    // the n8n error workflow, which reported a failure it could only name by
+    // its own execution; the dispatcher that replaced it is inside the process
+    // that failed and already knows the request. The columns stay because the
+    // rows that workflow wrote still carry them.
     await this.pool.query(
       `
-        INSERT INTO aiops_system_errors (
-          request_id,
-          workflow_name,
-          execution_id,
-          last_node,
-          message,
-          details
-        )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        INSERT INTO aiops_system_errors (request_id, workflow_name, message)
+        VALUES ($1, $2, $3)
       `,
-      [
-        requestId,
-        input.workflowName ?? null,
-        input.executionId ?? null,
-        input.lastNode ?? null,
-        input.message,
-        JSON.stringify(input.details ?? null),
-      ],
+      [requestId, input.workflowName ?? null, input.message],
     );
 
     if (requestId) {
-      // Guarded rather than unconditional: re-running a finished request in the
-      // n8n UI maps its new execution to the same request, and a failed debug
-      // run must not retract a report that was already delivered.
+      // Guarded rather than unconditional: the dispatcher gives up after its
+      // last attempt, and a report delivered by an earlier one must not be
+      // retracted by the attempt that came after it.
       await this.pool.query(
         `
           UPDATE aiops_requests
@@ -554,23 +541,6 @@ export class PostgresRequestRepository implements RequestRepository {
         [requestId, input.message],
       );
     }
-  }
-
-  private async resolveByExecution(executionId?: string): Promise<string | null> {
-    if (!executionId) {
-      return null;
-    }
-    const result = await this.pool.query<{ request_id: string }>(
-      `
-        SELECT request_id
-        FROM aiops_requests
-        WHERE n8n_execution_id = $1
-        ORDER BY received_at DESC
-        LIMIT 1
-      `,
-      [executionId],
-    );
-    return result.rows[0]?.request_id ?? null;
   }
 
   async findReportByMessage(

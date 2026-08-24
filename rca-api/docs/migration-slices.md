@@ -1,9 +1,11 @@
-# LangGraph migration slices
+# LangGraph migration slices (historical)
 
-The migration keeps n8n as the Slack ingress/egress and audit boundary. Each
-slice leaves the production workflow usable; all six slices have landed, and the
-legacy branch has been removed; golden replay and canary exit criteria remain
-operational work.
+The plan the migration was carried out under, kept as the record of how the
+cutover was staged. All six slices landed. It was written while n8n was still
+the Slack ingress/egress and audit boundary, and each slice was shaped to leave
+the production workflow usable -- neither is true any more: n8n was removed
+after slice 6 and ingress took over what it held. The slice text below is left
+as written.
 
 ## Slice 1 — contracts and deterministic graph shell (implemented)
 
@@ -67,9 +69,10 @@ write-capable tool calls, and acceptable latency/cost/error rates.
   proven itself on both report kinds.
 - The n8n reasoning nodes and the flag were then removed together: keeping a
   branch nothing could reach meant carrying a second, drifting copy of the
-  prompts and schemas. Rollback is now a redeploy of the previous workflow
+  prompts and schemas. Rollback became a redeploy of the previous workflow
   rather than an environment change.
-- n8n retains Slack ingress/egress and workflow-level operations.
+- n8n retained Slack ingress/egress and workflow-level operations, until it was
+  removed in turn and ingress absorbed both.
 
 Exit criteria: production SLOs and RCA quality gates hold through the rollback
 window, and the legacy reasoning path can be retired explicitly.

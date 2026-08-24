@@ -149,14 +149,7 @@ export interface ReportNoteInput {
 export interface SystemErrorInput {
   requestId?: string;
   workflowName?: string;
-  /**
-   * The failing n8n execution. When the error carries no request id this is
-   * what identifies the request, through aiops_requests.n8n_execution_id.
-   */
-  executionId?: string;
-  lastNode?: string;
   message: string;
-  details?: unknown;
 }
 
 export interface RequestRepository {
@@ -183,7 +176,7 @@ export interface RequestRepository {
    * Takes the next due job and holds it for `lockSeconds`. The caller sets the
    * hold because only it knows how long it may keep the job in flight; the lock
    * has to outlast that, or a second dispatcher can claim a job still being
-   * delivered and send the same request to n8n twice.
+   * delivered and investigate the same request twice.
    */
   claimDispatch(lockSeconds: number): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;

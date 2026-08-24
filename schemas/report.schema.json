@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aiops.local/schemas/report.schema.json",
   "title": "AIOps Report",
-  "description": "One shape for every kind of report. What a given kind is made of is decided by its template, which names the sections and says what belongs in each; this only fixes how a filled-in section is expressed. The shape is fixed because n8n's structured output parser takes a static schema, and it is the writer's contract rather than the document's layout: headings come from the template, not from here.",
+  "description": "One shape for every kind of report. What a given kind is made of is decided by its template, which names the sections and says what belongs in each; this only fixes how a filled-in section is expressed. The shape is fixed because the writer is a structured-output model call, which is given one static schema per call, and it is the writer's contract rather than the document's layout: headings come from the template, not from here.",
   "type": "object",
   "additionalProperties": false,
   "required": [

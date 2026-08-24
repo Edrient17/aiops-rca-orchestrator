@@ -19,7 +19,6 @@ const envSchema = z.object({
       "white_check_mark=correct,heavy_check_mark=correct,thinking_face=partial,x=incorrect",
     ),
   DISPATCH_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(1_000),
-  DISPATCH_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
   RCA_API_URL: z.string().url(),
   /** Answers are published here, which is not where questions arrive. */
   SLACK_ANSWER_CHANNEL_ID: z.string().min(1),
@@ -44,7 +43,6 @@ export interface AppConfig {
   slackAllowedUserIds: ReadonlySet<string>;
   internalToken: string;
   dispatchIntervalMs: number;
-  dispatchTimeoutMs: number;
   rcaApiUrl: string;
   slackAnswerChannelId: string;
   rcaTimeoutMs: number;
@@ -82,7 +80,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     slackAllowedUserIds: allowedUsers,
     internalToken: parsed.AIOPS_INTERNAL_TOKEN,
     dispatchIntervalMs: parsed.DISPATCH_INTERVAL_MS,
-    dispatchTimeoutMs: parsed.DISPATCH_TIMEOUT_MS,
     templateDir: parsed.TEMPLATE_DIR,
     labelReactions: parseLabelReactions(parsed.SLACK_LABEL_REACTIONS),
     slackBotToken: parsed.SLACK_BOT_TOKEN,

@@ -82,7 +82,6 @@ services:
       SLACK_LABEL_REACTIONS: ${SLACK_LABEL_REACTIONS:-white_check_mark=correct,heavy_check_mark=correct,thinking_face=partial,x=incorrect}
       AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN:?AIOPS_INTERNAL_TOKEN is required}
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
-      DISPATCH_TIMEOUT_MS: ${DISPATCH_TIMEOUT_MS:-10000}
       RCA_API_URL: ${RCA_API_URL:-http://rca-api:8090}
       # Answers are published here, which is not the channel questions arrive on.
       SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:-}

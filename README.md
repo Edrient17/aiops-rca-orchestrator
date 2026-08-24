@@ -35,15 +35,16 @@ Copy-Item .env.example .env
 
 | 변수 | 용도 |
 | --- | --- |
-| `AIOPS_DOMAIN`, `AIOPS_PUBLIC_URL` | 공개 HTTPS 주소 |
+| `AIOPS_DOMAIN` | 공개 HTTPS 주소. Caddy 프로필에서만 쓰인다 |
 | `AIOPS_INTERNAL_TOKEN` | ingress ↔ rca-api 내부 인증 |
-| `SLACK_*` | Slack 자격 증명, 질문·답변·오류 채널 ID |
+| `SLACK_*` | Slack 자격 증명, 질문·답변 채널 ID |
 | `ZABBIX_MCP_URL`, `ZABBIX_MCP_AUTH_TOKEN` | Zabbix Investigation MCP |
 | `WAZUH_MCP_URL`, `WAZUH_MCP_AUTH_TOKEN` | Wazuh MCP |
 | `OSS_ES_MCP_URL` | Elasticsearch MCP (인증 없음) |
 | `OPENAI_API_KEY` | 모델 호출 |
 | `RCA_MODEL`, `RCA_MODEL_*` | 단계별 모델 지정 (§2.1) |
 | `LANGSMITH_*` | 선택. 추적. 키가 없으면 추적 없이 동작 |
+| 시간 제한·주기 | 선택. 전부 기본값이 있다 (§2.2) |
 
 ### 2.1 단계별 모델
 
@@ -58,6 +59,18 @@ RCA_MODEL_OBSERVATION_PLANNER=gpt-5.6-terra   # 이 단계만 상향
 
 없는 단계명을 쓰면 기동 시 실패한다. 조용히 기본값으로 도는 것보다 낫기 때문이다.
 
+### 2.2 시간 제한과 주기
+
+전부 기본값이 있어 설정하지 않아도 동작한다. `.env`에 적으면 그 값으로 고정되므로, 바꿀 때만 적는다.
+
+| 변수 | 기본값 | 대상 | 내용 |
+| --- | ---: | --- | --- |
+| `DISPATCH_INTERVAL_MS` | 1000 | ingress | 큐를 확인하는 주기. 요청이 들어오면 즉시 깨우므로 이 값은 놓친 작업을 줍는 간격이다 |
+| `RCA_TIMEOUT_MS` | 900000 | ingress | 조사 하나의 상한. 큐의 점유 잠금도 이 값에서 유도되므로 늘리면 점유 시간도 함께 늘어난다 |
+| `SLACK_POST_TIMEOUT_MS` | 30000 | ingress | Slack 게시 한 건의 상한 |
+| `MCP_TIMEOUT_SECONDS` | 120 | rca-api | 도구 호출 한 건의 상한 |
+| `MODEL_TIMEOUT_SECONDS` | 180 | rca-api | 모델 호출 한 건의 상한 |
+
 ## 3. Slack App
 
 | 구분 | 필요 항목 |
@@ -68,7 +81,7 @@ RCA_MODEL_OBSERVATION_PLANNER=gpt-5.6-terra   # 이 단계만 상향
 | Request URL | `https://<AIOPS_DOMAIN>/slack/events` |
 | Bot events | `app_mention` (+ 선택: `message.channels`, `reaction_added`, `reaction_removed`) |
 
-봇을 질문·답변·오류 채널에 초대하고 채널 ID를 `.env`에 넣는다. 특정 사용자만 허용하려면 `SLACK_ALLOWED_USER_IDS`에 User ID를 쉼표로 나열한다. 이 목록은 질문과 평가 양쪽에 적용된다.
+봇을 질문 채널과 답변 채널에 초대하고 채널 ID를 `.env`에 넣는다. 특정 사용자만 허용하려면 `SLACK_ALLOWED_USER_IDS`에 User ID를 쉼표로 나열한다. 이 목록은 질문과 평가 양쪽에 적용된다.
 
 <details>
 <summary><b>보고서 평가 동작</b></summary>

@@ -300,7 +300,7 @@ def request() -> InvestigationApiRequest:
     return InvestigationApiRequest(
         request=RequestEnvelope(
             request_id="req-live-test",
-            source="n8n",
+            source="slack",
             received_at="2026-08-13T00:01:00Z",
             timezone="Asia/Seoul",
             question="node-alpha 서비스 장애 원인을 조사해줘",
