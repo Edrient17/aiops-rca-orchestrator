@@ -3,7 +3,12 @@ import type { FeedbackLabel } from "./types.js";
 
 const FEEDBACK_LABELS: readonly FeedbackLabel[] = ["correct", "partial", "incorrect"];
 
-const envSchema = z.object({
+/**
+ * Exported so a test can read back which variables this service refuses to
+ * start without, and check them against what docker-compose.yml actually
+ * guarantees. See tests/config.test.ts.
+ */
+export const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(8080),
   DATABASE_URL: z.string().min(1),
   SLACK_SIGNING_SECRET: z.string().min(1),

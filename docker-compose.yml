@@ -77,14 +77,18 @@ services:
       SLACK_BOT_USER_ID: ${SLACK_BOT_USER_ID:-}
       SLACK_APP_ID: ${SLACK_APP_ID:-}
       SLACK_ALLOWED_USER_IDS: ${SLACK_ALLOWED_USER_IDS:-}
-      # Only used to ask for a written correction after a negative verdict.
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      # Everything ingress says in Slack goes out on this token: the
+      # acknowledgement that opens the thread, the clarification, the report,
+      # and the request for a written correction. It was only the last of those
+      # while n8n did the posting, and the note here still said so after
+      # ingress took the posting over -- while the variable stayed optional.
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:?SLACK_BOT_TOKEN is required}
       SLACK_LABEL_REACTIONS: ${SLACK_LABEL_REACTIONS:-white_check_mark=correct,heavy_check_mark=correct,thinking_face=partial,x=incorrect}
       AIOPS_INTERNAL_TOKEN: ${AIOPS_INTERNAL_TOKEN:?AIOPS_INTERNAL_TOKEN is required}
       DISPATCH_INTERVAL_MS: ${DISPATCH_INTERVAL_MS:-1000}
       RCA_API_URL: ${RCA_API_URL:-http://rca-api:8090}
       # Answers are published here, which is not the channel questions arrive on.
-      SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:-}
+      SLACK_ANSWER_CHANNEL_ID: ${SLACK_ANSWER_CHANNEL_ID:?SLACK_ANSWER_CHANNEL_ID is required}
       RCA_TIMEOUT_MS: ${RCA_TIMEOUT_MS:-900000}
       SLACK_POST_TIMEOUT_MS: ${SLACK_POST_TIMEOUT_MS:-30000}
       # Where a footnote leads. Absent, a citation degrades to a bare id.

@@ -381,12 +381,8 @@ function askForCorrection(
   channel: string,
   threadTs: string,
 ): void {
-  const botToken = dependencies.config.slackBotToken;
-  if (!botToken) {
-    return;
-  }
   void postThreadReply({
-    botToken,
+    botToken: dependencies.config.slackBotToken,
     channel,
     threadTs,
     text: CORRECTION_PROMPT,
