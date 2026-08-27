@@ -133,6 +133,32 @@ export function clarificationText(
   return sections.join("\n\n");
 }
 
+/**
+ * What to say when the queue has given up on a question.
+ *
+ * The caller posts this under the acknowledgement when there is one: that
+ * thread is the investigation, and it is the thread left waiting on a report
+ * that is not coming. A request that died before it was ever acknowledged has
+ * no such thread, so it falls back to the channel it was asked in.
+ *
+ * The last error goes in because the asker is the one deciding what to do next,
+ * and an RCA service returning HTTP 500 and an MCP call timing out call for
+ * different things. Trimmed, because this is a message and not a log line.
+ */
+export function abandonedText(payload: DispatchPayload, reason: string): string {
+  // Ping the asker. They are being told their question is dead, and a thread
+  // they may have stopped watching is not enough.
+  const mention = payload.user_id ? "<@" + payload.user_id + "> " : "";
+
+  return [
+    "🛑 " + mention + "*조사를 완료하지 못했습니다*",
+    "• 요청 ID: `" + payload.request_id + "`",
+    "• 마지막 오류: " + reason.slice(0, 300),
+    "",
+    "_같은 질문을 다시 멘션하시면 새로 조사합니다._",
+  ].join("\n");
+}
+
 const KNOWN_STAGES = new Set(["question_analyzer", "evidence_collector", "rca_writer"]);
 
 /** Only the stages the audit table knows; anything else is dropped, loudly. */

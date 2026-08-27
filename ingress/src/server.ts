@@ -2,8 +2,9 @@ import { Pool } from "pg";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { Dispatcher } from "./dispatcher.js";
-import { runInvestigation, type DispatchPayload } from "./pipeline.js";
+import { abandonedText, runInvestigation, type DispatchPayload } from "./pipeline.js";
 import { PostgresRequestRepository } from "./postgres-repository.js";
+import { postMessage } from "./slack.js";
 import { syncTemplates } from "./template-sync.js";
 
 const config = loadConfig();
@@ -38,6 +39,25 @@ const dispatcher = new Dispatcher({
         kibanaDataViewId: config.kibanaDataViewId,
       },
     }),
+  /**
+   * Where a question the queue gave up on is reported.
+   *
+   * Under the acknowledgement when there is one, because that thread is the
+   * investigation and it is the one left waiting. Without an anchor the request
+   * died before it was ever acknowledged, so there is no thread of ours to
+   * speak into and the question channel is where the asker is.
+   */
+  announce: async (job, reason) => {
+    const payload = job.payload as DispatchPayload;
+    const anchor = payload.slack_ack_ts;
+    await postMessage({
+      botToken: config.slackBotToken,
+      channel: anchor ? config.slackAnswerChannelId : payload.channel_id,
+      text: abandonedText(payload, reason),
+      threadTs: anchor ?? payload.thread_ts ?? payload.message_ts,
+      timeoutMs: config.slackPostTimeoutMs,
+    });
+  },
 });
 const app = createApp({
   config,

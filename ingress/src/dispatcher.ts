@@ -16,9 +16,24 @@ export interface DispatcherOptions {
    * involves.
    */
   deliver: Deliver;
+  /**
+   * Told when a request is abandoned. This is the only path by which the asker
+   * learns their question died -- see `abandon` -- so leaving it out is
+   * choosing silence.
+   */
+  announce?: Announce;
 }
 
 export type Deliver = (job: DispatchJob) => Promise<void>;
+
+/**
+ * How a request that has been given up on is announced to whoever asked it.
+ *
+ * Injected for the reason `deliver` is: the queue decides when a question is
+ * dead, it does not decide how someone is told. Optional, because a dispatcher
+ * under test has nobody to tell.
+ */
+export type Announce = (job: DispatchJob, reason: string) => Promise<void>;
 
 
 
@@ -101,7 +116,7 @@ export class Dispatcher {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (job.attempts + 1 >= MAX_DISPATCH_ATTEMPTS) {
-            await this.abandon(job.id, job.requestId, message);
+            await this.abandon(job, message);
             continue;
           }
           const delaySeconds = Math.min(300, 2 ** Math.min(job.attempts, 8));
@@ -118,19 +133,41 @@ export class Dispatcher {
    *
    * completeDispatch is what takes the job out of the due set -- there is no
    * separate abandoned state, and inventing one would mean a migration for a
-   * row nobody queries. What matters is the other two writes: the request stops
-   * claiming to be in progress, and the error lands where the error channel
-   * reads from, so the asker learns their question died instead of waiting on
-   * an answer that was never coming.
+   * row nobody queries. Then the request stops claiming to be in progress, and
+   * the failure is written down for whoever operates this.
+   *
+   * The announcement is last, and is the only one of the four the asker ever
+   * sees. It used to be missing: the error was written to aiops_system_errors
+   * and that was counted as telling them, because n8n's error workflow read
+   * that table and posted what it found. Removing n8n removed the only reader.
+   * Nothing caught it, because what stayed behind still looked like a
+   * notification. A question acknowledged and then silent is the failure this
+   * queue exists to prevent, so it is sent now rather than filed.
    */
-  private async abandon(jobId: number, requestId: string, message: string): Promise<void> {
+  private async abandon(job: DispatchJob, message: string): Promise<void> {
     const detail = `the investigation failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
-    await this.options.repository.completeDispatch(jobId);
-    await this.options.repository.updateRequestStatus(requestId, "failed", detail);
+    await this.options.repository.completeDispatch(job.id);
+    await this.options.repository.updateRequestStatus(job.requestId, "failed", detail);
     await this.options.repository.recordSystemError({
-      requestId,
+      requestId: job.requestId,
       workflowName: "ingress dispatcher",
       message: detail,
     });
+
+    // Swallowed on purpose. This runs inside the catch around a delivery, so a
+    // throw here leaves the claim loop and takes the dispatcher down over a
+    // Slack outage. The queue row is already closed above, so failing to
+    // announce cannot revive the job -- it can only go unheard, which is what
+    // the second record is for.
+    try {
+      await this.options.announce?.(job, message);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      await this.options.repository.recordSystemError({
+        requestId: job.requestId,
+        workflowName: "ingress dispatcher",
+        message: `abandonment could not be announced: ${reason}`,
+      });
+    }
   }
 }
