@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { Dispatcher, lockSecondsFor, type Announce } from "../src/dispatcher.js";
+import {
+  Dispatcher,
+  lockSecondsFor,
+  MAX_DISPATCH_ATTEMPTS,
+  type Announce,
+} from "../src/dispatcher.js";
 import type {
   AgentRunInput,
   DispatchJob,
@@ -175,6 +180,18 @@ describe("giving up on a delivery", () => {
     return { repository, calls };
   }
 
+  /**
+   * The claim that has no attempt left after it, and the one before it.
+   *
+   * Both taken off the constant rather than written out, so moving the ceiling
+   * moves them with it instead of leaving these tests pointed somewhere past
+   * the edge they exist to pin. The edge is pinned from both sides on purpose:
+   * asserting only that the last claim gives up cannot tell an off-by-one from
+   * a correct count, and this file was passing while there was one.
+   */
+  const LAST_ATTEMPT = MAX_DISPATCH_ATTEMPTS;
+  const SECOND_TO_LAST_ATTEMPT = MAX_DISPATCH_ATTEMPTS - 1;
+
   async function runOnce(attempts: number, announce?: Announce) {
     const { repository, calls } = failingRepository(attempts);
     const announced: { requestId: string; reason: string }[] = [];
@@ -203,29 +220,42 @@ describe("giving up on a delivery", () => {
   });
 
   it("stops after the last attempt", async () => {
-    const calls = await runOnce(11);
+    const calls = await runOnce(LAST_ATTEMPT);
     expect(calls.retryDispatch).toHaveLength(0);
     expect(calls.completeDispatch).toEqual([1]);
   });
 
+  it("still has one left on the claim before it", async () => {
+    // The other half of the edge. claimDispatch increments before it returns,
+    // so this is the claim numbered one below the ceiling, and it is a retry.
+    const calls = await runOnce(SECOND_TO_LAST_ATTEMPT);
+
+    expect(calls.retryDispatch).toHaveLength(1);
+    expect(calls.updateRequestStatus).toHaveLength(0);
+    expect(calls.announced).toEqual([]);
+  });
+
   it("marks the request failed so it stops claiming to be in progress", async () => {
-    const calls = await runOnce(11);
+    const calls = await runOnce(LAST_ATTEMPT);
     expect(calls.updateRequestStatus).toHaveLength(1);
     const update = calls.updateRequestStatus[0] as { status: string; error: string };
     expect(update.status).toBe("failed");
-    expect(update.error).toContain("the investigation failed 12 times");
+    // The count it reports is the number of deliveries actually made.
+    expect(update.error).toContain(
+      `the investigation failed ${MAX_DISPATCH_ATTEMPTS} times`,
+    );
   });
 
   it("writes the failure down for whoever operates this", async () => {
     // Not how the asker finds out. This used to be the whole of it, back when
     // n8n's error workflow read the table and posted what it found; nothing
     // reads it now. The announcement below is the notification.
-    const calls = await runOnce(11);
+    const calls = await runOnce(LAST_ATTEMPT);
     expect(calls.recordSystemError).toHaveLength(1);
   });
 
   it("tells the asker their question died", async () => {
-    const calls = await runOnce(11);
+    const calls = await runOnce(LAST_ATTEMPT);
 
     expect(calls.announced).toEqual([
       { requestId: "REQ-1", reason: "RCA service returned HTTP 500" },
@@ -243,7 +273,7 @@ describe("giving up on a delivery", () => {
     // This runs inside the catch around a delivery, where a throw leaves the
     // claim loop -- so Slack being down would stop the dispatcher outright.
     // The job stays closed, and the failure to announce is recorded too.
-    const calls = await runOnce(11, async () => {
+    const calls = await runOnce(LAST_ATTEMPT, async () => {
       throw new Error("slack chat.postMessage failed: channel_not_found");
     });
 

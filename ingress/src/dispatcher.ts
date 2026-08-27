@@ -52,11 +52,29 @@ const LOCK_MARGIN_SECONDS = 15;
  * delivery can never succeed sat in the queue forever with an acknowledgement
  * already posted and no answer ever coming, and nothing anywhere said so.
  *
- * Twelve attempts with the backoff below is a little over an hour, which
- * outlasts a deploy by a wide margin. What it does not outlast is a dependency
- * that has genuinely gone.
+ * Nine leaves a window of about eight and a half minutes -- the backoff below,
+ * summed: 2 + 4 + 8 + 16 + 32 + 64 + 128 + 256 seconds. That is measured rather
+ * than argued, and the twelve this used to be was measured the same way: it
+ * came to seventeen minutes, not the hour the comment claimed.
+ *
+ * The number counts claims, and claimDispatch increments before it returns, so
+ * the check below compares it directly. It read `attempts + 1 >=` while this
+ * said twelve, which stopped after eleven deliveries and then recorded twelve
+ * -- wrong in both directions at once, in a count nobody could check without
+ * the queue in front of them.
+ *
+ * What the window has to outlast is a deploy. ingress does not wait for rca-api
+ * -- there is no depends_on between them -- so it comes back dispatching while
+ * rca-api is still starting, and every claim in that gap fails at once. What it
+ * does not have to outlast is a dependency that has genuinely gone.
+ *
+ * It is set from the low side because the error is not symmetric. Giving up too
+ * late costs the asker a wait. Giving up too early costs them the question:
+ * completeDispatch stamps dispatched_at, claimDispatch takes only rows where it
+ * is null, and so an abandonment is final. There is no later attempt to save a
+ * question this was wrong about.
  */
-const MAX_DISPATCH_ATTEMPTS = 12;
+export const MAX_DISPATCH_ATTEMPTS = 9;
 
 /**
  * How long a claimed job stays locked. Derived from the delivery timeout rather
@@ -115,7 +133,7 @@ export class Dispatcher {
           await this.options.repository.completeDispatch(job.id);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (job.attempts + 1 >= MAX_DISPATCH_ATTEMPTS) {
+          if (job.attempts >= MAX_DISPATCH_ATTEMPTS) {
             await this.abandon(job, message);
             continue;
           }
@@ -145,7 +163,10 @@ export class Dispatcher {
    * queue exists to prevent, so it is sent now rather than filed.
    */
   private async abandon(job: DispatchJob, message: string): Promise<void> {
-    const detail = `the investigation failed ${MAX_DISPATCH_ATTEMPTS} times: ${message}`;
+    // job.attempts, not the ceiling: they are equal when the ceiling is what
+    // stopped this, and only the first is true if it is ever lowered under a
+    // queue that already holds rows counted against the old one.
+    const detail = `the investigation failed ${job.attempts} times: ${message}`;
     await this.options.repository.completeDispatch(job.id);
     await this.options.repository.updateRequestStatus(job.requestId, "failed", detail);
     await this.options.repository.recordSystemError({
