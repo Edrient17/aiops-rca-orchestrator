@@ -11,6 +11,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  abandonedText,
   ackText,
   clarificationText,
   runInvestigation,
@@ -180,6 +181,24 @@ describe("asking for more information", () => {
     const text = clarificationText(PAYLOAD, { parse_status: "unsupported" });
     expect(text).toContain("지원 범위를 벗어난");
     expect(text).not.toContain("멘션해서 답해주시면");
+  });
+});
+
+describe("giving up on a question", () => {
+  it("names the asker, the request and what went wrong", () => {
+    const text = abandonedText(PAYLOAD, "RCA service returned HTTP 500");
+
+    expect(text).toContain("<@U-ASKER>");
+    expect(text).toContain("REQ-1");
+    expect(text).toContain("RCA service returned HTTP 500");
+    expect(text).toContain("조사를 완료하지 못했습니다");
+  });
+
+  it("keeps the error to a message's length", () => {
+    // A stack trace pasted into Slack helps nobody it is addressed to.
+    const text = abandonedText(PAYLOAD, "x".repeat(5_000));
+
+    expect(text.length).toBeLessThan(600);
   });
 });
 

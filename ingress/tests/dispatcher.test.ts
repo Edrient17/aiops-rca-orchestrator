@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Dispatcher, lockSecondsFor } from "../src/dispatcher.js";
+import { Dispatcher, lockSecondsFor, type Announce } from "../src/dispatcher.js";
 import type {
   AgentRunInput,
   DispatchJob,
@@ -175,8 +175,9 @@ describe("giving up on a delivery", () => {
     return { repository, calls };
   }
 
-  async function runOnce(attempts: number) {
+  async function runOnce(attempts: number, announce?: Announce) {
     const { repository, calls } = failingRepository(attempts);
+    const announced: { requestId: string; reason: string }[] = [];
     const dispatcher = new Dispatcher({
       repository,
       internalToken: "t",
@@ -185,9 +186,14 @@ describe("giving up on a delivery", () => {
       deliver: async () => {
         throw new Error("RCA service returned HTTP 500");
       },
+      announce:
+        announce ??
+        (async (job, reason) => {
+          announced.push({ requestId: job.requestId, reason });
+        }),
     });
     await dispatcher.runOnce();
-    return calls;
+    return { ...calls, announced };
   }
 
   it("keeps retrying while attempts remain", async () => {
@@ -210,9 +216,39 @@ describe("giving up on a delivery", () => {
     expect(update.error).toContain("the investigation failed 12 times");
   });
 
-  it("records the error where the error channel reads from", async () => {
-    // Without this the asker never learns their question died.
+  it("writes the failure down for whoever operates this", async () => {
+    // Not how the asker finds out. This used to be the whole of it, back when
+    // n8n's error workflow read the table and posted what it found; nothing
+    // reads it now. The announcement below is the notification.
     const calls = await runOnce(11);
     expect(calls.recordSystemError).toHaveLength(1);
+  });
+
+  it("tells the asker their question died", async () => {
+    const calls = await runOnce(11);
+
+    expect(calls.announced).toEqual([
+      { requestId: "REQ-1", reason: "RCA service returned HTTP 500" },
+    ]);
+  });
+
+  it("says nothing while attempts remain", async () => {
+    // A retry is not news. The asker hears once, when there is nothing left.
+    const calls = await runOnce(0);
+
+    expect(calls.announced).toEqual([]);
+  });
+
+  it("survives an announcement that cannot be delivered", async () => {
+    // This runs inside the catch around a delivery, where a throw leaves the
+    // claim loop -- so Slack being down would stop the dispatcher outright.
+    // The job stays closed, and the failure to announce is recorded too.
+    const calls = await runOnce(11, async () => {
+      throw new Error("slack chat.postMessage failed: channel_not_found");
+    });
+
+    expect(calls.completeDispatch).toEqual([1]);
+    expect(calls.recordSystemError).toHaveLength(2);
+    expect(JSON.stringify(calls.recordSystemError[1])).toContain("channel_not_found");
   });
 });
