@@ -23,7 +23,15 @@ import { envSchema } from "../src/config.js";
  */
 
 function readCompose(): string {
-  return readFileSync(resolve(process.cwd(), "..", "docker-compose.yml"), "utf8");
+  // Read as written, then drop the carriage returns a Windows checkout adds.
+  // Every assertion below matches whole lines, and whether those lines end in
+  // \r is a property of the developer's core.autocrlf, not of the compose file.
+  // Without this the lookups miss on Windows and this file throws its own
+  // "declares no ingress service" -- correct behaviour aimed at the wrong thing.
+  return readFileSync(resolve(process.cwd(), "..", "docker-compose.yml"), "utf8").replace(
+    /\r\n/g,
+    "\n",
+  );
 }
 
 /**

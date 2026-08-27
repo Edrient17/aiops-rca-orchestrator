@@ -1,0 +1,4 @@
+# The worktree is normalised to LF regardless of core.autocrlf. Tests here read
+# docker-compose.yml and the schemas as text and match on whole lines; a checkout
+# that appends carriage returns makes those matches fail on one platform only.
+* text=auto eol=lf
