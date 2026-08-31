@@ -200,6 +200,39 @@ describe("giving up on a question", () => {
 
     expect(text.length).toBeLessThan(600);
   });
+
+  it("points the way back at the channel that accepts questions", () => {
+    // This is usually read in the answer channel, under the acknowledgement,
+    // and app.ts opens an investigation only for the question channel. Saying
+    // "ask again" without saying where left the asker following an
+    // instruction that is silently ignored wherever they were standing.
+    const text = abandonedText(PAYLOAD, "boom");
+
+    expect(text).toContain("<#C-QUESTION>");
+  });
+
+  it("defuses Slack markup carried in from the error", () => {
+    // The stage in this reason comes from the RCA service's own response.
+    // Unescaped, a failure notice pages the channel it is posted in.
+    const text = abandonedText(
+      PAYLOAD,
+      "RCA returned an unknown agent stage: <!channel>",
+    );
+
+    expect(text).not.toContain("<!channel>");
+    expect(text).toContain("&lt;!channel&gt;");
+  });
+
+  it("cannot be trimmed into a reopened bracket", () => {
+    // Escaped before it is cut, so no slice can end mid-entity and leave a
+    // bare "<" for Slack to read as the start of markup.
+    const text = abandonedText(PAYLOAD, "<".repeat(5_000));
+
+    expect(text).not.toContain("<!");
+    // The only angle brackets left are the two this file writes itself: the
+    // mention of the asker and the link to the question channel.
+    expect(text.match(/</g)).toHaveLength(2);
+  });
 });
 
 describe("a completed investigation", () => {

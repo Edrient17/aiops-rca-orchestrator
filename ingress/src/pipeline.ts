@@ -144,6 +144,14 @@ export function clarificationText(
  * The last error goes in because the asker is the one deciding what to do next,
  * and an RCA service returning HTTP 500 and an MCP call timing out call for
  * different things. Trimmed, because this is a message and not a log line.
+ *
+ * The way back names the question channel rather than saying "again". This is
+ * usually read in the answer channel, under the acknowledgement, and a mention
+ * there is not a question: app.ts only opens an investigation for the question
+ * channel, and a threaded mention anywhere else is taken for a note on a
+ * report -- of which an abandoned request has none, so it is dropped. An
+ * instruction the asker can follow and still be ignored is the silence this
+ * message exists to break, one step further along.
  */
 export function abandonedText(payload: DispatchPayload, reason: string): string {
   // Ping the asker. They are being told their question is dead, and a thread
@@ -153,10 +161,26 @@ export function abandonedText(payload: DispatchPayload, reason: string): string 
   return [
     "🛑 " + mention + "*조사를 완료하지 못했습니다*",
     "• 요청 ID: `" + payload.request_id + "`",
-    "• 마지막 오류: " + reason.slice(0, 300),
+    "• 마지막 오류: " + escapeSlackText(reason).slice(0, 300),
     "",
-    "_같은 질문을 다시 멘션하시면 새로 조사합니다._",
+    "_<#" +
+      payload.channel_id +
+      "> 채널에서 같은 질문을 다시 멘션하시면 새로 조사합니다._",
   ].join("\n");
+}
+
+/**
+ * Neutralise Slack's markup in text this service did not write.
+ *
+ * The reason carried here is an error string, and part of it comes from the
+ * RCA service's own response -- toAgentRun interpolates the stage it was sent.
+ * Slack reads `<!channel>` as a broadcast and `<@U…>` as a mention, so an
+ * unescaped error could page a channel from inside a failure notice. Escaped
+ * before it is trimmed, so a cut can never land mid-entity and re-open a
+ * bracket.
+ */
+function escapeSlackText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 const KNOWN_STAGES = new Set(["question_analyzer", "evidence_collector", "rca_writer"]);

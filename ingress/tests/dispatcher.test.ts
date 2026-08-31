@@ -87,6 +87,7 @@ describe("dispatch lock", () => {
       intervalMs: 1000,
       timeoutMs: 60_000,
       deliver: vi.fn(async () => undefined),
+      announce: vi.fn(async () => undefined),
     });
 
     await dispatcher.runOnce();
@@ -105,6 +106,7 @@ describe("delivering a claimed request", () => {
       intervalMs: 1000,
       timeoutMs: 5000,
       deliver,
+      announce: vi.fn(async () => undefined),
     });
 
     await dispatcher.runOnce();
@@ -112,6 +114,35 @@ describe("delivering a claimed request", () => {
     expect(deliver).toHaveBeenCalledWith(job);
     expect(repository.completeDispatch).toHaveBeenCalledWith(7);
     expect(repository.retryDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not re-run an investigation whose only failure was closing the row", async () => {
+    // deliver posts the report before it returns, so a completeDispatch that
+    // throws afterwards is bookkeeping. Sharing a try with the delivery made
+    // it indistinguishable from a failed investigation: the job went back on
+    // the queue and the whole thing ran again. At the ceiling it was worse --
+    // abandon told the asker a question that had just been answered failed.
+    const repository = repositoryWithJob({ ...job, attempts: MAX_DISPATCH_ATTEMPTS });
+    repository.completeDispatch = vi.fn(async () => {
+      throw new Error("Connection terminated unexpectedly");
+    });
+    const announce = vi.fn(async () => undefined);
+    const dispatcher = new Dispatcher({
+      repository,
+      internalToken: "token",
+      intervalMs: 1000,
+      timeoutMs: 5000,
+      deliver: vi.fn(async () => undefined),
+      announce,
+    });
+
+    await dispatcher.runOnce();
+
+    expect(repository.retryDispatch).not.toHaveBeenCalled();
+    expect(repository.updateRequestStatus).not.toHaveBeenCalled();
+    expect(announce).not.toHaveBeenCalled();
+    // Recorded rather than thrown: the claim loop has to survive it.
+    expect(repository.recordSystemError).toHaveBeenCalledTimes(1);
   });
 
   it("schedules a retry carrying the reason it failed", async () => {
@@ -124,6 +155,7 @@ describe("delivering a claimed request", () => {
       deliver: vi.fn(async () => {
         throw new Error("RCA service returned HTTP 503");
       }),
+      announce: vi.fn(async () => undefined),
     });
 
     await dispatcher.runOnce();
@@ -191,6 +223,7 @@ describe("giving up on a delivery", () => {
    */
   const LAST_ATTEMPT = MAX_DISPATCH_ATTEMPTS;
   const SECOND_TO_LAST_ATTEMPT = MAX_DISPATCH_ATTEMPTS - 1;
+  const FIRST_ATTEMPT = 1;
 
   async function runOnce(attempts: number, announce?: Announce) {
     const { repository, calls } = failingRepository(attempts);
@@ -214,7 +247,9 @@ describe("giving up on a delivery", () => {
   }
 
   it("keeps retrying while attempts remain", async () => {
-    const calls = await runOnce(0);
+    // The first claim. claimDispatch increments before it returns, so 1 is the
+    // lowest a real job carries -- 0 pinned a state the queue cannot produce.
+    const calls = await runOnce(FIRST_ATTEMPT);
     expect(calls.retryDispatch).toHaveLength(1);
     expect(calls.updateRequestStatus).toHaveLength(0);
   });
@@ -264,9 +299,54 @@ describe("giving up on a delivery", () => {
 
   it("says nothing while attempts remain", async () => {
     // A retry is not news. The asker hears once, when there is nothing left.
-    const calls = await runOnce(0);
+    const calls = await runOnce(FIRST_ATTEMPT);
 
     expect(calls.announced).toEqual([]);
+  });
+
+  it("still tells the asker when an earlier closing write fails", async () => {
+    // The four writes are independent and the announcement is last, so a
+    // status update that threw used to take the whole sequence with it --
+    // leaving the request reading as in progress and the asker hearing
+    // nothing, which is the failure the announcement was added to fix.
+    const announced: string[] = [];
+    const errors: unknown[] = [];
+    const repository = {
+      claimDispatch: (() => {
+        let claimed = false;
+        return async () => {
+          if (claimed) return null;
+          claimed = true;
+          return { id: 1, requestId: "REQ-1", attempts: LAST_ATTEMPT, payload: {} };
+        };
+      })(),
+      async completeDispatch() {},
+      async retryDispatch() {},
+      async updateRequestStatus() {
+        throw new Error("Connection terminated unexpectedly");
+      },
+      async recordSystemError(input: unknown) {
+        errors.push(input);
+      },
+    } as unknown as RequestRepository;
+
+    const dispatcher = new Dispatcher({
+      repository,
+      internalToken: "t",
+      intervalMs: 1_000,
+      timeoutMs: 5_000,
+      deliver: async () => {
+        throw new Error("RCA service returned HTTP 500");
+      },
+      announce: async (_job, reason) => {
+        announced.push(reason);
+      },
+    });
+
+    await dispatcher.runOnce();
+
+    expect(announced).toEqual(["RCA service returned HTTP 500"]);
+    expect(JSON.stringify(errors)).toContain("could not be marked failed");
   });
 
   it("survives an announcement that cannot be delivered", async () => {
