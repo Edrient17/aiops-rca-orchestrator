@@ -7,6 +7,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from aiops_rca.graph.routing import (
+    route_after_evidence_normalizer,
     route_after_host_resolution,
     route_after_report_eval,
     route_after_stop_guard,
@@ -78,7 +79,14 @@ def build_collector_graph(
         },
     )
     builder.add_edge("tool_executor", "evidence_normalizer")
-    builder.add_edge("evidence_normalizer", "hypothesis_updater")
+    builder.add_conditional_edges(
+        "evidence_normalizer",
+        route_after_evidence_normalizer,
+        {
+            "hypothesis_updater": "hypothesis_updater",
+            "stop_guard": "stop_guard",
+        },
+    )
     builder.add_edge("hypothesis_updater", "stop_guard")
     builder.add_conditional_edges(
         "stop_guard",

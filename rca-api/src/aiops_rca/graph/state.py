@@ -1,5 +1,6 @@
 """Source-of-truth state checkpointed between diagnostic graph nodes."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -20,6 +21,25 @@ from aiops_rca.schemas.investigation import (
 from aiops_rca.schemas.parsed_request import ParsedRequest
 from aiops_rca.schemas.report import Report
 from aiops_rca.tools.result import ToolExecutionResult
+
+#: What this state will hold of the two lists that only ever grow. Thirty-odd
+#: call sites append an unknown and none of them prunes, and the updater adds a
+#: fact per turn, against ceilings this model enforces. Reaching one used to
+#: raise out of the graph and discard the whole investigation over the last
+#: item added -- after every tool call had been paid for.
+#:
+#: `merge_evidence` was changed for exactly this reason and stops collection at
+#: its ceiling instead. This is the same bargain, applied where the state is
+#: built rather than at each append, because a ceiling enforced in one place
+#: cannot be forgotten by the next site that appends.
+UNKNOWNS_CAPACITY = 100
+KNOWN_FACTS_CAPACITY = 100
+
+#: The unknown that says the ceiling was reached. Recognised on the way back in
+#: as well as written on the way out: this state is rebuilt at every node, so a
+#: notice counted as an ordinary unknown would push one real entry out of the
+#: list on each transition for the rest of the run.
+CAPACITY_NOTICE = "state_capacity_reached"
 
 
 class InvestigationState(StrictModel):
@@ -129,6 +149,61 @@ class InvestigationState(StrictModel):
 
     visited_nodes: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def bound_what_only_grows(cls, data: Any) -> Any:
+        """Trim the accumulating lists, and say that the trim happened.
+
+        Losing the hundred-and-first unknown costs a line in the limitations
+        section. Raising over it costs the investigation, which is not a trade
+        worth making for a list whose whole purpose is to record what went
+        wrong. The notice takes the last slot so a reader is never shown a
+        truncated account that does not admit it is truncated.
+
+        What is kept is what was recorded first, so an entry that survived one
+        node is not displaced by a later one -- and the notice says the ceiling
+        rather than a running count, which is what lets rebuilding this state
+        at the next node arrive at the same list instead of trimming again.
+        """
+        if not isinstance(data, Mapping):
+            return data
+
+        unknowns = [
+            item for item in (data.get("unknowns") or []) if not _is_notice(item)
+        ]
+        facts = list(data.get("known_facts") or [])
+        # One slot short, because the notice needs one of its own.
+        over_unknowns = len(unknowns) > UNKNOWNS_CAPACITY - 1
+        over_facts = len(facts) > KNOWN_FACTS_CAPACITY
+        if not over_unknowns and not over_facts:
+            # Already inside the ceiling. Any notice `data` carries stays where
+            # it is rather than being rewritten, which is what makes rebuilding
+            # this state a second time change nothing.
+            return data
+
+        full = []
+        if over_unknowns:
+            full.append("unknowns")
+        if over_facts:
+            full.append("confirmed facts")
+
+        updated = dict(data)
+        updated["known_facts"] = facts[:KNOWN_FACTS_CAPACITY]
+        updated["unknowns"] = [
+            *unknowns[: UNKNOWNS_CAPACITY - 1],
+            UnknownItem(
+                code=CAPACITY_NOTICE,
+                message=(
+                    "the investigation reached the "
+                    f"{UNKNOWNS_CAPACITY} entries this state holds of "
+                    + " and ".join(full)
+                    + "; later ones were not recorded, so the report covers"
+                    " only what is kept here"
+                ),
+            ),
+        ]
+        return updated
+
     @model_validator(mode="after")
     def validate_graph_invariants(self) -> "InvestigationState":
         # Keyed on the name because that is what the sources share. A host
@@ -180,3 +255,16 @@ class InvestigationState(StrictModel):
 def _unique(values: list[str], label: str) -> None:
     if len(values) != len(set(values)):
         raise ValueError(f"{label} values must be unique")
+
+
+def _is_notice(item: Any) -> bool:
+    """Whether this unknown is the ceiling notice rather than a finding.
+
+    Reached with either shape: the nodes append `UnknownItem`s, and a state
+    rebuilt from a checkpoint arrives as plain dicts.
+    """
+    if isinstance(item, UnknownItem):
+        return item.code == CAPACITY_NOTICE
+    if isinstance(item, Mapping):
+        return item.get("code") == CAPACITY_NOTICE
+    return False

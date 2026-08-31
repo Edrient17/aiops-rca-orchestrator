@@ -44,6 +44,29 @@ def route_after_host_resolution(
     return "establish_phenomenon"
 
 
+def route_after_evidence_normalizer(
+    state: InvestigationState,
+) -> Literal["hypothesis_updater", "stop_guard"]:
+    """The judgement, or the end of the run.
+
+    The normalizer records a fatal error when a turn produced no observation to
+    normalize, and every other node that can set one is followed by an edge
+    that reads it. This one was not: the edge out was unconditional, and the
+    updater's first line raises when it is handed no observation. So the error
+    left the graph as an exception rather than as state -- a 500 that discarded
+    the report, the trace, the audit rows and every tool call already paid for,
+    which is the outcome the fatal_error field exists to prevent.
+
+    Sent to the stop guard rather than straight to the package, because
+    `hard_stop_update` already turns a fatal error into a stop_reason. The
+    investigation ends with an honest account of why instead of a package
+    claiming it completed.
+    """
+    if state.fatal_error or not state.last_observations:
+        return "stop_guard"
+    return "hypothesis_updater"
+
+
 def route_after_stop_guard(
     state: InvestigationState,
 ) -> Literal["observation_planner", "evidence_package_builder"]:
