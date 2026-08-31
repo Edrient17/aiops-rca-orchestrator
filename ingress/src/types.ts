@@ -123,6 +123,23 @@ export interface ReportRef {
   threadTs: string;
 }
 
+/**
+ * A report that has already been published, as the row that recorded it.
+ *
+ * Written only once the Slack post has returned -- see saveReport's placement
+ * at the end of runInvestigation -- so the row existing is the proof that the
+ * report reached the thread, which is what makes it usable as a guard against
+ * publishing a second one.
+ */
+export interface PublishedReport {
+  channelId: string;
+  /**
+   * The message the report was posted as. Null when Slack answered without a
+   * ts: the post still happened, and this row still says so.
+   */
+  messageTs: string | null;
+}
+
 export interface ReportFeedbackInput {
   requestId: string;
   userId: string;
@@ -217,6 +234,15 @@ export interface RequestRepository {
   findReportByMessage(channelId: string, messageTs: string): Promise<ReportRef | null>;
   /** Finds the report a thread belongs to, for replies written under it. */
   findReportByThread(channelId: string, threadTs: string): Promise<ReportRef | null>;
+  /**
+   * Finds the report already published for a request, if there is one.
+   *
+   * Keyed on the request rather than on a message because the caller asking is
+   * the one holding the request and has no ts to look one up by: it is a
+   * delivery of that request, asking whether an earlier delivery already
+   * answered it.
+   */
+  findReportByRequest(requestId: string): Promise<PublishedReport | null>;
   saveReportFeedback(input: ReportFeedbackInput): Promise<SaveFeedbackResult>;
   removeReportFeedback(input: {
     requestId: string;

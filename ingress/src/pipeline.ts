@@ -209,37 +209,55 @@ export async function runInvestigation(
   const { repository } = deps;
   const send = deps.fetchImpl ?? fetch;
 
-  // 0. Whether the asker has already been sent the question this request
-  //    stopped at.
+  // 0. Whether an earlier delivery already finished with this request.
   //
   //    The queue is at-least-once and means it. completeDispatch runs as a
   //    step of its own after the delivery returns, and a failure there is
-  //    deliberately not treated as a failed delivery -- doing that would retry
-  //    an investigation that had already had its say and, on the last attempt,
-  //    tell the asker their answered question had failed. The row is left for
+  //    deliberately not treated as a failed delivery -- doing that retried an
+  //    investigation that had already had its say and, on the last attempt,
+  //    told the asker their answered question had failed. The row is left for
   //    the claim lock to lapse instead, which means the job is claimed again
-  //    and this function runs a second time for a request that is finished
-  //    with. The clarification below has no row of its own to absorb that, so
-  //    the repeat went to the asker: the same question, mentioning them again.
+  //    and this function runs a second time for a request that is finished.
   //
-  //    The marker is the request's own status, read here rather than carried
-  //    on the payload. claimDispatch could return it the way it returns
-  //    slack_ack_ts, but that value would be a snapshot taken at the claim,
-  //    and the write that records the anchor below lays analyzing_question
-  //    over the stored status on every attempt -- a delivery deciding on a
-  //    snapshot it invalidates itself. server.ts casts the queue's payload
-  //    into this shape besides, so a field that went missing would quietly
-  //    stop guarding anything rather than fail to compile. This costs one
-  //    indexed read on a primary key, and it is true at the moment it is used.
+  //    The acknowledgement below already survives that by reading back the ts
+  //    the first attempt recorded. Neither of the two things this function can
+  //    post afterwards did. They end in different places and are marked in
+  //    different places, so they are read separately -- but both are read
+  //    here rather than beside their posts, because nothing in between is
+  //    worth repeating either: a redelivery costs two indexed reads instead of
+  //    a second acknowledgement thread, a second RCA run and a second set of
+  //    audit records. Returning normally is what closes the job -- the caller
+  //    marks a delivery that did not throw as complete, so this attempt
+  //    finishes the bookkeeping the last one could not.
   //
-  //    Read before the acknowledgement, because nothing between here and the
-  //    post is worth repeating either: a redelivery costs that read instead of
-  //    a second RCA run and a second set of audit records for it. Returning
-  //    normally is what closes the job -- the caller marks a delivery that did
-  //    not throw as complete, so this attempt finishes the bookkeeping the
-  //    last one could not.
+  //    At most one of the two can fire. saveReport writes 'completed' in the
+  //    same transaction as the report row, and 'completed' is not one of the
+  //    statuses that mean a clarification was asked, so the order of the two
+  //    reads is free.
+
+  //    A clarification is marked by the request's own status, because it
+  //    writes no row of its own for a repeat to be absorbed into: the same
+  //    question went to the asker twice, mentioning them again. Read rather
+  //    than carried on the payload -- claimDispatch could return it the way it
+  //    returns slack_ack_ts, but that value would be a snapshot taken at the
+  //    claim, and the write that records the anchor below lays
+  //    analyzing_question over the stored status on every attempt, so the
+  //    delivery would be deciding on something it invalidates itself.
+  //    server.ts casts the queue's payload into this shape besides, so a field
+  //    that went missing would quietly stop guarding anything rather than fail
+  //    to compile.
   const status = await repository.findRequestStatus(payload.request_id);
   if (status !== null && CLARIFICATION_ASKED.includes(status)) {
+    return;
+  }
+
+  //    A report is marked by the report row, which means what the guard needs
+  //    it to mean: saveReport is the last thing this function does, so a row
+  //    exists only if the post it describes went out. Without this read,
+  //    saveReport being an upsert meant the stored row absorbed the repeat
+  //    silently while a second report landed in the thread under the first.
+  const published = await repository.findReportByRequest(payload.request_id);
+  if (published) {
     return;
   }
 
@@ -363,6 +381,13 @@ export async function runInvestigation(
 
   // Saved after posting so the stored row carries the message it was published
   // as, which is what a reaction on that message is later matched against.
+  //
+  // The order is also what makes this row safe to read as "already published"
+  // at the top. Written first, it would claim a publication that the post
+  // after it might never make, and the next delivery would read that claim and
+  // skip -- leaving the question acknowledged and never answered. A post that
+  // lands and then fails to save is retried and does duplicate; between a
+  // duplicate report and a silent one, this is the direction to be wrong in.
   await repository.saveReport(payload.request_id, {
     parsedRequest: result.parsed_request,
     evidencePackage: result.evidence_package,
