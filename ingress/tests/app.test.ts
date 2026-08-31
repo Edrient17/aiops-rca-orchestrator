@@ -57,6 +57,10 @@ class FakeRepository implements RequestRepository {
   claimDispatch = vi.fn(async (): Promise<DispatchJob | null> => null);
   completeDispatch = vi.fn(async () => undefined);
   retryDispatch = vi.fn(async () => undefined);
+  // Nothing this app serves runs an investigation; the pipeline is the only
+  // caller, and it asks what an earlier delivery of the same request left
+  // behind before it posts anything.
+  findRequestStatus = vi.fn(async (): Promise<string | null> => null);
   updateRequestStatus = vi.fn(async () => true);
   recordAgentRun = vi.fn(async (_id: string, _input: AgentRunInput) => true);
   saveReport = vi.fn(async (_id: string, _input: ReportInput) => true);

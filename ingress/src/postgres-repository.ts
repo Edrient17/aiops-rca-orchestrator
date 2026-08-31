@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { SETTLED_STATUSES } from "./request-status.js";
 import type {
   ReportTemplate,
   ReportTemplateBody,
@@ -394,6 +395,22 @@ export class PostgresRequestRepository implements RequestRepository {
     );
   }
 
+  async findRequestStatus(requestId: string): Promise<string | null> {
+    // request_id is the primary key, so there is one row at most and nothing
+    // to order or narrow -- unlike findPendingClarification, which matches on
+    // a Slack thread and has to pick.
+    const result = await this.pool.query<{ status: string }>(
+      `
+        SELECT status
+        FROM aiops_requests
+        WHERE request_id = $1
+      `,
+      [requestId],
+    );
+
+    return result.rows[0]?.status ?? null;
+  }
+
   async updateRequestStatus(
     requestId: string,
     status: string,
@@ -402,6 +419,15 @@ export class PostgresRequestRepository implements RequestRepository {
   ): Promise<boolean> {
     // COALESCE so a later status change cannot erase the anchor recorded when
     // the acknowledgement was first posted.
+    //
+    // A write of 'failed' is refused for a request that already reached an
+    // outcome the asker saw. It is the same rule recordSystemError applies, on
+    // the same list, because it is the same write arriving by the other route:
+    // the dispatcher marks a request failed when it gives up, and giving up
+    // after a delivery that succeeded would retract a report or a
+    // clarification that is already in the channel. Only 'failed' is gated --
+    // the pipeline's own writes move a request through its statuses and have
+    // to land.
     const result = await this.pool.query(
       `
         UPDATE aiops_requests
@@ -410,8 +436,9 @@ export class PostgresRequestRepository implements RequestRepository {
             slack_ack_ts = COALESCE($4, slack_ack_ts),
             updated_at = now()
         WHERE request_id = $1
+          AND ($2 <> 'failed' OR status <> ALL($5::text[]))
       `,
-      [requestId, status, error ?? null, slackAckTs ?? null],
+      [requestId, status, error ?? null, slackAckTs ?? null, [...SETTLED_STATUSES]],
     );
     return result.rowCount === 1;
   }
@@ -532,13 +559,25 @@ export class PostgresRequestRepository implements RequestRepository {
       // Guarded rather than unconditional: the dispatcher gives up after its
       // last attempt, and a report delivered by an earlier one must not be
       // retracted by the attempt that came after it.
+      //
+      // The guard used to name 'completed' alone, and a clarification was left
+      // exposed to the case it was written for. The dispatcher records a
+      // failure to close a delivered job against that job's request, and the
+      // delivery it could not close may be one that asked the asker a question
+      // -- so this relabelled a request that had just been sent a
+      // clarification as failed, which cost two things. The asker's reply
+      // stopped matching: findPendingClarification looks for
+      // 'needs_clarification' and found nothing, so the answer they typed
+      // opened no continuation. And the status stopped being usable as the
+      // record that the question went out, which is what runInvestigation
+      // reads to keep from asking it twice.
       await this.pool.query(
         `
           UPDATE aiops_requests
           SET status = 'failed', last_error = $2, updated_at = now()
-          WHERE request_id = $1 AND status <> 'completed'
+          WHERE request_id = $1 AND status <> ALL($3::text[])
         `,
-        [requestId, input.message],
+        [requestId, input.message, [...SETTLED_STATUSES]],
       );
     }
   }

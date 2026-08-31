@@ -30,6 +30,7 @@ function repositoryWithJob(job: DispatchJob): RequestRepository {
     }),
     completeDispatch: vi.fn(async () => undefined),
     retryDispatch: vi.fn(async () => undefined),
+    findRequestStatus: vi.fn(async (): Promise<string | null> => null),
     updateRequestStatus: vi.fn(async () => true),
     recordAgentRun: vi.fn(async (_id: string, _input: AgentRunInput) => true),
     saveReport: vi.fn(async (_id: string, _input: ReportInput) => true),

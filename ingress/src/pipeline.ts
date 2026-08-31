@@ -14,6 +14,7 @@
  */
 
 import { formatReport, type FormatConfig } from "./report-format.js";
+import { CLARIFICATION_ASKED } from "./request-status.js";
 import { postMessage } from "./slack.js";
 import type { AgentRunInput, RequestRepository } from "./types.js";
 
@@ -208,6 +209,40 @@ export async function runInvestigation(
   const { repository } = deps;
   const send = deps.fetchImpl ?? fetch;
 
+  // 0. Whether the asker has already been sent the question this request
+  //    stopped at.
+  //
+  //    The queue is at-least-once and means it. completeDispatch runs as a
+  //    step of its own after the delivery returns, and a failure there is
+  //    deliberately not treated as a failed delivery -- doing that would retry
+  //    an investigation that had already had its say and, on the last attempt,
+  //    tell the asker their answered question had failed. The row is left for
+  //    the claim lock to lapse instead, which means the job is claimed again
+  //    and this function runs a second time for a request that is finished
+  //    with. The clarification below has no row of its own to absorb that, so
+  //    the repeat went to the asker: the same question, mentioning them again.
+  //
+  //    The marker is the request's own status, read here rather than carried
+  //    on the payload. claimDispatch could return it the way it returns
+  //    slack_ack_ts, but that value would be a snapshot taken at the claim,
+  //    and the write that records the anchor below lays analyzing_question
+  //    over the stored status on every attempt -- a delivery deciding on a
+  //    snapshot it invalidates itself. server.ts casts the queue's payload
+  //    into this shape besides, so a field that went missing would quietly
+  //    stop guarding anything rather than fail to compile. This costs one
+  //    indexed read on a primary key, and it is true at the moment it is used.
+  //
+  //    Read before the acknowledgement, because nothing between here and the
+  //    post is worth repeating either: a redelivery costs that read instead of
+  //    a second RCA run and a second set of audit records for it. Returning
+  //    normally is what closes the job -- the caller marks a delivery that did
+  //    not throw as complete, so this attempt finishes the bookkeeping the
+  //    last one could not.
+  const status = await repository.findRequestStatus(payload.request_id);
+  if (status !== null && CLARIFICATION_ASKED.includes(status)) {
+    return;
+  }
+
   // 1. Acknowledge, and find the thread everything else hangs from. A
   //    continuation replies under the parent's acknowledgement so one
   //    investigation stays one thread.
@@ -295,6 +330,14 @@ export async function runInvestigation(
       timeoutMs: config.slackTimeoutMs,
       fetchImpl: send,
     });
+    // Recorded after the post, and that order is the load-bearing half of the
+    // guard at the top. Written first, the status would claim a question the
+    // post after it might never make, and the next delivery would read that
+    // claim and skip -- leaving the asker waiting on a clarification nobody
+    // ever sent them, which is the silence this queue exists to prevent. A
+    // post that lands and then fails to record is retried and does ask twice.
+    // Between asking twice and never asking, this is the direction to be wrong
+    // in.
     await repository.updateRequestStatus(payload.request_id, result.status);
     return;
   }

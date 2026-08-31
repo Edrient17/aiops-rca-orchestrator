@@ -217,6 +217,12 @@ export class Dispatcher {
     // announce a death the queue has not recorded. sweep() catches it.
     await this.options.repository.completeDispatch(job.id);
 
+    // Asked for, not assumed: the repository refuses this one for a request
+    // that already reached an outcome the asker saw. Giving up is about the
+    // deliveries, and a delivery that posted a report or a clarification and
+    // then kept failing on the bookkeeping around it has not left the asker
+    // with nothing to read. The note below and the announcement after it are
+    // unconditional, so the failure is still recorded and still told.
     await this.runQuietly(job.requestId, "the request could not be marked failed", () =>
       this.options.repository.updateRequestStatus(job.requestId, "failed", detail),
     );

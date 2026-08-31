@@ -181,6 +181,28 @@ export interface RequestRepository {
   claimDispatch(lockSeconds: number): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;
+  /**
+   * The status stored against a request, as it stands now.
+   *
+   * Asked by a delivery that wants to know what an earlier delivery of the
+   * same request already did, so it is read here rather than carried on the
+   * dispatch payload. claimDispatch could return it the way it returns
+   * slack_ack_ts, but that value would be true only at the instant of the
+   * claim, and runInvestigation overwrites the stored status one step in: the
+   * delivery would be deciding on a snapshot it invalidates itself. Null when
+   * there is no such request.
+   */
+  findRequestStatus(requestId: string): Promise<string | null>;
+  /**
+   * Moves a request to a status, and records the anchor the first attempt
+   * posted its acknowledgement as.
+   *
+   * False means nothing was written: either there is no such request, or the
+   * write was 'failed' against a request that already reached an outcome the
+   * asker saw, which is refused. No caller distinguishes the two -- a status
+   * that could not be moved is not a delivery failure, and the dispatcher's
+   * own note about giving up is recorded either way.
+   */
   updateRequestStatus(
     requestId: string,
     status: string,
