@@ -9,6 +9,7 @@ import type {
   DispatchJob,
   FeedbackLabel,
   PendingClarification,
+  PublishedReport,
   ReportFeedbackInput,
   ReportInput,
   ReportNoteInput,
@@ -57,11 +58,18 @@ class FakeRepository implements RequestRepository {
   claimDispatch = vi.fn(async (): Promise<DispatchJob | null> => null);
   completeDispatch = vi.fn(async () => undefined);
   retryDispatch = vi.fn(async () => undefined);
+  // Nothing this app serves runs an investigation; the pipeline is the only
+  // caller, and it asks what an earlier delivery of the same request left
+  // behind before it posts anything.
+  findRequestStatus = vi.fn(async (): Promise<string | null> => null);
   updateRequestStatus = vi.fn(async () => true);
   recordAgentRun = vi.fn(async (_id: string, _input: AgentRunInput) => true);
   saveReport = vi.fn(async (_id: string, _input: ReportInput) => true);
   recordSystemError = vi.fn(async (_input: SystemErrorInput) => undefined);
   getRequest = vi.fn(async () => ({ request_id: "REQ-TEST" }));
+  // Nothing this app serves publishes a report; the pipeline is the only
+  // caller, and it asks whether one is already out before it posts another.
+  findReportByRequest = vi.fn(async (): Promise<PublishedReport | null> => null);
   findReportByMessage = vi.fn(async (): Promise<ReportRef | null> => this.report);
   findReportByThread = vi.fn(async (): Promise<ReportRef | null> => this.report);
   saveReportFeedback = vi.fn(

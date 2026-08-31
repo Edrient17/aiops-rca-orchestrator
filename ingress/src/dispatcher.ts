@@ -18,10 +18,12 @@ export interface DispatcherOptions {
   deliver: Deliver;
   /**
    * Told when a request is abandoned. This is the only path by which the asker
-   * learns their question died -- see `abandon` -- so leaving it out is
-   * choosing silence.
+   * learns their question died -- see `abandon` -- so it is required rather
+   * than optional. Omitting it is choosing silence, and silence is the exact
+   * failure this queue grew the announcement to fix: a wiring that drops it
+   * should fail to compile, because no test can see it go missing.
    */
-  announce?: Announce;
+  announce: Announce;
 }
 
 export type Deliver = (job: DispatchJob) => Promise<void>;
@@ -30,8 +32,8 @@ export type Deliver = (job: DispatchJob) => Promise<void>;
  * How a request that has been given up on is announced to whoever asked it.
  *
  * Injected for the reason `deliver` is: the queue decides when a question is
- * dead, it does not decide how someone is told. Optional, because a dispatcher
- * under test has nobody to tell.
+ * dead, it does not decide how someone is told. A dispatcher under test passes
+ * one that records the call rather than posting it.
  */
 export type Announce = (job: DispatchJob, reason: string) => Promise<void>;
 
@@ -101,8 +103,8 @@ export class Dispatcher {
     if (this.timer) {
       return;
     }
-    this.timer = setInterval(() => void this.runOnce(), this.options.intervalMs);
-    void this.runOnce();
+    this.timer = setInterval(() => this.sweep(), this.options.intervalMs);
+    this.sweep();
   }
 
   stop(): void {
@@ -113,7 +115,29 @@ export class Dispatcher {
   }
 
   wake(): void {
-    void this.runOnce();
+    this.sweep();
+  }
+
+  /**
+   * Start a pass, and absorb anything that escapes it.
+   *
+   * runOnce is fired and forgotten from three places, and Node ends the
+   * process on an unhandled rejection. Without this, a database that is
+   * unreachable when a job is claimed takes ingress down with it -- and
+   * `restart: unless-stopped` brings it straight back to the same job and the
+   * same throw. A pass that fails is a pass skipped; the next tick reclaims
+   * whatever it left, because the lock lapses on its own.
+   */
+  private sweep(): void {
+    void this.runOnce().catch((error: unknown) => {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          message: "dispatch_pass_failed",
+          detail: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    });
   }
 
   async runOnce(): Promise<void> {
@@ -130,16 +154,28 @@ export class Dispatcher {
 
         try {
           await this.options.deliver(job);
-          await this.options.repository.completeDispatch(job.id);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (job.attempts >= MAX_DISPATCH_ATTEMPTS) {
             await this.abandon(job, message);
             continue;
           }
-          const delaySeconds = Math.min(300, 2 ** Math.min(job.attempts, 8));
-          await this.options.repository.retryDispatch(job.id, delaySeconds, message);
+          // 2 to 256 seconds. attempts is 1 on the first claim and 9 abandons,
+          // so this only ever sees 1..8 -- the clamps this used to carry were
+          // sized for a ceiling of twelve and could no longer bind.
+          await this.options.repository.retryDispatch(job.id, 2 ** job.attempts, message);
+          continue;
         }
+
+        // Only reached once the investigation itself succeeded, which is why
+        // it is not inside the try above. A failure to close the row is
+        // bookkeeping: sending it back through that catch would retry a
+        // delivery whose report is already posted, and on the last claim it
+        // would abandon the job and tell the asker that an answered question
+        // failed. The row is left for the lock to lapse instead.
+        await this.runQuietly(job.requestId, "the delivered job could not be closed", () =>
+          this.options.repository.completeDispatch(job.id),
+        );
       }
     } finally {
       this.running = false;
@@ -161,34 +197,75 @@ export class Dispatcher {
    * Nothing caught it, because what stayed behind still looked like a
    * notification. A question acknowledged and then silent is the failure this
    * queue exists to prevent, so it is sent now rather than filed.
+   *
+   * Being last is why the three writes before it are guarded individually
+   * rather than run as one sequence. They are independent, and there is no
+   * later attempt to save a question -- completeDispatch has already taken the
+   * row out of the due set. A status update that failed used to throw straight
+   * past the announcement, leaving the request reading as in progress forever
+   * and the asker hearing nothing: the failure being repaired here, reached by
+   * a different route.
    */
   private async abandon(job: DispatchJob, message: string): Promise<void> {
     // job.attempts, not the ceiling: they are equal when the ceiling is what
     // stopped this, and only the first is true if it is ever lowered under a
     // queue that already holds rows counted against the old one.
     const detail = `the investigation failed ${job.attempts} times: ${message}`;
-    await this.options.repository.completeDispatch(job.id);
-    await this.options.repository.updateRequestStatus(job.requestId, "failed", detail);
-    await this.options.repository.recordSystemError({
-      requestId: job.requestId,
-      workflowName: "ingress dispatcher",
-      message: detail,
-    });
 
-    // Swallowed on purpose. This runs inside the catch around a delivery, so a
-    // throw here leaves the claim loop and takes the dispatcher down over a
-    // Slack outage. The queue row is already closed above, so failing to
-    // announce cannot revive the job -- it can only go unheard, which is what
-    // the second record is for.
-    try {
-      await this.options.announce?.(job, message);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      await this.options.repository.recordSystemError({
+    // Not guarded, and first: until this lands the job is still live, and a
+    // throw here should leave it that way to be claimed again rather than
+    // announce a death the queue has not recorded. sweep() catches it.
+    await this.options.repository.completeDispatch(job.id);
+
+    // Asked for, not assumed: the repository refuses this one for a request
+    // that already reached an outcome the asker saw. Giving up is about the
+    // deliveries, and a delivery that posted a report or a clarification and
+    // then kept failing on the bookkeeping around it has not left the asker
+    // with nothing to read. The note below and the announcement after it are
+    // unconditional, so the failure is still recorded and still told.
+    await this.runQuietly(job.requestId, "the request could not be marked failed", () =>
+      this.options.repository.updateRequestStatus(job.requestId, "failed", detail),
+    );
+    await this.runQuietly(job.requestId, "the abandonment could not be recorded", () =>
+      this.options.repository.recordSystemError({
         requestId: job.requestId,
         workflowName: "ingress dispatcher",
-        message: `abandonment could not be announced: ${reason}`,
-      });
+        message: detail,
+      }),
+    );
+    await this.runQuietly(job.requestId, "abandonment could not be announced", () =>
+      this.options.announce(job, message),
+    );
+  }
+
+  /**
+   * Run one closing step, and keep going if it fails.
+   *
+   * All of this runs inside the catch around a delivery, where a throw leaves
+   * the claim loop -- so Slack being down, or the database being down, would
+   * otherwise stop the dispatcher outright. The note about the failure is
+   * itself guarded: when the database is the thing that is down, recording
+   * that fact fails too, and a recovery path that can throw is not one.
+   */
+  private async runQuietly(
+    requestId: string,
+    what: string,
+    step: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await step();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      try {
+        await this.options.repository.recordSystemError({
+          requestId,
+          workflowName: "ingress dispatcher",
+          message: `${what}: ${reason}`,
+        });
+      } catch {
+        // Nothing left that can be written to. Losing the note is not a
+        // reason to end the claim loop.
+      }
     }
   }
 }

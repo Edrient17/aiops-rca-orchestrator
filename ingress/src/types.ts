@@ -123,6 +123,23 @@ export interface ReportRef {
   threadTs: string;
 }
 
+/**
+ * A report that has already been published, as the row that recorded it.
+ *
+ * Written only once the Slack post has returned -- see saveReport's placement
+ * at the end of runInvestigation -- so the row existing is the proof that the
+ * report reached the thread, which is what makes it usable as a guard against
+ * publishing a second one.
+ */
+export interface PublishedReport {
+  channelId: string;
+  /**
+   * The message the report was posted as. Null when Slack answered without a
+   * ts: the post still happened, and this row still says so.
+   */
+  messageTs: string | null;
+}
+
 export interface ReportFeedbackInput {
   requestId: string;
   userId: string;
@@ -181,6 +198,28 @@ export interface RequestRepository {
   claimDispatch(lockSeconds: number): Promise<DispatchJob | null>;
   completeDispatch(jobId: number): Promise<void>;
   retryDispatch(jobId: number, delaySeconds: number, error: string): Promise<void>;
+  /**
+   * The status stored against a request, as it stands now.
+   *
+   * Asked by a delivery that wants to know what an earlier delivery of the
+   * same request already did, so it is read here rather than carried on the
+   * dispatch payload. claimDispatch could return it the way it returns
+   * slack_ack_ts, but that value would be true only at the instant of the
+   * claim, and runInvestigation overwrites the stored status one step in: the
+   * delivery would be deciding on a snapshot it invalidates itself. Null when
+   * there is no such request.
+   */
+  findRequestStatus(requestId: string): Promise<string | null>;
+  /**
+   * Moves a request to a status, and records the anchor the first attempt
+   * posted its acknowledgement as.
+   *
+   * False means nothing was written: either there is no such request, or the
+   * write was 'failed' against a request that already reached an outcome the
+   * asker saw, which is refused. No caller distinguishes the two -- a status
+   * that could not be moved is not a delivery failure, and the dispatcher's
+   * own note about giving up is recorded either way.
+   */
   updateRequestStatus(
     requestId: string,
     status: string,
@@ -195,6 +234,15 @@ export interface RequestRepository {
   findReportByMessage(channelId: string, messageTs: string): Promise<ReportRef | null>;
   /** Finds the report a thread belongs to, for replies written under it. */
   findReportByThread(channelId: string, threadTs: string): Promise<ReportRef | null>;
+  /**
+   * Finds the report already published for a request, if there is one.
+   *
+   * Keyed on the request rather than on a message because the caller asking is
+   * the one holding the request and has no ts to look one up by: it is a
+   * delivery of that request, asking whether an earlier delivery already
+   * answered it.
+   */
+  findReportByRequest(requestId: string): Promise<PublishedReport | null>;
   saveReportFeedback(input: ReportFeedbackInput): Promise<SaveFeedbackResult>;
   removeReportFeedback(input: {
     requestId: string;

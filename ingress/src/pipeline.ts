@@ -14,6 +14,7 @@
  */
 
 import { formatReport, type FormatConfig } from "./report-format.js";
+import { CLARIFICATION_ASKED } from "./request-status.js";
 import { postMessage } from "./slack.js";
 import type { AgentRunInput, RequestRepository } from "./types.js";
 
@@ -144,6 +145,14 @@ export function clarificationText(
  * The last error goes in because the asker is the one deciding what to do next,
  * and an RCA service returning HTTP 500 and an MCP call timing out call for
  * different things. Trimmed, because this is a message and not a log line.
+ *
+ * The way back names the question channel rather than saying "again". This is
+ * usually read in the answer channel, under the acknowledgement, and a mention
+ * there is not a question: app.ts only opens an investigation for the question
+ * channel, and a threaded mention anywhere else is taken for a note on a
+ * report -- of which an abandoned request has none, so it is dropped. An
+ * instruction the asker can follow and still be ignored is the silence this
+ * message exists to break, one step further along.
  */
 export function abandonedText(payload: DispatchPayload, reason: string): string {
   // Ping the asker. They are being told their question is dead, and a thread
@@ -153,10 +162,26 @@ export function abandonedText(payload: DispatchPayload, reason: string): string 
   return [
     "🛑 " + mention + "*조사를 완료하지 못했습니다*",
     "• 요청 ID: `" + payload.request_id + "`",
-    "• 마지막 오류: " + reason.slice(0, 300),
+    "• 마지막 오류: " + escapeSlackText(reason).slice(0, 300),
     "",
-    "_같은 질문을 다시 멘션하시면 새로 조사합니다._",
+    "_<#" +
+      payload.channel_id +
+      "> 채널에서 같은 질문을 다시 멘션하시면 새로 조사합니다._",
   ].join("\n");
+}
+
+/**
+ * Neutralise Slack's markup in text this service did not write.
+ *
+ * The reason carried here is an error string, and part of it comes from the
+ * RCA service's own response -- toAgentRun interpolates the stage it was sent.
+ * Slack reads `<!channel>` as a broadcast and `<@U…>` as a mention, so an
+ * unescaped error could page a channel from inside a failure notice. Escaped
+ * before it is trimmed, so a cut can never land mid-entity and re-open a
+ * bracket.
+ */
+function escapeSlackText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 const KNOWN_STAGES = new Set(["question_analyzer", "evidence_collector", "rca_writer"]);
@@ -183,6 +208,58 @@ export async function runInvestigation(
 ): Promise<void> {
   const { repository } = deps;
   const send = deps.fetchImpl ?? fetch;
+
+  // 0. Whether an earlier delivery already finished with this request.
+  //
+  //    The queue is at-least-once and means it. completeDispatch runs as a
+  //    step of its own after the delivery returns, and a failure there is
+  //    deliberately not treated as a failed delivery -- doing that retried an
+  //    investigation that had already had its say and, on the last attempt,
+  //    told the asker their answered question had failed. The row is left for
+  //    the claim lock to lapse instead, which means the job is claimed again
+  //    and this function runs a second time for a request that is finished.
+  //
+  //    The acknowledgement below already survives that by reading back the ts
+  //    the first attempt recorded. Neither of the two things this function can
+  //    post afterwards did. They end in different places and are marked in
+  //    different places, so they are read separately -- but both are read
+  //    here rather than beside their posts, because nothing in between is
+  //    worth repeating either: a redelivery costs two indexed reads instead of
+  //    a second acknowledgement thread, a second RCA run and a second set of
+  //    audit records. Returning normally is what closes the job -- the caller
+  //    marks a delivery that did not throw as complete, so this attempt
+  //    finishes the bookkeeping the last one could not.
+  //
+  //    At most one of the two can fire. saveReport writes 'completed' in the
+  //    same transaction as the report row, and 'completed' is not one of the
+  //    statuses that mean a clarification was asked, so the order of the two
+  //    reads is free.
+
+  //    A clarification is marked by the request's own status, because it
+  //    writes no row of its own for a repeat to be absorbed into: the same
+  //    question went to the asker twice, mentioning them again. Read rather
+  //    than carried on the payload -- claimDispatch could return it the way it
+  //    returns slack_ack_ts, but that value would be a snapshot taken at the
+  //    claim, and the write that records the anchor below lays
+  //    analyzing_question over the stored status on every attempt, so the
+  //    delivery would be deciding on something it invalidates itself.
+  //    server.ts casts the queue's payload into this shape besides, so a field
+  //    that went missing would quietly stop guarding anything rather than fail
+  //    to compile.
+  const status = await repository.findRequestStatus(payload.request_id);
+  if (status !== null && CLARIFICATION_ASKED.includes(status)) {
+    return;
+  }
+
+  //    A report is marked by the report row, which means what the guard needs
+  //    it to mean: saveReport is the last thing this function does, so a row
+  //    exists only if the post it describes went out. Without this read,
+  //    saveReport being an upsert meant the stored row absorbed the repeat
+  //    silently while a second report landed in the thread under the first.
+  const published = await repository.findReportByRequest(payload.request_id);
+  if (published) {
+    return;
+  }
 
   // 1. Acknowledge, and find the thread everything else hangs from. A
   //    continuation replies under the parent's acknowledgement so one
@@ -271,6 +348,14 @@ export async function runInvestigation(
       timeoutMs: config.slackTimeoutMs,
       fetchImpl: send,
     });
+    // Recorded after the post, and that order is the load-bearing half of the
+    // guard at the top. Written first, the status would claim a question the
+    // post after it might never make, and the next delivery would read that
+    // claim and skip -- leaving the asker waiting on a clarification nobody
+    // ever sent them, which is the silence this queue exists to prevent. A
+    // post that lands and then fails to record is retried and does ask twice.
+    // Between asking twice and never asking, this is the direction to be wrong
+    // in.
     await repository.updateRequestStatus(payload.request_id, result.status);
     return;
   }
@@ -296,6 +381,13 @@ export async function runInvestigation(
 
   // Saved after posting so the stored row carries the message it was published
   // as, which is what a reaction on that message is later matched against.
+  //
+  // The order is also what makes this row safe to read as "already published"
+  // at the top. Written first, it would claim a publication that the post
+  // after it might never make, and the next delivery would read that claim and
+  // skip -- leaving the question acknowledged and never answered. A post that
+  // lands and then fails to save is retried and does duplicate; between a
+  // duplicate report and a silent one, this is the direction to be wrong in.
   await repository.saveReport(payload.request_id, {
     parsedRequest: result.parsed_request,
     evidencePackage: result.evidence_package,
