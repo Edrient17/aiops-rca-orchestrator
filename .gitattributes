@@ -1,4 +1,9 @@
-# The worktree is normalised to LF regardless of core.autocrlf. Tests here read
-# docker-compose.yml and the schemas as text and match on whole lines; a checkout
-# that appends carriage returns makes those matches fail on one platform only.
+# The worktree is normalised to LF regardless of core.autocrlf. config.test.ts
+# reads docker-compose.yml as text and matches whole lines; a checkout that
+# appends carriage returns makes those matches fail on one platform only. The
+# schema and template files are read through JSON.parse, which does not care.
+#
+# The index was renormalised when this was added -- thirteen paths were still
+# stored CRLF -- so the attribute does not turn the next edit of one of them
+# into a whole-file diff.
 * text=auto eol=lf
