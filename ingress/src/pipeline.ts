@@ -208,6 +208,35 @@ export async function runInvestigation(
   const { repository } = deps;
   const send = deps.fetchImpl ?? fetch;
 
+  // 0. Whether this request has already been answered.
+  //
+  //    The queue is at-least-once and means it. completeDispatch runs as a
+  //    step of its own after the delivery returns, and a failure there is
+  //    deliberately not treated as a failed delivery -- doing that retried an
+  //    investigation whose report was already posted, and on the last attempt
+  //    told the asker their answered question had failed. The row is left for
+  //    the claim lock to lapse instead, which means the job is claimed again
+  //    and this function runs a second time for a request that is finished.
+  //
+  //    The acknowledgement below already survives that by reading the ts the
+  //    first attempt recorded. The report had no such guard: saveReport is an
+  //    upsert, so the stored row absorbed the repeat silently, and a second
+  //    report landed in the thread under the first one.
+  //
+  //    That row is the marker, and it means what the guard needs it to mean:
+  //    saveReport is the last thing this function does, so a report row exists
+  //    only if the post it describes went out. Asked here rather than beside
+  //    the post, because nothing between the two is worth repeating either --
+  //    a redelivery costs one query instead of a second acknowledgement thread,
+  //    a second RCA run and a second set of audit records. Returning normally
+  //    is what closes the job: the caller marks a delivery that did not throw
+  //    as complete, so this attempt finishes the bookkeeping the last one
+  //    could not.
+  const published = await repository.findReportByRequest(payload.request_id);
+  if (published) {
+    return;
+  }
+
   // 1. Acknowledge, and find the thread everything else hangs from. A
   //    continuation replies under the parent's acknowledgement so one
   //    investigation stays one thread.
@@ -320,6 +349,13 @@ export async function runInvestigation(
 
   // Saved after posting so the stored row carries the message it was published
   // as, which is what a reaction on that message is later matched against.
+  //
+  // The order is also what makes this row safe to read as "already published"
+  // at the top. Written first, it would claim a publication that the post
+  // after it might never make, and the next delivery would read that claim and
+  // skip -- leaving the question acknowledged and never answered. A post that
+  // lands and then fails to save is retried and does duplicate; between a
+  // duplicate report and a silent one, this is the direction to be wrong in.
   await repository.saveReport(payload.request_id, {
     parsedRequest: result.parsed_request,
     evidencePackage: result.evidence_package,

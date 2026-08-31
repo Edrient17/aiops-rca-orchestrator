@@ -9,6 +9,7 @@ import type {
   AgentRunInput,
   DispatchJob,
   PendingClarification,
+  PublishedReport,
   ReportFeedbackInput,
   ReportInput,
   ReportNoteInput,
@@ -541,6 +542,28 @@ export class PostgresRequestRepository implements RequestRepository {
         [requestId, input.message],
       );
     }
+  }
+
+  async findReportByRequest(requestId: string): Promise<PublishedReport | null> {
+    // request_id is the primary key here, so there is one row at most and
+    // nothing to order or narrow -- unlike the two lookups below, which match
+    // on a Slack message and have to pick.
+    const result = await this.pool.query<{
+      slack_channel_id: string;
+      slack_message_ts: string | null;
+    }>(
+      `
+        SELECT slack_channel_id, slack_message_ts
+        FROM aiops_reports
+        WHERE request_id = $1
+      `,
+      [requestId],
+    );
+
+    const row = result.rows[0];
+    return row
+      ? { channelId: row.slack_channel_id, messageTs: row.slack_message_ts }
+      : null;
   }
 
   async findReportByMessage(

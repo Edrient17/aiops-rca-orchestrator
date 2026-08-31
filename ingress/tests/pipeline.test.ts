@@ -18,7 +18,11 @@ import {
   type DispatchPayload,
   type PipelineConfig,
 } from "../src/pipeline.js";
-import type { RequestRepository } from "../src/types.js";
+import type {
+  PublishedReport,
+  ReportInput,
+  RequestRepository,
+} from "../src/types.js";
 
 const PAYLOAD: DispatchPayload = {
   request_id: "REQ-1",
@@ -58,13 +62,26 @@ const REPORT = {
   ],
 };
 
-function fakeRepository() {
+/**
+ * Enough of the repository to run the pipeline, and stateful where the pipeline
+ * reads back what it wrote.
+ *
+ * saveReport keeps its row and findReportByRequest answers from it, the way the
+ * upsert and the lookup do against one primary key. That pairing is the point:
+ * the guard against a second report post is exactly this read seeing the
+ * earlier write, and a fake that always answered null would let a second run
+ * publish and call it a pass. `published` seeds the row for a run that is
+ * standing in for the second delivery on its own.
+ */
+function fakeRepository(published: PublishedReport | null = null) {
   const calls: Record<string, unknown[]> = {
     updateRequestStatus: [],
     recordAgentRun: [],
     saveReport: [],
     listTemplates: [],
+    findReportByRequest: [],
   };
+  let report = published;
   const repository = {
     listTemplates: vi.fn(async (includeDisabled: boolean) => {
       calls.listTemplates!.push(includeDisabled);
@@ -80,7 +97,16 @@ function fakeRepository() {
     }),
     saveReport: vi.fn(async (...args: unknown[]) => {
       calls.saveReport!.push(args);
+      const input = args[1] as ReportInput;
+      report = {
+        channelId: input.slackChannelId,
+        messageTs: input.slackMessageTs ?? null,
+      };
       return true;
+    }),
+    findReportByRequest: vi.fn(async (requestId: string) => {
+      calls.findReportByRequest!.push(requestId);
+      return report;
     }),
   } as unknown as RequestRepository;
   return { repository, calls };
@@ -319,6 +345,97 @@ describe("a completed investigation", () => {
     });
     expect(slackPosts[0]!.thread_ts).toBe("111.1");
     expect(slackPosts[1]!.thread_ts).toBe("111.1");
+  });
+});
+
+describe("an investigation delivered a second time", () => {
+  /**
+   * What the queue does when a delivery succeeds and cannot be closed: the same
+   * request, claimed and run again against the rows the first run left behind.
+   * The second payload carries the anchor the first run recorded, because
+   * claimDispatch reads it back onto the job.
+   */
+  async function runTwice() {
+    const { repository, calls } = fakeRepository();
+    const { impl, slackPosts, rcaCalls } = fakeFetch(COMPLETED);
+    await runInvestigation(PAYLOAD, { repository, fetchImpl: impl }, CONFIG);
+    await runInvestigation(
+      { ...PAYLOAD, slack_ack_ts: "2001" },
+      { repository, fetchImpl: impl },
+      CONFIG,
+    );
+    return { calls, slackPosts, rcaCalls };
+  }
+
+  it("does not post a second report for a question already answered", async () => {
+    // completeDispatch failing after a delivery succeeded leaves the row for
+    // the claim lock to lapse, deliberately: a failure to close the row must
+    // not be read as a failed investigation. The job is claimed again as a
+    // result, and without a guard the asker read the same answer twice in one
+    // thread while the upsert behind it showed a single tidy row.
+    const { slackPosts } = await runTwice();
+
+    // The acknowledgement and the report from the first run, and nothing since.
+    expect(slackPosts).toHaveLength(2);
+    const reports = slackPosts.filter((post) => post.text.includes("확인 결과"));
+    expect(reports).toHaveLength(1);
+  });
+
+  it("asks the RCA service nothing it has already answered", async () => {
+    // The guard is read before the acknowledgement rather than beside the post,
+    // so a redelivery costs one query -- not a fresh investigation whose result
+    // is thrown away, and not a second set of audit records for one of them.
+    const { rcaCalls, calls } = await runTwice();
+
+    expect(rcaCalls).toHaveLength(1);
+    expect(calls.recordAgentRun).toHaveLength(3);
+    expect(calls.saveReport).toHaveLength(1);
+  });
+
+  it("asks about the request it was handed, on every attempt", async () => {
+    const { calls } = await runTwice();
+    expect(calls.findReportByRequest).toEqual(["REQ-1", "REQ-1"]);
+  });
+
+  it("counts a report row with no message ts as published", async () => {
+    // saveReport stores the row whether or not Slack answered with a ts, and it
+    // stores it only after the post returned. The row is the marker; a missing
+    // ts says something about the Slack response and nothing about whether the
+    // report is in the thread.
+    const { repository, calls } = fakeRepository({
+      channelId: "C-ANSWER",
+      messageTs: null,
+    });
+    const { impl, slackPosts } = fakeFetch(COMPLETED);
+
+    await runInvestigation(
+      { ...PAYLOAD, slack_ack_ts: "2001" },
+      { repository, fetchImpl: impl },
+      CONFIG,
+    );
+
+    expect(slackPosts).toHaveLength(0);
+    expect(calls.saveReport).toHaveLength(0);
+  });
+
+  it("still publishes when the attempt before it died short of the report", async () => {
+    // The guard keys on the report, not on the acknowledgement. A retry of an
+    // investigation that failed midway has a thread already open and an answer
+    // still owed, and refusing to publish that one would be the silence this
+    // queue exists to prevent.
+    const { repository, calls } = fakeRepository();
+    const { impl, slackPosts } = fakeFetch(COMPLETED);
+
+    await runInvestigation(
+      { ...PAYLOAD, slack_ack_ts: "1700.1" },
+      { repository, fetchImpl: impl },
+      CONFIG,
+    );
+
+    expect(slackPosts).toHaveLength(1);
+    expect(slackPosts[0]!.text).toContain("확인 결과");
+    expect(slackPosts[0]!.thread_ts).toBe("1700.1");
+    expect(calls.saveReport).toHaveLength(1);
   });
 });
 
