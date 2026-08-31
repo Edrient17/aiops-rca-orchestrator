@@ -262,12 +262,10 @@ class InvestigationService:
             stop_reason=finished.stop_reason,
         )
         if package is None:
-            ambiguities = [item.message for item in finished.unknowns]
             parsed = parsed.model_copy(
                 update={
                     "parse_status": "needs_clarification",
-                    "ambiguities": ambiguities
-                    or ["조사할 호스트를 하나 이상 확인할 수 없습니다."],
+                    "ambiguities": _clarification_lines(finished.unknowns),
                 }
             )
             return InvestigationApiResponse(
@@ -438,6 +436,37 @@ async def write_report(
     )
     _validate_report(report, template_output, package)
     return _reconcile_evidence(report, template_output, package)
+
+
+#: What `ParsedRequest.ambiguities` accepts, and what the shared contract in
+#: `schemas/parsed-request.schema.json` publishes. Held here as well because
+#: this is the one place that fills the field from somewhere other than the
+#: analyzer, and `model_copy` does not validate what it is handed.
+MAX_AMBIGUITIES = 20
+MAX_AMBIGUITY_CHARS = 500
+
+
+def _clarification_lines(unknowns: Iterable[UnknownItem]) -> list[str]:
+    """What to ask the person back, out of what the run could not settle.
+
+    Every unknown went into this field whole. The state holds up to a hundred
+    of them at two thousand characters each, against a contract of twenty at
+    five hundred -- and nothing enforced it, because `model_copy` skips
+    validation and a model instance is not re-validated on the way into the
+    response. ingress renders one bullet per entry, so a run that resolved no
+    host could answer with a wall of internal diagnostics, or overrun Slack's
+    message limit and fail the post outright.
+
+    Host lines lead. `host_not_found` and `host_ambiguous` are the ones the
+    asker can actually act on -- they name the host that could not be resolved
+    -- and if the list has to be cut, those are what should survive it.
+    """
+    actionable = ("host_not_found", "host_ambiguous")
+    ordered = [item for item in unknowns if item.code in actionable]
+    ordered += [item for item in unknowns if item.code not in actionable]
+
+    lines = [item.message[:MAX_AMBIGUITY_CHARS] for item in ordered[:MAX_AMBIGUITIES]]
+    return lines or ["조사할 호스트를 하나 이상 확인할 수 없습니다."]
 
 
 def _declared_scope(tool: dict[str, Any]) -> str:

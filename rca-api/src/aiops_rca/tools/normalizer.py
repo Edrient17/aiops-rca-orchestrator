@@ -2,12 +2,13 @@
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
 from aiops_rca.schemas.evidence_package import Evidence
 from aiops_rca.schemas.investigation import PlannedToolCall, UnknownItem
-from aiops_rca.sources import SOURCES
+from aiops_rca.sources import SOURCES, evidence_id_pattern
 from aiops_rca.tools.registry import DEFAULT_TOOL_REGISTRY, ToolPolicyError
 from aiops_rca.tools.result import ToolExecutionResult
 
@@ -129,7 +130,17 @@ def _event_evidence(
             continue
         event_id = _digits(event.get("event_id"))
         trigger_id = _digits(event.get("trigger_id"))
-        evidence_id = str(event.get("evidence_id") or f"zbx:event:{event_id}")
+        # An event Zabbix gave no numeric id for still has to be told apart
+        # from the next one. Interpolating the absent id produced the literal
+        # "zbx:event:None" for every such event, so merge_evidence read them
+        # as one observation seen repeatedly: a window of them collapsed to a
+        # single row and a line saying the later reading was kept.
+        evidence_id = _evidence_id(
+            event.get("evidence_id"),
+            f"zbx:event:{event_id}"
+            if event_id
+            else f"zbx:event:unidentified:{_fingerprint(event)}",
+        )
         name = str(event.get("name") or "Zabbix problem event")
         severity = event.get("severity")
         recovery = event.get("recovered_at")
@@ -175,8 +186,8 @@ def _trigger_evidence(
     )
     return Evidence.model_validate(
         {
-            "evidence_id": str(
-                response.get("evidence_id") or f"zbx:trigger:{trigger_id}"
+            "evidence_id": _evidence_id(
+                response.get("evidence_id"), f"zbx:trigger:{trigger_id}"
             ),
             "evidence_type": "trigger",
             "source": "zabbix",
@@ -213,8 +224,10 @@ def _metric_summary_evidence(
         output.append(
             Evidence.model_validate(
                 {
-                    "evidence_id": entry.get("evidence_id")
-                    or f"zbx:metric:{item_id}:{_fingerprint(result.request)}",
+                    "evidence_id": _evidence_id(
+                        entry.get("evidence_id"),
+                        f"zbx:metric:{item_id}:{_fingerprint(result.request)}",
+                    ),
                     "evidence_type": "metric_summary",
                     "source": "zabbix",
                     "summary": _metric_text(metric),
@@ -244,8 +257,10 @@ def _metric_history_evidence(
     metric = _metric(item, summary)
     return Evidence.model_validate(
         {
-            "evidence_id": response.get("evidence_id")
-            or f"zbx:metric:{item_id}:{_fingerprint(result.request)}",
+            "evidence_id": _evidence_id(
+                response.get("evidence_id"),
+                f"zbx:metric:{item_id}:{_fingerprint(result.request)}",
+            ),
             "evidence_type": "metric_history",
             "source": "zabbix",
             "summary": _metric_text(metric),
@@ -550,6 +565,29 @@ def _resource_ids(
 def _digits(value: Any) -> str | None:
     text = str(value) if value is not None else ""
     return text if text.isdigit() else None
+
+
+#: Exactly the ids the known sources may produce, compiled once.
+_EVIDENCE_ID = re.compile(evidence_id_pattern())
+
+
+def _evidence_id(offered: Any, generated: str) -> str:
+    """The id a server offered, if this service can carry it; ours otherwise.
+
+    A tool that names its own `evidence_id` had it used verbatim. The schema
+    accepts only the prefixes `sources.py` declares, so a server sending
+    anything else raised a ValidationError out of the normalizer, out of the
+    graph, and ended an investigation that had already paid for every one of
+    its tool calls -- the failure `_rounded_quality` refuses to make for a
+    data-quality block it cannot tag, arriving through the id instead.
+
+    Falling back is not a loss: the generated id identifies the same
+    observation, and the server's own value is in the response the evidence
+    already carries.
+    """
+    if isinstance(offered, str) and _EVIDENCE_ID.match(offered):
+        return offered
+    return generated
 
 
 def _fingerprint(value: Any) -> str:

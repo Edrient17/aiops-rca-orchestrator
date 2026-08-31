@@ -449,12 +449,28 @@ def unsupported_cause_is_admitted(
     link from a sentence in the report to a hypothesis, so it cannot tell that
     *this* claim is unbacked. It can tell that nothing was supported and the
     report claimed no limits, which is the shape the failure takes.
+
+    It read `status` for months, which a package cannot carry: the graph's
+    `Hypothesis.status` is turned into `confidence` when the package is built,
+    and the package model forbids anything it does not declare. So the read
+    found nothing, no hypothesis ever looked supported, and every report with
+    an empty limitations section was flagged -- including the ones that had
+    named the cause. Nothing caught it because the fixture here builds a dict
+    by hand with a `status` key that no real package has.
+
+    `confidence` is the lossy end of that conversion: `high` is a supported
+    hypothesis, `low` is one that was rejected or that nothing backed, and
+    `medium` covers both a supported hypothesis with counter-evidence and an
+    open one with some support. So the bar is that nothing reached even
+    `medium` -- weaker than the check was written to be, and the right
+    direction to be weak in, because a false finding here is answered by
+    writing limitations that are not true.
     """
     hypotheses = package.get("hypotheses")
     if not isinstance(hypotheses, list) or not hypotheses:
         return []
     if any(
-        isinstance(item, Mapping) and item.get("status") == "supported"
+        isinstance(item, Mapping) and item.get("confidence") in {"high", "medium"}
         for item in hypotheses
     ):
         return []
