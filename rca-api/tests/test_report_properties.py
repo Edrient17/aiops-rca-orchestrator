@@ -306,7 +306,49 @@ class TestUnsupportedCauseIsAdmitted:
     """
 
     def _package(self, *statuses):
-        return {"hypotheses": [{"id": f"H{i}", "status": s} for i, s in enumerate(statuses)]}
+        """Hypotheses in the shape a package really carries.
+
+        This built `{"id": ..., "status": ...}` by hand, and a package holds
+        neither key: the graph's status becomes `confidence` when the package
+        is built, and the model forbids anything undeclared. So the check read
+        a field that was never there, found no supported hypothesis in any
+        report ever written, and flagged every one with an empty limitations
+        section -- while this test passed, because the fixture was the only
+        place that shape existed.
+
+        Built through the same conversion the package builder uses, so the two
+        cannot drift apart again.
+        """
+        from aiops_rca.graph.live_nodes import _confidence
+        from aiops_rca.schemas.investigation import Hypothesis
+
+        return {
+            "hypotheses": [
+                {
+                    "description": f"H{index}",
+                    "supporting_evidence_refs": [],
+                    "contradicting_evidence_refs": [],
+                    "confidence": _confidence(
+                        Hypothesis(id=f"H{index}", statement=f"H{index}", status=status)
+                    ),
+                }
+                for index, status in enumerate(statuses)
+            ]
+        }
+
+    def test_the_fixture_matches_what_a_real_package_carries(self):
+        """The guard the old fixture could not provide.
+
+        A package is validated against a model that forbids undeclared fields,
+        so what it holds is decidable -- and asserting it here is what stops
+        the check being written against a shape that does not exist.
+        """
+        from aiops_rca.schemas.evidence_package import PackageHypothesis
+
+        declared = set(PackageHypothesis.model_fields)
+        assert "status" not in declared
+        assert "confidence" in declared
+        assert set(self._package("supported")["hypotheses"][0]) == declared
 
     def test_all_rejected_with_no_stated_limit_is_caught(self):
         report = _sectioned(limitations="해당 없음")

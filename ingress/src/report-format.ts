@@ -81,6 +81,39 @@ const escapeRe = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
+ * A value going inside Rison's single-quoted string.
+ *
+ * Rison escapes with `!`, so a bang doubles and a quote is `!'`. Without this
+ * a host name carrying an apostrophe would close the string early and the
+ * whole `_a` parameter would fail to parse -- the same class of breakage as
+ * putting ES|QL in a KQL field, arriving through the value instead of the
+ * language.
+ */
+const rison = (value: string): string =>
+  value.replace(/!/g, "!!").replace(/'/g, "!'");
+
+/**
+ * Whether a stored query can be handed to Discover as KQL.
+ *
+ * `search_query` carries whatever the collector sent, and that is not one
+ * language. The reports this formatter was ported from stored KQL, and the
+ * link worked. The collector sends an ES|QL statement for `esql` now, and a
+ * serialised DSL body for `search` -- neither of which a `language:kuery`
+ * parameter can parse, so the footnote opened on a syntax error instead of on
+ * the lines it cited.
+ *
+ * They are told apart by how each begins, which is the part that differs: a
+ * DSL body is an object, and ES|QL is a source command followed by pipes.
+ * Anything else is left alone, because narrowing to the host is a real loss
+ * of precision and should only happen where the alternative does not work.
+ */
+const isKuery = (query: string): boolean => {
+  const text = query.trim();
+  if (!text || text.startsWith("{") || text.startsWith("[")) return false;
+  return !/^(FROM|ROW|SHOW)\b/i.test(text) && !text.includes("|");
+};
+
+/**
  * A timestamp as Zabbix's filter expects to receive it.
  *
  * `sv-SE` is not a language choice: it formats as `YYYY-MM-DD HH:mm:ss`, which
@@ -196,15 +229,24 @@ export function formatReport(
     if (!window.from || !window.to) return null;
 
     const host = hostNameById.get(item?.resource_ids?.host_id ?? undefined);
-    // The search the evidence came from, when the collector carried it across.
-    // Falling back to the host alone opens everything that host logged in the
-    // window, which is a different thing from what was cited.
+    // The search the evidence came from, when it is a language this parameter
+    // can read. Falling back to the host alone opens everything that host
+    // logged in the window, which is a different thing from what was cited --
+    // but it resolves, and a query in the wrong language does not.
+    const stored = item?.search_query;
     const q = "'";
-    const query = item?.search_query || (host ? 'host.name:"' + host + '"' : "*");
-    const time = "(time:(from:" + q + window.from + q + ",to:" + q + window.to + q + "))";
+    const query =
+      stored && isKuery(stored)
+        ? stored
+        : host
+          ? 'host.name:"' + host + '"'
+          : "*";
+    const time =
+      "(time:(from:" + q + rison(window.from) + q +
+      ",to:" + q + rison(window.to) + q + "))";
     const app =
-      "(index:" + q + kibanaDataView + q +
-      ",query:(language:kuery,query:" + q + query + q + "))";
+      "(index:" + q + rison(kibanaDataView) + q +
+      ",query:(language:kuery,query:" + q + rison(query) + q + "))";
 
     return {
       url:

@@ -79,20 +79,26 @@ interface AgentRunLike {
 export function ackText(payload: DispatchPayload): string {
   const continues = Boolean(payload.parent_request_id);
 
+  // The question is what somebody typed in Slack, and it is being repeated
+  // into the answer channel. Escaped for the reason abandonedText escapes its
+  // error string: Slack reads `<!channel>` as a broadcast, so a question
+  // carrying one would page everyone from inside an acknowledgement.
+  const question = escapeSlackText(payload.question);
+
   if (continues && payload.parent_ack_ts) {
     return [
       "🔎 *조사 재개* — 보충된 정보로 이어서 조사합니다.",
       "• 요청 ID: `" + payload.request_id + "`",
-      "• 보충된 정보: " + payload.question,
+      "• 보충된 정보: " + question,
     ].join("\n");
   }
 
   const lines = ["🔎 *AIOps 조사 접수*", "• 요청 ID: `" + payload.request_id + "`"];
   if (continues && payload.prior_question) {
-    lines.push("• 원래 질문: " + payload.prior_question);
-    lines.push("• 보충된 정보: " + payload.question);
+    lines.push("• 원래 질문: " + escapeSlackText(payload.prior_question));
+    lines.push("• 보충된 정보: " + question);
   } else {
-    lines.push("• 질문: " + payload.question);
+    lines.push("• 질문: " + question);
   }
   return lines.join("\n");
 }
@@ -110,9 +116,12 @@ export function clarificationText(
   const ambiguities = Array.isArray(parsed?.ambiguities) ? parsed.ambiguities : [];
   const unsupported = parsed?.parse_status === "unsupported";
 
+  // Written by the model, so escaped like anything else this service did not
+  // write. A question containing `<!channel>` reaches the analyzer, and an
+  // ambiguity quoting it back would broadcast from inside the clarification.
   const lines =
     ambiguities.length > 0
-      ? ambiguities.map((item) => "• " + item)
+      ? ambiguities.map((item) => "• " + escapeSlackText(item))
       : ["• 조사할 호스트와 기준 시각을 알려주세요."];
 
   // Ping the asker. Slack notifies thread participants only weakly, and this
