@@ -419,23 +419,34 @@ class ToolExecutorNode:
                 "fatal_error": "tool_executor entered without a planned tool call",
                 "visited_nodes": [*state.visited_nodes, "tool_executor"],
             }
-        scopes = {
-            question.required_tool: question.temporal_scope
-            for question in state.next_questions
-            if question.required_tool
-        }
-        gates = {
-            question.required_tool: question.generic_fallback_allowed
+        # Keyed by the call, not by the tool. Two questions of the same tool --
+        # one about now and one about last night -- collapsed onto whichever
+        # came last, so a batch was executed under a context the router never
+        # granted it. The adapter validates a second time, so the disagreement
+        # did not produce a wrong answer: it refused calls the router had
+        # already allowed, and a turn where every call is refused reaches the
+        # normalizer with nothing to normalize.
+        #
+        # The router writes the question into `purpose`, which is what makes
+        # the pair identify the question that asked for this call. It is the
+        # same pairing `_plan_for` uses on the way back.
+        asked = {
+            (question.required_tool, question.question): question
             for question in state.next_questions
             if question.required_tool
         }
 
         async def run(call: PlannedToolCall, offset: int) -> Any:
+            question = asked.get((call.tool_name, call.purpose))
             return await self.executor.execute(
                 call,
                 RoutingContext(
-                    temporal_scope=scopes.get(call.tool_name, "timeless"),
-                    generic_fallback_allowed=gates.get(call.tool_name, False),
+                    temporal_scope=(
+                        question.temporal_scope if question else "timeless"
+                    ),
+                    generic_fallback_allowed=(
+                        question.generic_fallback_allowed if question else False
+                    ),
                     tool_call_count=state.tool_call_count + offset,
                     max_tool_calls=state.limits.max_tool_calls,
                 ),

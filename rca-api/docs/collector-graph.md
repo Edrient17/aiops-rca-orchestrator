@@ -30,7 +30,8 @@ graph TD;
 	__end__([<p>__end__</p>]):::last
 	__start__ --> resolve_hosts;
 	establish_phenomenon --> hypothesis_planner;
-	evidence_normalizer --> hypothesis_updater;
+	evidence_normalizer -.-> hypothesis_updater;
+	evidence_normalizer -.-> stop_guard;
 	evidence_package_builder --> report_writer;
 	hypothesis_planner --> observation_planner;
 	hypothesis_updater --> stop_guard;
