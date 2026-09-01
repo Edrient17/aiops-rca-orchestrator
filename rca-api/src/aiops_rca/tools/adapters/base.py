@@ -64,7 +64,9 @@ class McpAdapter:
         # Applied here rather than in the router because the router is not the
         # only caller: the phenomenon scan builds its own arguments and reaches
         # the adapter directly, and it is the one that asks for a whole month.
-        arguments = apply_window_policy(policy, arguments)
+        arguments = apply_window_policy(
+            policy, arguments, context.declared_window_policy
+        )
 
         call_id = tool_call_id or f"call-{uuid4()}"
         started_at = datetime.now(UTC)

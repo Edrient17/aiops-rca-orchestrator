@@ -26,6 +26,21 @@ question genuinely depends on this one, and a batch of guesses is worse than a
 single question that follows the evidence.
 </how_many>
 
+<report_collection>
+What the selected report is written from, as its template declares it. It is
+about this report kind rather than about this question, so it holds across the
+whole investigation.
+
+- `guidance` — how to gather evidence for this report. Follow it where it
+  applies; it does not override what the evidence in front of you says.
+- `metric_keywords` — the seeds to pass to `list_relevant_metrics`. A capacity
+  report names the metrics it is about, and they are usually not the ones the
+  question's phrasing suggests.
+- `aggregation` — the bucket size the metric tools take as an argument. Pass it
+  where the schema asks for one. Null means no bucket was specified and the
+  choice is yours.
+</report_collection>
+
 <constraints>
 - Name only tools present in `tool_catalog`. Where the catalog carries the real
   MCP `input_schema`, satisfy all of it: enum, pattern, format, required, and
