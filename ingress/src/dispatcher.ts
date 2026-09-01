@@ -163,7 +163,28 @@ export class Dispatcher {
           // 2 to 256 seconds. attempts is 1 on the first claim and 9 abandons,
           // so this only ever sees 1..8 -- the clamps this used to carry were
           // sized for a ceiling of twelve and could no longer bind.
-          await this.options.repository.retryDispatch(job.id, 2 ** job.attempts, message);
+          const retryInSeconds = 2 ** job.attempts;
+
+          // Said out loud, because a delivery that fails and later succeeds
+          // used to leave nothing at all behind: there was no line here, and
+          // the one record -- last_error on the queue row -- is cleared by
+          // completeDispatch the moment a later attempt works. A question
+          // answered on its third try looked identical to one answered on its
+          // first, so the same question failing the same way for eleven days
+          // went unnoticed. The retry is expected; being unable to see it is
+          // not.
+          console.error(
+            JSON.stringify({
+              level: "warn",
+              message: "delivery_failed",
+              request_id: job.requestId,
+              attempt: job.attempts,
+              of: MAX_DISPATCH_ATTEMPTS,
+              retry_in_seconds: retryInSeconds,
+              detail: message,
+            }),
+          );
+          await this.options.repository.retryDispatch(job.id, retryInSeconds, message);
           continue;
         }
 

@@ -13,10 +13,42 @@
  * of outage in this stack that left a question acknowledged and then silent.
  */
 
+import { Agent, fetch as undiciFetch } from "undici";
 import { formatReport, type FormatConfig } from "./report-format.js";
 import { CLARIFICATION_ASKED } from "./request-status.js";
 import { postMessage } from "./slack.js";
 import type { AgentRunInput, RequestRepository } from "./types.js";
+
+/**
+ * The connection settings the investigation call is made under.
+ *
+ * `AbortSignal.timeout(RCA_TIMEOUT_MS)` looked like the whole story and was
+ * not. undici -- which is what `fetch` is -- gives up when response headers
+ * have not arrived within `headersTimeout`, and that defaults to 300 seconds
+ * whatever the signal says. rca-api answers only once the investigation is
+ * written, so it sends no headers for as long as the investigation runs.
+ *
+ * Every investigation past five minutes was therefore killed by a ceiling
+ * nothing documented, while RCA_TIMEOUT_MS advertised fifteen. The delivery
+ * was retried, and the run it had abandoned went on to completion on the far
+ * side: one question, three investigations, one of them read. Measured at
+ * 300.9s with UND_ERR_HEADERS_TIMEOUT against a 900-second signal.
+ *
+ * Held per process rather than per delivery so connections are pooled, and
+ * rebuilt only if the timeout changes -- which it does not, outside a test.
+ */
+let pooled: { agent: Agent; timeoutMs: number } | undefined;
+
+function rcaDispatcher(timeoutMs: number): Agent {
+  if (pooled?.timeoutMs !== timeoutMs) {
+    void pooled?.agent.close();
+    pooled = {
+      timeoutMs,
+      agent: new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs }),
+    };
+  }
+  return pooled.agent;
+}
 
 /** The row the dispatcher claimed, as the queue stores it. */
 export interface DispatchPayload {
@@ -306,8 +338,14 @@ export async function runInvestigation(
   //    are excluded, which is how a retired report kind leaves circulation.
   const templates = await repository.listTemplates(false);
 
-  const response = await send(`${config.rcaApiUrl}/v1/investigations`, {
+  // undici's own fetch, not the global one: the dispatcher below belongs to
+  // this copy of undici, and the copy bundled into Node refuses it as a
+  // foreign object (UND_ERR_INVALID_ARG). A test that injects its own fetch
+  // gets that instead, and ignores the dispatcher along with it.
+  const callRca = (deps.fetchImpl ?? undiciFetch) as typeof undiciFetch;
+  const response = await callRca(`${config.rcaApiUrl}/v1/investigations`, {
     method: "POST",
+    dispatcher: rcaDispatcher(config.rcaTimeoutMs),
     headers: {
       "content-type": "application/json",
       "x-aiops-internal-token": config.internalToken,

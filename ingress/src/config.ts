@@ -4,6 +4,24 @@ import type { FeedbackLabel } from "./types.js";
 const FEEDBACK_LABELS: readonly FeedbackLabel[] = ["correct", "partial", "incorrect"];
 
 /**
+ * rca-api's own ceiling on collecting evidence, restated here.
+ *
+ * It is `InvestigationLimits.max_duration_seconds`, which the graph's stop
+ * guard enforces and `prepare_collection` defaults to 600 seconds. This
+ * service cannot read it -- it belongs to the other process -- so it is named
+ * rather than inferred, and the floor it sets on RCA_TIMEOUT_MS is what keeps
+ * this service from hanging up on a run the far side is still working on.
+ *
+ * If that default changes, this changes with it. A copy that drifts fails in
+ * the safe direction -- a timeout larger than it needs to be -- but it is a
+ * copy, and worth saying so.
+ */
+const RCA_COLLECTION_CEILING_MS = 600_000;
+
+/** What writing the report costs after collection stops. Measured at 21s. */
+const RCA_WRITING_HEADROOM_MS = 60_000;
+
+/**
  * Exported so a test can read back which variables this service refuses to
  * start without, and check them against what docker-compose.yml actually
  * guarantees. See tests/config.test.ts.
@@ -27,8 +45,29 @@ export const envSchema = z.object({
   RCA_API_URL: z.string().url(),
   /** Answers are published here, which is not where questions arrive. */
   SLACK_ANSWER_CHANNEL_ID: z.string().min(1),
-  /** The investigation's own ceiling. The workflow allowed 900 seconds. */
-  RCA_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(1_800_000).default(900_000),
+  /**
+   * How long one investigation may take. This is the outermost of three
+   * ceilings and has to stay the largest of them, or it stops being a limit
+   * and becomes a way of throwing away work that was going to finish.
+   *
+   *   rca-api's collection loop   600s   graph max_duration_seconds
+   *   + writing the report          ~30s   measured at 21s
+   *   ------------------------------------
+   *   RCA_TIMEOUT_MS              900s   this, and now also the transport's
+   *
+   * The order was inverted and invisible: the transport gave up at 300
+   * seconds of its own accord, under a value that said 900, so the smallest
+   * ceiling was the one nobody had written down. The floor below is what
+   * stops it being inverted again by configuration -- setting this under the
+   * collection loop's own ceiling would cut off investigations that rca-api
+   * was still willing to finish.
+   */
+  RCA_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(RCA_COLLECTION_CEILING_MS + RCA_WRITING_HEADROOM_MS)
+    .max(1_800_000)
+    .default(900_000),
   SLACK_POST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(30_000),
   /** Footnote destinations. Absent, a citation degrades to a bare id. */
   ZABBIX_FRONTEND_URL: z.string().optional(),

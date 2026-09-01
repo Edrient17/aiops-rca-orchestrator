@@ -88,7 +88,10 @@ REPORT_WRITER
 | `MCP_TIMEOUT_SECONDS` | 120 | MCP 도구 호출 한 건의 제한 시간 |
 | `MODEL_TIMEOUT_SECONDS` | 180 | 모델 호출 한 건의 제한 시간 |
 
-`RCA_TIMEOUT_MS`는 큐 작업의 점유 시간에도 반영된다.
+`RCA_TIMEOUT_MS`는 큐 작업의 점유 시간에도 반영된다. 이 값은 `rca-api`가 조사에
+쓰는 상한(기본 600초)보다 커야 하며, 그보다 낮게 설정하면 `ingress`가 시작하지
+않는다. 아직 진행 중인 조사를 끊고 같은 질문을 처음부터 다시 조사하게 되기
+때문이다.
 
 ### Slack 앱 설정
 
