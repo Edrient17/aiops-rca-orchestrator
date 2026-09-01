@@ -258,6 +258,7 @@ class ResolveHostsNode:
                         # Finding a name means reading whatever index or list
                         # holds it, and those are the generic tools.
                         generic_fallback_allowed=True,
+                        declared_window_policy=state.declared_window_policy,
                     ),
                 )
             except ToolPolicyError as error:
@@ -324,6 +325,7 @@ class ToolRouterNode:
             context = RoutingContext(
                 temporal_scope=question.temporal_scope,
                 generic_fallback_allowed=question.generic_fallback_allowed,
+                declared_window_policy=state.declared_window_policy,
                 # Counted across the batch as well as the investigation: four
                 # calls planned together still spend four of the budget.
                 tool_call_count=state.tool_call_count + len(planned),
@@ -449,6 +451,7 @@ class ToolExecutorNode:
                     ),
                     tool_call_count=state.tool_call_count + offset,
                     max_tool_calls=state.limits.max_tool_calls,
+                    declared_window_policy=state.declared_window_policy,
                 ),
             )
 

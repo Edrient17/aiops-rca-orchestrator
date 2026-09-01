@@ -38,6 +38,11 @@ class RoutingContext(StrictModel):
     generic_fallback_allowed: bool = False
     tool_call_count: Annotated[int, Field(ge=0)] = 0
     max_tool_calls: Annotated[int, Field(ge=1, le=100)] = 30
+    #: The query policy the selected report template declares. It is a fact
+    #: about the report rather than about the call, and it travels here because
+    #: the argument it becomes is applied at the adapter -- which sees the call
+    #: and not the template.
+    declared_window_policy: str | None = None
 
 
 class ToolPolicy(StrictModel):
@@ -334,17 +339,32 @@ LONG_WINDOW_POLICY = "long_term_capacity"
 def apply_window_policy(
     policy: ToolPolicy,
     arguments: Mapping[str, Any],
+    declared: str | None = None,
 ) -> dict[str, Any]:
-    """Ask for the long-window policy when the window needs it.
+    """Ask for the long-window policy when the report or the window needs it.
 
     The planner writes the window; the row limits and window caps are the MCP's,
     and it does not have them. A month-long question was reaching the Zabbix MCP
     under the default policy and coming back capped at 26 hours, which the
     report then read as the whole month.
+
+    `declared` is what the report template says in `collection.window.policy`.
+    Nothing read it: the span below was the only way this argument was ever
+    set, so a template asking for the long-window policy got it by accident of
+    its window being long, and would have got nothing had it not been.
+
+    A declaration can only widen. Asking for `long_term_capacity` applies it
+    whatever the span; asking for `standard` leaves the span rule in place
+    rather than forcing the default back on, because the span rule exists to
+    stop a long window being silently capped and a template should not be able
+    to opt back into that by saying nothing unusual.
     """
     updated = dict(arguments)
     argument = policy.window_policy_argument
     if not argument or _present(updated.get(argument)):
+        return updated
+    if declared == LONG_WINDOW_POLICY:
+        updated[argument] = LONG_WINDOW_POLICY
         return updated
     span = _window_span(updated)
     if span is not None and span > LONG_WINDOW:

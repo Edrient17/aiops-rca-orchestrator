@@ -134,6 +134,7 @@ class EstablishPhenomenonNode:
                         # activity, which for a host outside Zabbix is a raw
                         # index query by definition.
                         generic_fallback_allowed=True,
+                        declared_window_policy=state.declared_window_policy,
                     ),
                 )
             except ToolPolicyError as error:
@@ -329,7 +330,14 @@ class ObservationPlannerNode:
                 "phenomenon": state.phenomenon,
                 "hosts": [host.model_dump(mode="json") for host in state.hosts],
                 "window": _resolved_window(state),
-                "collection": state.collection,
+                # What the report template asked for, named rather than handed
+                # over as the whole collection blob. The blob was sent, and no
+                # prompt ever mentioned it: an operator writing `guidance` or
+                # `metric_keywords` was writing into a field that reached the
+                # model as an unlabelled object no instruction referred to.
+                # `aggregation` is worse than unused -- it is a required
+                # argument of the metric tools, and the template names it.
+                "report_collection": _collection_brief(state),
                 "hypotheses": [
                     item.model_dump(mode="json") for item in state.hypotheses
                 ],
@@ -748,6 +756,35 @@ def _resolved_window(state: InvestigationState) -> dict[str, str]:
     ):
         raise ValueError("collection.resolved_window is required")
     return {"from": str(window["from"]), "to": str(window["to"])}
+
+
+def _collection_brief(state: InvestigationState) -> dict[str, Any]:
+    """What the selected report template asked this investigation to gather.
+
+    Three fields of `collection` had no reader anywhere in this service, and
+    two of them are documented in the orchestrator README as things an
+    operator writes to steer collection. They reached the planner only inside
+    the whole `collection` object, which no prompt named, so a template tuned
+    over a week changed nothing.
+
+    Only the fields the planner can act on are named here. `host_selector`,
+    `limits` and `resolved_window` are decided before it runs and are read
+    where they are decided.
+    """
+    collection = state.collection or {}
+    keywords = collection.get("metric_keywords")
+    return {
+        #: Free text from the template: how to gather evidence for this report.
+        "guidance": collection.get("guidance") or None,
+        #: Seeds for list_relevant_metrics, so a capacity report looks for the
+        #: metrics that report is about rather than whatever the phrasing
+        #: suggested.
+        "metric_keywords": list(keywords) if isinstance(keywords, list) else [],
+        #: The bucket size the metric tools require as an argument. The
+        #: template names it because the answer's resolution is part of what
+        #: the report is: a month of capacity is daily, an incident is not.
+        "aggregation": collection.get("aggregation"),
+    }
 
 
 def _evidence_summaries(state: InvestigationState) -> list[dict[str, Any]]:

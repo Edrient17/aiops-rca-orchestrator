@@ -248,6 +248,25 @@ class InvestigationState(StrictModel):
             raise ValueError("tool_call_count must equal the number of tool_results")
         return self
 
+    @property
+    def declared_window_policy(self) -> str | None:
+        """The query policy the selected report template asked for.
+
+        Nothing read `collection.window.policy` at all, so it was a field an
+        operator filled in and no code consulted: the monthly capacity report
+        got the long-window policy only because its window happened to be long
+        enough for the span rule in `apply_window_policy` to notice, and a
+        template asking for it over a shorter window would have got nothing.
+
+        A property on the state rather than a helper in one node module,
+        because four call sites in two of them need it.
+        """
+        window = (self.collection or {}).get("window")
+        if not isinstance(window, Mapping):
+            return None
+        policy = window.get("policy")
+        return policy if isinstance(policy, str) else None
+
     def elapsed_seconds(self, now: datetime) -> float:
         return max(0, (now - self.started_at).total_seconds())
 

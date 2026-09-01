@@ -24,6 +24,29 @@ jobs:
       fail-fast: false
       matrix:
         node: ["22", "24"]
+
+    # postgres-repository.ts is the largest file here and every other suite
+    # replaces it with an object literal, so its SQL -- the claim under FOR
+    # UPDATE SKIP LOCKED, the upsert that has to catch two different keys, the
+    # guard that stops a late failure retracting a published report -- was
+    # carried by its comments alone. The suite skips itself when
+    # TEST_DATABASE_URL is unset, so this is what makes it run.
+    #
+    # The image is the one the deployment runs, because the behaviour under
+    # test is the database's rather than the driver's.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - uses: actions/checkout@v5
 
@@ -36,6 +59,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci@127.0.0.1:5432/postgres
       - run: npm run build
 
 
